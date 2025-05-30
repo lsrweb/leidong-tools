@@ -1,0 +1,223 @@
+{
+  "name": "leidong-sanqian-vscode-tools",
+  "displayName": "雷动三千vscode工具集",
+  "description": "雷动三千开发的VS Code效率工具集：Vue.js智能跳转、JavaScript补全、多行压缩、注释压缩、快速日志等功能",
+  "version": "1.0.0",
+  "publisher": "KuCai",
+  "icon": "logo.jpg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KuCai/leidong-sanqian-vscode-tools.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KuCai/leidong-sanqian-vscode-tools/issues"
+  },
+  "homepage": "https://github.com/KuCai/leidong-sanqian-vscode-tools#readme",
+  "keywords": [
+    "雷动三千",
+    "vue",
+    "javascript",
+    "html",
+    "compression",
+    "completion",
+    "productivity",
+    "tools",
+    "中文",
+    "开发工具",
+    "效率工具"
+  ],
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Other",
+    "Snippets"
+  ],
+  "activationEvents": [
+    "onLanguage:html",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:vue",
+    "onLanguage:json",
+    "onLanguage:css"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "leidong-tools.goToDefinitionInNewTab",
+        "title": "HTML Vue: Go To Definition in New Tab",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.logVariable",
+        "title": "Log Variable (console.log)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.errorVariable",
+        "title": "Log Variable (console.error)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.infoVariable",
+        "title": "Log Variable (console.info)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.debugVariable",
+        "title": "Log Variable (console.debug)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.compressLines",
+        "title": "Compress Multiple Lines",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.quickConsoleLog",
+        "title": "Quick Console Log (Ctrl+L)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.quickConsoleError",
+        "title": "Quick Console Error (Ctrl+E)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.logSelectedVariable",
+        "title": "Log Selected Variable in Next Line (Ctrl+Shift+L)",
+        "category": "雷动三千工具集"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "leidong-tools.logVariable",
+        "key": "ctrl+alt+l",
+        "mac": "cmd+alt+l",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.errorVariable",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.quickConsoleLog",
+        "key": "ctrl+l",
+        "mac": "cmd+l",
+        "when": "editorTextFocus && !findInputFocussed && !replaceInputFocussed"
+      },
+      {
+        "command": "leidong-tools.quickConsoleError",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "editorTextFocus && !findInputFocussed && !replaceInputFocussed && !inQuickOpen"
+      },
+      {
+        "command": "leidong-tools.logSelectedVariable",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "editorHasSelection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "leidong-tools.compressLines",
+          "when": "editorHasSelection",
+          "group": "1_modification@1"
+        }
+      ]
+    },
+    "semanticTokenScopes": [
+      {
+        "language": "html",
+        "scopes": {
+          "type.declaration": [
+            "entity.name.function.method"
+          ]
+        }
+      }
+    ],
+    "semanticTokenProvider": {
+      "selector": [
+        {
+          "language": "html"
+        }
+      ],
+      "id": "htmlVueSemanticTokensProvider"
+    },
+    "semanticTokenTypes": [
+      {
+        "id": "type",
+        "description": "Represents a general type, used here for component tags."
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "declaration",
+        "description": "Indicates that a definition for the token was found."
+      },
+      {
+        "id": "readonly",
+        "description": "Placeholder modifier."
+      }
+    ],
+    "snippets": [
+      {
+        "language": "javascript",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "typescript",
+        "path": "./snippets/javascript.json"
+      },
+      {
+        "language": "vue",
+        "path": "./snippets/javascript.json"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "@vue/compiler-dom": "^3.3.9",
+    "acorn": "^8.11.2",
+    "acorn-walk": "^8.3.0",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
+    "vue-template-compiler": "^2.7.15"
+  },
+  "devDependencies": {
+    "@babel/parser": "^7.27.0",
+    "@babel/traverse": "^7.27.0",
+    "@babel/types": "^7.27.0",
+    "@types/babel__traverse": "^7.20.7",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.99.0",
+    "@typescript-eslint/eslint-plugin": "^8.28.0",
+    "@typescript-eslint/parser": "^8.28.0",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.23.0",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.8.2",
+    "webpack": "^5.98.0",
+    "webpack-cli": "^6.0.1"
+  }
+}
