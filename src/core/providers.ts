@@ -6,7 +6,8 @@ import { VueHtmlDefinitionProvider } from '../providers/definitionProvider';
 import { 
     JavaScriptCompletionProvider, 
     QuickLogCompletionProvider, 
-    MultiVariableLogCompletionProvider 
+    MultiVariableLogCompletionProvider,
+    VonCompletionProvider
 } from '../providers/completionProvider';
 import { EXTENSION_CONFIG, FILE_SELECTORS } from './config';
 
@@ -47,6 +48,25 @@ export function registerProviders(context: vscode.ExtensionContext) {
             FILE_SELECTORS.JAVASCRIPT,
             new MultiVariableLogCompletionProvider(),
             '.', // 触发补全的字符
+        )
+    );
+
+    // 注册 Von 代码片段补全提供器 - 支持所有文件类型
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(
+            [
+                { scheme: 'file', language: 'javascript' },
+                { scheme: 'file', language: 'typescript' },
+                { scheme: 'file', language: 'vue' },
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'css' },
+                { scheme: 'file', language: 'json' },
+                { scheme: 'file', language: 'markdown' },
+                { scheme: 'file', language: 'plaintext' },
+                { scheme: 'file', pattern: '**/*' } // 支持所有文件
+            ],
+            new VonCompletionProvider(),
+            'v', 'o', 'n' // 触发补全的字符
         )
     );
 }

@@ -294,3 +294,84 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         this.parseCache.set(uri, result);
     }
 }
+
+/**
+ * Von 代码片段补全提供器
+ */
+export class VonCompletionProvider implements vscode.CompletionItemProvider {
+    provideCompletionItems(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        token: vscode.CancellationToken,
+        context: vscode.CompletionContext
+    ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
+        const lineText = document.lineAt(position).text;
+        const textBeforeCursor = lineText.substring(0, position.character);
+        
+        // 检查是否输入了 "von"
+        if (!textBeforeCursor.endsWith('von')) {
+            return [];
+        }
+        
+        const completionItems: vscode.CompletionItem[] = [];
+        
+        // 1. 当前时间 YYYYMMDDHHMMSS
+        const currentTimeItem = new vscode.CompletionItem('🕐 Current Time (YYYYMMDDHHMMSS)', vscode.CompletionItemKind.Snippet);
+        const now = new Date();
+        const timeString = this.formatDateTime(now);
+        currentTimeItem.insertText = new vscode.SnippetString(timeString);
+        currentTimeItem.detail = '⚡ Insert current time in YYYYMMDDHHMMSS format';
+        currentTimeItem.documentation = `插入当前时间: ${timeString}`;
+        currentTimeItem.sortText = '0001';
+        currentTimeItem.preselect = true;
+        currentTimeItem.filterText = 'von';
+        currentTimeItem.commitCharacters = ['\t', '\n'];
+        currentTimeItem.range = new vscode.Range(
+            position.translate(0, -3), // -3 for "von"
+            position
+        );
+        completionItems.push(currentTimeItem);
+        
+        // 2. 随机 UUID
+        const uuidItem = new vscode.CompletionItem('🆔 Random UUID', vscode.CompletionItemKind.Snippet);
+        const uuid = this.generateUUID();
+        uuidItem.insertText = new vscode.SnippetString(uuid);
+        uuidItem.detail = '⚡ Insert random UUID';
+        uuidItem.documentation = `插入随机UUID: ${uuid}`;
+        uuidItem.sortText = '0002';
+        uuidItem.filterText = 'von';
+        uuidItem.commitCharacters = ['\t', '\n'];
+        uuidItem.range = new vscode.Range(
+            position.translate(0, -3), // -3 for "von"
+            position
+        );
+        completionItems.push(uuidItem);
+        
+        return completionItems;
+    }
+    
+    /**
+     * 格式化时间为 YYYYMMDDHHMMSS 格式
+     */
+    private formatDateTime(date: Date): string {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        
+        return `${year}${month}${day}${hours}${minutes}${seconds}`;
+    }
+    
+    /**
+     * 生成随机 UUID (v4)
+     */
+    private generateUUID(): string {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+}

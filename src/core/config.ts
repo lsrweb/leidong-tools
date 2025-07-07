@@ -35,7 +35,14 @@ export const EXTENSION_CONFIG = {
     // 支持的文件类型
     SUPPORTED_LANGUAGES: {
         JAVASCRIPT: ['javascript', 'typescript', 'vue'],
-        COMPLETION_PATTERNS: ['**/*.dev.js']
+        COMPLETION_PATTERNS: ['**/*.dev.js'],
+        ALL_FILES: ['javascript', 'typescript', 'vue', 'html', 'css', 'json', 'markdown', 'plaintext']
+    },
+    
+    // Von 功能配置
+    VON: {
+        TRIGGER_TEXT: 'von',
+        TIME_FORMAT: 'YYYYMMDDHHMMSS'
     }
 } as const;
 
