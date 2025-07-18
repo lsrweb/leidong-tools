@@ -91,6 +91,11 @@
         "command": "leidong-tools.logSelectedVariable",
         "title": "Log Selected Variable in Next Line (Ctrl+Shift+L)",
         "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.showPerformanceReport",
+        "title": "Show Performance Report",
+        "category": "雷动三千工具集"
       }
     ],
     "keybindings": [

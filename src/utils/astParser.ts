@@ -1,5 +1,6 @@
 /**
- * 高性能 AST 解析工具 - 完全重写版本
+ * 高性能 AST 解析工具 - 重构版本
+ * 专注于变量跳转和定义查找
  */
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
@@ -13,664 +14,557 @@ interface IndexItem {
     location: { line: number; column: number };
     type: 'method' | 'computed' | 'data' | 'variable' | 'function' | 'mixin-method' | 'mixin-computed' | 'mixin-data';
     context: string; // Vue组件、mixin名称等
+    priority: number; // 优先级，用于排序
 }
 
-// 全局索引缓存
-// 全局索引和文档缓存系统
-const astIndexCache = new Map<string, IndexItem[]>();
-const documentCache = new Map<string, { timestamp: number; result: ParseResult }>();
+// 导入新的缓存和错误处理模块
+import { astIndexCache, documentParseCache } from './cacheManager';
+import { safeExecute, handleParseError, ErrorType } from './errorHandler';
 
-// Mixin分析结果类型
-interface MixinInfo {
-    type: 'variable' | 'object' | 'function';
-    name?: string;                  // 变量名称
-    node?: t.ObjectExpression;      // 对象字面量节点
-    functionPath?: any;             // 函数路径
-}
+// 优先级配置
+const PRIORITY_CONFIG = {
+    VUE_METHOD: 1,
+    VUE_COMPUTED: 2,
+    VUE_DATA: 3,
+    MIXIN_METHOD: 4,
+    MIXIN_COMPUTED: 5,
+    MIXIN_DATA: 6,
+    FUNCTION: 7,
+    VARIABLE: 8
+} as const;
 
 /**
- * 构建高效索引 - 只遍历一次AST
- */
-function buildASTIndex(scriptContent: string): IndexItem[] {
-    // 内部辅助函数：在函数中查找return对象
-    function findReturnObjectInFunction(funcNode: t.FunctionExpression | t.ArrowFunctionExpression): t.ObjectExpression | undefined {
-        if (t.isArrowFunctionExpression(funcNode) && t.isObjectExpression(funcNode.body)) {
-            return funcNode.body;
-        }
-
-        let returnObj: t.ObjectExpression | undefined;
-
-        if (t.isBlockStatement(funcNode.body)) {
-            for (const stmt of funcNode.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    returnObj = stmt.argument;
-                    break;
-                }
-            }
-        }
-
-        return returnObj;
-    }
-
-    // 内部辅助函数：在对象方法中查找return对象
-    function findReturnObjectInObjectMethod(methodNode: t.ObjectMethod): t.ObjectExpression | undefined {
-        let returnObj: t.ObjectExpression | undefined;
-
-        if (t.isBlockStatement(methodNode.body)) {
-            for (const stmt of methodNode.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    returnObj = stmt.argument;
-                    break;
-                }
-            }
-        }
-
-        return returnObj;
-    }
-
-    // 内部辅助函数：处理data返回对象中的属性
-    function processDataReturnProperties(objExpr: t.ObjectExpression, indexArray: IndexItem[], context: string = 'vue'): void {
-        if (!objExpr || !objExpr.properties) return;
-
-        for (const prop of objExpr.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                const propName = prop.key.name;
-                const loc = prop.loc;
-
-                if (loc) {
-                    // 确保数据属性被正确标记为Vue组件数据或mixin数据
-                    const type = context === 'vue' ? 'data' : 'mixin-data';
-                    indexArray.push({
-                        name: propName,
-                        location: { line: loc.start.line - 1, column: loc.start.column },
-                        type: type,
-                        context: context
-                    });
-
-                    console.log(`[AST Parser] 添加${type}属性: ${propName}, 上下文: ${context}`);
-                }
-            }
-        }
-    }
-
-    const cacheKey = scriptContent; // 简化缓存键
-    if (astIndexCache.has(cacheKey)) {
-        return astIndexCache.get(cacheKey)!;
-    }
-
-    const index: IndexItem[] = [];
-    const mixinVariables = new Set<string>();
-    const mixinObjects: MixinInfo[] = [];
-    const functionReturns = new Map<string, t.ObjectExpression>();
-    // 存储变量定义，用于解析mixins
-    const variableDefinitions = new Map<string, t.ObjectExpression | t.FunctionExpression | t.ArrowFunctionExpression>();
-    // 存储对象方法定义，用于解析data方法等
-    const objectMethods = new Map<string, { parentContext: string; node: t.ObjectMethod }>();
-
-    try {
-        const ast = parser.parse(scriptContent, {
-            sourceType: 'module',
-            plugins: ['jsx'],
-            errorRecovery: true,
-        });        // 第一次遍历：收集所有变量和函数定义
-        traverse(ast, {
-            // 收集变量定义，用于后续解析mixins
-            VariableDeclarator(path) {
-                if (t.isIdentifier(path.node.id)) {
-                    const name = path.node.id.name;
-                    if (path.node.init) {
-                        if (t.isObjectExpression(path.node.init)) {
-                            variableDefinitions.set(name, path.node.init);
-                        } else if (t.isFunctionExpression(path.node.init) || t.isArrowFunctionExpression(path.node.init)) {
-                            variableDefinitions.set(name, path.node.init);
-                        }
-                    }
-                }
-            },
-
-            // 收集函数定义，处理类似 function fanganMixin() {} 的情况
-            FunctionDeclaration(path) {
-                if (path.node.id && t.isIdentifier(path.node.id)) {
-                    const name = path.node.id.name;
-
-                    // 查找函数体中的return语句
-                    let returnObj: t.ObjectExpression | undefined;
-                    if (t.isBlockStatement(path.node.body)) {
-                        for (const stmt of path.node.body.body) {
-                            if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                                // 找到函数的返回对象，尝试检查是否是mixin对象
-                                returnObj = stmt.argument;
-
-                                // 检查返回对象是否包含mixin相关的属性
-                                const hasMixinProps = returnObj.properties.some(prop => {
-                                    if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                                        return ['data', 'methods', 'computed'].includes(prop.key.name);
-                                    }
-                                    if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
-                                        return prop.key.name === 'data';
-                                    }
-                                    return false;
-                                });
-                                if (hasMixinProps) {
-                                    // 这是一个mixin函数，处理它的return对象
-                                    console.log(`[AST Parser] 发现mixin函数: ${name}`);
-                                    functionReturns.set(name, returnObj);
-
-                                    // 将返回的mixin对象添加到mixinObjects中，以便在第二阶段处理
-                                    mixinObjects.push({
-                                        type: 'function',
-                                        name: name
-                                    });
-
-                                    // 立即处理mixin函数返回对象中的data方法
-                                    for (const prop of returnObj.properties) {
-                                        if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.key.name === 'data') {
-                                            // 处理ObjectMethod形式的data方法
-                                            const dataReturnObj = findReturnObjectInObjectMethod(prop);
-                                            if (dataReturnObj) {
-                                                console.log(`[AST Parser] 处理mixin函数 ${name} 的data方法返回对象`);
-                                                processDataReturnProperties(dataReturnObj, index, name);
-                                            }
-                                        } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.key.name === 'data') {
-                                            // 处理ObjectProperty形式的data方法
-                                            if (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value)) {
-                                                const dataReturnObj = findReturnObjectInFunction(prop.value);
-                                                if (dataReturnObj) {
-                                                    console.log(`[AST Parser] 处理mixin函数 ${name} 的data属性返回对象`);
-                                                    processDataReturnProperties(dataReturnObj, index, name);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                break;
-                            }
-                        }
-                    }
-                }
-            },
-
-            // 收集函数返回值
-            ReturnStatement(path) {
-                if (t.isObjectExpression(path.node.argument) &&
-                    path.findParent(p => p.isFunctionDeclaration() || p.isFunctionExpression() || p.isArrowFunctionExpression())) {
-
-                    // 查找函数名
-                    let funcPath = path.findParent(p => p.isFunctionDeclaration() || p.isFunctionExpression() || p.isArrowFunctionExpression());
-                    let funcName = '';
-
-                    if (funcPath && funcPath.isFunctionDeclaration() && funcPath.node.id) {
-                        funcName = funcPath.node.id.name;
-                    } else if (funcPath && funcPath.parentPath && funcPath.parentPath.isVariableDeclarator() && t.isIdentifier(funcPath.parentPath.node.id)) {
-                        funcName = funcPath.parentPath.node.id.name;
-                    } else if (funcPath && funcPath.parentPath && funcPath.parentPath.isAssignmentExpression() && t.isIdentifier(funcPath.parentPath.node.left)) {
-                        funcName = funcPath.parentPath.node.left.name;
-                    }
-
-                    // 特殊处理：data方法中的返回值
-                    let isDataMethod = false;
-                    if (funcPath && funcPath.parentPath && funcPath.parentPath.isObjectProperty() &&
-                        t.isIdentifier(funcPath.parentPath.node.key) && funcPath.parentPath.node.key.name === 'data') {
-                        isDataMethod = true;
-                        funcName = 'data_return';
-                    } else if (funcPath && funcPath.isObjectMethod() && t.isIdentifier(funcPath.node.key) && funcPath.node.key.name === 'data') {
-                        isDataMethod = true;
-                        funcName = 'data_return';
-                    } else {
-                        // 检查函数返回值是否是一个mixin对象
-                        const returnObj = path.node.argument;
-                        const hasMixinProps = returnObj.properties.some(prop => {
-                            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                                return ['data', 'methods', 'computed'].includes(prop.key.name);
-                            }
-                            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
-                                return prop.key.name === 'data';
-                            }
-                            return false;
-                        });
-
-                        if (hasMixinProps && funcName) {
-                            // 这是一个mixin函数的返回值
-                            console.log(`[AST Parser] 发现mixin函数返回值: ${funcName}`);
-                            // 记录函数返回值是mixin对象
-                            mixinObjects.push({
-                                type: 'function',
-                                name: funcName
-                            });
-                        }
-                    }
-
-                    if (funcName) {
-                        functionReturns.set(funcName, path.node.argument);
-
-                        // 如果是data方法返回，直接处理属性
-                        if (isDataMethod) {
-                            processDataReturnProperties(path.node.argument, index);
-                        }
-                    }
-                }
-            },
-
-            // 收集对象方法，用于后续处理
-            ObjectMethod(path) {
-                if (t.isIdentifier(path.node.key)) {
-                    const keyName = path.node.key.name;
-
-                    // 特殊处理data方法
-                    if (keyName === 'data') {
-                        const parentContext = getVueContext(path) || 'unknown';
-                        objectMethods.set(keyName, { parentContext, node: path.node });
-                    }
-                }
-            },
-
-            // 收集mixins定义
-            ObjectProperty(path) {
-                if (t.isIdentifier(path.node.key) && path.node.key.name === 'mixins' &&
-                    t.isArrayExpression(path.node.value)) {
-
-                    path.node.value.elements.forEach(element => {
-                        // 处理变量引用
-                        if (t.isIdentifier(element)) {
-                            mixinVariables.add(element.name);
-                            mixinObjects.push({
-                                type: 'variable',
-                                name: element.name
-                            });
-                        }
-                        // 处理对象字面量
-                        else if (t.isObjectExpression(element)) {
-                            mixinObjects.push({
-                                type: 'object',
-                                node: element
-                            });
-                        }
-                        // 处理函数调用
-                        else if (t.isCallExpression(element) && t.isIdentifier(element.callee)) {
-                            mixinObjects.push({
-                                type: 'function',
-                                name: element.callee.name
-                            });
-                        }
-                    });
-                }
-            },
-
-            // 收集所有基本定义
-            enter(path) {
-                // 函数声明
-                if (path.isFunctionDeclaration() && path.node.id && t.isIdentifier(path.node.id)) {
-                    const loc = path.node.loc;
-                    if (loc) {
-                        index.push({
-                            name: path.node.id.name,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: 'function',
-                            context: 'global'
-                        });
-                    }
-                    return;
-                }
-
-                // 变量声明
-                if (path.isVariableDeclarator() && t.isIdentifier(path.node.id)) {
-                    const loc = path.node.loc;
-                    if (loc) {
-                        index.push({
-                            name: path.node.id.name,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: 'variable',
-                            context: 'global'
-                        });
-                    }
-                }
-
-                // Vue组件属性：methods, computed, data
-                if (path.isObjectProperty() && t.isIdentifier(path.node.key)) {
-                    const keyName = path.node.key.name;
-                    const loc = path.node.loc;
-                    if (!loc) return;
-
-                    // 检查父级上下文
-                    const parentContext = getVueContext(path);
-                    if (parentContext) {
-                        const itemType = getItemType(parentContext, path.node.value);
-                        index.push({
-                            name: keyName,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: itemType,
-                            context: parentContext
-                        });
-                        return;
-                    }
-
-                    // 检查mixin定义
-                    const mixinContext = getMixinContext(path, mixinVariables);
-                    if (mixinContext) {
-                        const itemType = getMixinItemType(mixinContext.type, path.node.value);
-                        index.push({
-                            name: keyName,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: itemType,
-                            context: mixinContext.name
-                        });
-                    }
-                }
-
-                // Vue组件方法（ObjectMethod语法）
-                if (path.isObjectMethod() && t.isIdentifier(path.node.key)) {
-                    const keyName = path.node.key.name;
-                    const loc = path.node.loc;
-                    if (!loc) return;
-
-                    const parentContext = getVueContext(path);
-                    if (parentContext) {
-                        index.push({
-                            name: keyName,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: parentContext === 'computed' ? 'computed' : 'method',
-                            context: 'vue'
-                        });
-                        return;
-                    }
-
-                    const mixinContext = getMixinContext(path, mixinVariables);
-                    if (mixinContext) {
-                        index.push({
-                            name: keyName,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: mixinContext.type === 'computed' ? 'mixin-computed' : 'mixin-method',
-                            context: mixinContext.name
-                        });
-                    }
-                }
-            }
-        });
-
-        // 第二次处理：解析mixins和函数返回值
-
-        // 1. 处理mixins
-        for (const mixinInfo of mixinObjects) {
-            if (mixinInfo.type === 'variable' && mixinInfo.name) {
-                // 查找变量定义
-                const mixinDef = variableDefinitions.get(mixinInfo.name);
-                if (mixinDef) {
-                    if (t.isObjectExpression(mixinDef)) {
-                        // 直接处理对象字面量
-                        processMixinObjectExpression(mixinDef, mixinInfo.name, index);
-                    } else if (t.isFunctionExpression(mixinDef) || t.isArrowFunctionExpression(mixinDef)) {
-                        // 处理函数返回值
-                        const returnObj = functionReturns.get(mixinInfo.name);
-                        if (returnObj) {
-                            processMixinObjectExpression(returnObj, mixinInfo.name, index);
-                        }
-                    }
-                }
-            } else if (mixinInfo.type === 'object' && mixinInfo.node) {
-                // 直接处理对象字面量
-                processMixinObjectExpression(mixinInfo.node, 'inlineMixin', index);
-            } else if (mixinInfo.type === 'function' && mixinInfo.name) {
-                // 查找函数返回值
-                const returnObj = functionReturns.get(mixinInfo.name);
-                if (returnObj) {
-                    processMixinObjectExpression(returnObj, mixinInfo.name, index);
-                }
-            }
-        }
-
-        // 2. 处理data方法
-        const dataReturn = functionReturns.get('data_return');
-        if (dataReturn) {
-            processDataReturnProperties(dataReturn, index);
-        }
-
-        // 缓存结果
-        astIndexCache.set(cacheKey, index);
-        return index;
-
-        // 内部辅助函数：处理mixin对象
-        function processMixinObjectExpression(objExpr: t.ObjectExpression, mixinName: string, indexArray: IndexItem[]): void {
-            // 遍历对象属性
-            for (const prop of objExpr.properties) {
-                // 处理方法、计算属性和数据对象
-                if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                    const sectionName = prop.key.name;
-                    if (sectionName === 'methods' && t.isObjectExpression(prop.value)) {
-                        // 处理methods
-                        processMixinSection(prop.value, 'methods', mixinName, indexArray);
-                    } else if (sectionName === 'computed' && t.isObjectExpression(prop.value)) {
-                        // 处理computed
-                        processMixinSection(prop.value, 'computed', mixinName, indexArray);
-                    } else if (sectionName === 'data' && (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value))) {
-                        // data函数，查找返回值
-                        const dataReturnKey = `${mixinName}_data_return`;
-                        const returnObj = functionReturns.get(dataReturnKey) || findReturnObjectInFunction(prop.value);
-                        if (returnObj) {
-                            // 处理data属性，确保它们被标记为mixin-data类型，并关联到正确的mixin上下文
-                            processDataReturnProperties(returnObj, indexArray, mixinName);
-                        }
-                    }
-                } else if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
-                    const methodName = prop.key.name; if (methodName === 'data') {
-                        // data方法，在函数体中查找return语句
-                        const returnObj = findReturnObjectInObjectMethod(prop);
-                        if (returnObj) {
-                            // 处理data属性，确保它们被标记为mixin-data类型
-                            processDataReturnProperties(returnObj, indexArray, mixinName);
-                        }
-                    }
-                }
-            }
-        }
-
-        // 内部辅助函数：处理mixin对象中的section
-        function processMixinSection(objExpr: t.ObjectExpression, sectionType: string, mixinName: string, indexArray: IndexItem[]): void {
-            for (const prop of objExpr.properties) {
-                if ((t.isObjectProperty(prop) || t.isObjectMethod(prop)) && t.isIdentifier(prop.key)) {
-                    const propName = prop.key.name;
-                    const loc = prop.loc;
-
-                    if (loc) {
-                        let type: IndexItem['type'];
-                        switch (sectionType) {
-                            case 'methods':
-                                type = 'mixin-method';
-                                break;
-                            case 'computed':
-                                type = 'mixin-computed';
-                                break;
-                            case 'data':
-                                type = 'mixin-data';
-                                break;
-                            default:
-                                type = 'mixin-method';
-                        }
-
-                        indexArray.push({
-                            name: propName,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type,
-                            context: mixinName
-                        });
-                    }
-                }
-            }
-        }
-        // 内部辅助函数：处理data返回对象中的属性
-        function processDataReturnProperties(objExpr: t.ObjectExpression, indexArray: IndexItem[], context: string = 'vue'): void {
-            if (!objExpr || !objExpr.properties) return;
-
-            for (const prop of objExpr.properties) {
-                if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                    const propName = prop.key.name;
-                    const loc = prop.loc;
-
-                    if (loc) {
-                        // 确保数据属性被正确标记为Vue组件数据或mixin数据
-                        const type = context === 'vue' ? 'data' : 'mixin-data';
-                        indexArray.push({
-                            name: propName,
-                            location: { line: loc.start.line - 1, column: loc.start.column },
-                            type: type,
-                            context: context
-                        });
-
-                        console.log(`[AST Parser] 添加${type}属性: ${propName}, 上下文: ${context}`);
-                    }
-                }
-            }
-        }
-    } catch (error) {
-        console.error('[AST Parser] Error building index:', error);
-        return [];
-    }
-}
-
-/**
- * 获取Vue组件上下文
- */
-function getVueContext(path: any): string | null {
-    let current = path.parentPath;
-    while (current) {
-        if (current.isObjectProperty() && t.isIdentifier(current.node.key)) {
-            const sectionName = current.node.key.name;
-            if (['methods', 'computed', 'data'].includes(sectionName)) {
-                return sectionName;
-            }
-        }
-
-        // 检查data函数的返回对象
-        if (current.isReturnStatement()) {
-            let funcPath = current.parentPath;
-            while (funcPath && !funcPath.isFunctionExpression() && !funcPath.isArrowFunctionExpression()) {
-                funcPath = funcPath.parentPath;
-            }
-            if (funcPath?.parentPath?.isObjectProperty() &&
-                t.isIdentifier(funcPath.parentPath.node.key) &&
-                funcPath.parentPath.node.key.name === 'data') {
-                return 'data';
-            }
-        }
-
-        current = current.parentPath;
-    }
-    return null;
-}
-
-/**
- * 获取mixin上下文
- */
-function getMixinContext(path: any, mixinVariables: Set<string>): { name: string; type: string } | null {
-    let current = path.parentPath;
-    while (current) {
-        // 检查是否在mixin的methods/computed/data中
-        if (current.isObjectProperty() && t.isIdentifier(current.node.key)) {
-            const sectionName = current.node.key.name;
-            if (['methods', 'computed', 'data'].includes(sectionName)) {
-                // 继续向上查找mixin变量声明
-                let mixinPath = current.parentPath;
-                while (mixinPath) {
-                    if (mixinPath.isVariableDeclarator() &&
-                        t.isIdentifier(mixinPath.node.id) &&
-                        mixinVariables.has(mixinPath.node.id.name)) {
-                        return { name: mixinPath.node.id.name, type: sectionName };
-                    }
-                    mixinPath = mixinPath.parentPath;
-                }
-            }
-        }
-        current = current.parentPath;
-    }
-    return null;
-}
-
-/**
- * 获取项目类型
- */
-function getItemType(context: string, value: any): IndexItem['type'] {
-    switch (context) {
-        case 'methods':
-            return 'method';
-        case 'computed':
-            return 'computed';
-        case 'data':
-            return 'data';
-        default:
-            return t.isFunctionExpression(value) || t.isArrowFunctionExpression(value) ? 'method' : 'data';
-    }
-}
-
-/**
- * 获取mixin项目类型
- */
-function getMixinItemType(context: string, value: any): IndexItem['type'] {
-    switch (context) {
-        case 'methods':
-            return 'mixin-method';
-        case 'computed':
-            return 'mixin-computed';
-        case 'data':
-            return 'mixin-data';
-        default:
-            return t.isFunctionExpression(value) || t.isArrowFunctionExpression(value) ? 'mixin-method' : 'mixin-data';
-    }
-}
-
-/**
- * 解析搜索词
+ * 解析搜索词，提取目标名称和调用类型
  */
 function parseSearchWord(searchWord: string): { targetName: string; isThisCall: boolean; subProperty: string } {
-    // 移除括号
-    const cleanWord = searchWord.includes('(') ? searchWord.split('(')[0] : searchWord;
+    const isThisCall = searchWord.startsWith('this.');
+    const targetName = isThisCall ? searchWord.substring(5).split('(')[0] : searchWord.split('.')[0];
+    const subProperty = searchWord.includes('.') ? searchWord.split('.').slice(1).join('.') : '';
+    
+    return { targetName, isThisCall, subProperty };
+}
 
-    // 处理this.xxx, that.xxx
-    if (cleanWord.startsWith('this.') || cleanWord.startsWith('that.')) {
-        const parts = cleanWord.substring(5).split('.');
-        return {
-            targetName: parts[0],
-            isThisCall: true,
-            subProperty: parts.slice(1).join('.')
-        };
+/**
+ * 获取项目类型的优先级
+ */
+function getItemPriority(type: IndexItem['type'], isThisCall: boolean): number {
+    if (isThisCall) {
+        // this调用时，Vue相关项优先级更高
+        switch (type) {
+            case 'method': return PRIORITY_CONFIG.VUE_METHOD;
+            case 'computed': return PRIORITY_CONFIG.VUE_COMPUTED;
+            case 'data': return PRIORITY_CONFIG.VUE_DATA;
+            case 'mixin-method': return PRIORITY_CONFIG.MIXIN_METHOD;
+            case 'mixin-computed': return PRIORITY_CONFIG.MIXIN_COMPUTED;
+            case 'mixin-data': return PRIORITY_CONFIG.MIXIN_DATA;
+            default: return PRIORITY_CONFIG.VARIABLE;
+        }
+    } else {
+        // 普通调用时，函数和方法优先级更高
+        switch (type) {
+            case 'function':
+            case 'method':
+            case 'mixin-method': return PRIORITY_CONFIG.FUNCTION;
+            default: return PRIORITY_CONFIG.VARIABLE;
+        }
     }
+}
 
+/**
+ * 创建索引项
+ */
+function createIndexItem(
+    name: string,
+    location: { line: number; column: number },
+    type: IndexItem['type'],
+    context: string = 'vue'
+): IndexItem {
     return {
-        targetName: cleanWord,
-        isThisCall: false,
-        subProperty: ''
+        name,
+        location,
+        type,
+        context,
+        priority: getItemPriority(type, false)
     };
 }
 
 /**
- * 高效查找定义 - 直接从索引查找，利用Map加速查找
+ * Vue组件解析器
  */
-export function parseAST(scriptContent: string, searchWord: string, isThisCall: boolean): { line: number; column: number } | null {
-    console.time('[AST Parser] 查找定义耗时');
-    try {
-        const { targetName, isThisCall: parsedIsThisCall, subProperty } = parseSearchWord(searchWord);
-        const shouldUseThisCall = isThisCall || parsedIsThisCall;
+class VueComponentParser {
+    private index: IndexItem[] = [];
 
-        console.log(`[AST Parser] 快速查找: ${targetName}, isThisCall: ${shouldUseThisCall}, 子属性: ${subProperty}`);
-
-        // 构建索引
-        const index = buildASTIndex(scriptContent);
-
-        // 创建名称到索引项的映射，加速查找
-        const nameToItems = new Map<string, IndexItem[]>();
-        for (const item of index) {
-            if (!nameToItems.has(item.name)) {
-                nameToItems.set(item.name, []);
+    /**
+     * 解析Vue组件结构
+     */
+    parseVueComponent(ast: t.File): void {
+        traverse(ast, {
+            // 处理Vue组件对象
+            ObjectExpression: (path) => {
+                this.processVueObject(path);
+            },
+            
+            // 处理函数声明（mixin函数）
+            FunctionDeclaration: (path) => {
+                this.processMixinFunction(path);
+            },
+            
+            // 处理变量声明
+            VariableDeclarator: (path) => {
+                this.processVariableDeclaration(path);
             }
-            nameToItems.get(item.name)!.push(item);
+        });
+    }
+
+    /**
+     * 处理Vue组件对象
+     */
+    private processVueObject(path: any): void {
+        const properties = path.node.properties;
+        if (!properties) return;
+
+        // 检查是否是Vue组件对象
+        const hasVueProps = properties.some((prop: any) => {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
+                return ['data', 'methods', 'computed', 'mixins'].includes(prop.key.name);
+            }
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
+                return ['data', 'methods', 'computed'].includes(prop.key.name);
+            }
+            return false;
+        });
+
+        if (!hasVueProps) return;
+
+        // 处理Vue组件的各个部分
+        for (const prop of properties) {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
+                switch (prop.key.name) {
+                    case 'data':
+                        this.processDataProperty(prop);
+                        break;
+                    case 'methods':
+                        this.processMethodsProperty(prop);
+                        break;
+                    case 'computed':
+                        this.processComputedProperty(prop);
+                        break;
+                    case 'mixins':
+                        this.processMixinsProperty(prop);
+                        break;
+                }
+            } else if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
+                switch (prop.key.name) {
+                    case 'data':
+                        this.processDataMethod(prop);
+                        break;
+                    case 'methods':
+                        this.processMethodsMethod(prop);
+                        break;
+                    case 'computed':
+                        this.processComputedMethod(prop);
+                        break;
+                }
+            }
+        }
+    }
+
+    /**
+     * 处理data属性
+     */
+    private processDataProperty(prop: t.ObjectProperty): void {
+        if (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value)) {
+            const returnObj = this.findReturnObject(prop.value);
+            if (returnObj) {
+                this.processDataReturnObject(returnObj);
+            }
+        }
+    }
+
+    /**
+     * 处理data方法
+     */
+    private processDataMethod(method: t.ObjectMethod): void {
+        const returnObj = this.findReturnObjectInMethod(method);
+        if (returnObj) {
+            this.processDataReturnObject(returnObj);
+        }
+    }
+
+    /**
+     * 处理methods属性
+     */
+    private processMethodsProperty(prop: t.ObjectProperty): void {
+        if (t.isObjectExpression(prop.value)) {
+            this.processMethodsObject(prop.value);
+        }
+    }
+
+    /**
+     * 处理methods方法
+     */
+    private processMethodsMethod(method: t.ObjectMethod): void {
+        if (t.isBlockStatement(method.body)) {
+            for (const stmt of method.body.body) {
+                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
+                    this.processMethodsObject(stmt.argument);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * 处理computed属性
+     */
+    private processComputedProperty(prop: t.ObjectProperty): void {
+        if (t.isObjectExpression(prop.value)) {
+            this.processComputedObject(prop.value);
+        }
+    }
+
+    /**
+     * 处理computed方法
+     */
+    private processComputedMethod(method: t.ObjectMethod): void {
+        if (t.isBlockStatement(method.body)) {
+            for (const stmt of method.body.body) {
+                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
+                    this.processComputedObject(stmt.argument);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * 处理mixins属性
+     */
+    private processMixinsProperty(prop: t.ObjectProperty): void {
+        if (t.isArrayExpression(prop.value)) {
+            for (const element of prop.value.elements) {
+                if (t.isIdentifier(element)) {
+                    // 这里可以进一步处理mixin引用
+                    console.log(`[Vue Parser] Found mixin reference: ${element.name}`);
+                }
+            }
+        }
+    }
+
+    /**
+     * 处理data返回对象
+     */
+    private processDataReturnObject(objExpr: t.ObjectExpression): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'data',
+                    'vue'
+                ));
+            }
+        }
+    }
+
+    /**
+     * 处理方法对象
+     */
+    private processMethodsObject(objExpr: t.ObjectExpression): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'method',
+                    'vue'
+                ));
+            } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'method',
+                    'vue'
+                ));
+            }
+        }
+    }
+
+    /**
+     * 处理计算属性对象
+     */
+    private processComputedObject(objExpr: t.ObjectExpression): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'computed',
+                    'vue'
+                ));
+            } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'computed',
+                    'vue'
+                ));
+            }
+        }
+    }
+
+    /**
+     * 处理mixin函数
+     */
+    private processMixinFunction(path: any): void {
+        if (!path.node.id || !t.isIdentifier(path.node.id)) return;
+
+        const functionName = path.node.id.name;
+        const returnObj = this.findReturnObjectInFunction(path.node);
+        
+        if (returnObj) {
+            // 处理mixin返回对象
+            this.processMixinReturnObject(returnObj, functionName);
+        }
+    }
+
+    /**
+     * 处理变量声明
+     */
+    private processVariableDeclaration(path: any): void {
+        if (t.isIdentifier(path.node.id) && path.node.init && path.node.loc) {
+            const name = path.node.id.name;
+            
+            // 检查是否是函数或对象
+            if (t.isFunctionExpression(path.node.init) || t.isArrowFunctionExpression(path.node.init)) {
+                this.index.push(createIndexItem(
+                    name,
+                    { line: path.node.loc.start.line - 1, column: path.node.loc.start.column },
+                    'function',
+                    'global'
+                ));
+            } else if (t.isObjectExpression(path.node.init)) {
+                // 检查是否是mixin对象
+                const hasMixinProps = path.node.init.properties.some((prop: any) => {
+                    if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
+                        return ['data', 'methods', 'computed'].includes(prop.key.name);
+                    }
+                    return false;
+                });
+
+                if (hasMixinProps) {
+                    this.processMixinReturnObject(path.node.init, name);
+                } else {
+                    this.index.push(createIndexItem(
+                        name,
+                        { line: path.node.loc.start.line - 1, column: path.node.loc.start.column },
+                        'variable',
+                        'global'
+                    ));
+                }
+            } else {
+                this.index.push(createIndexItem(
+                    name,
+                    { line: path.node.loc.start.line - 1, column: path.node.loc.start.column },
+                    'variable',
+                    'global'
+                ));
+            }
+        }
+    }
+
+    /**
+     * 处理mixin返回对象
+     */
+    private processMixinReturnObject(objExpr: t.ObjectExpression, mixinName: string): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
+                switch (prop.key.name) {
+                    case 'data':
+                        if (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value)) {
+                            const returnObj = this.findReturnObject(prop.value);
+                            if (returnObj) {
+                                this.processMixinDataReturnObject(returnObj, mixinName);
+                            }
+                        }
+                        break;
+                    case 'methods':
+                        if (t.isObjectExpression(prop.value)) {
+                            this.processMixinMethodsObject(prop.value, mixinName);
+                        }
+                        break;
+                    case 'computed':
+                        if (t.isObjectExpression(prop.value)) {
+                            this.processMixinComputedObject(prop.value, mixinName);
+                        }
+                        break;
+                }
+            }
+        }
+    }
+
+    /**
+     * 处理mixin data返回对象
+     */
+    private processMixinDataReturnObject(objExpr: t.ObjectExpression, mixinName: string): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'mixin-data',
+                    mixinName
+                ));
+            }
+        }
+    }
+
+    /**
+     * 处理mixin methods对象
+     */
+    private processMixinMethodsObject(objExpr: t.ObjectExpression, mixinName: string): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'mixin-method',
+                    mixinName
+                ));
+            }
+        }
+    }
+
+    /**
+     * 处理mixin computed对象
+     */
+    private processMixinComputedObject(objExpr: t.ObjectExpression, mixinName: string): void {
+        for (const prop of objExpr.properties) {
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                this.index.push(createIndexItem(
+                    prop.key.name,
+                    { line: prop.loc.start.line - 1, column: prop.loc.start.column },
+                    'mixin-computed',
+                    mixinName
+                ));
+            }
+        }
+    }
+
+    /**
+     * 查找函数返回对象
+     */
+    private findReturnObject(funcNode: t.FunctionExpression | t.ArrowFunctionExpression): t.ObjectExpression | undefined {
+        if (t.isArrowFunctionExpression(funcNode) && t.isObjectExpression(funcNode.body)) {
+            return funcNode.body;
         }
 
-        // 直接从Map中获取匹配项
-        const matchItems = nameToItems.get(targetName);
-        if (matchItems && matchItems.length > 0) {
-            // 根据调用类型优先级排序
-            const sortedItems = sortItemsByPriority(matchItems, shouldUseThisCall);
+        if (t.isBlockStatement(funcNode.body)) {
+            for (const stmt of funcNode.body.body) {
+                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
+                    return stmt.argument;
+                }
+            }
+        }
 
-            // 取优先级最高的项
+        return undefined;
+    }
+
+    /**
+     * 查找方法返回对象
+     */
+    private findReturnObjectInMethod(methodNode: t.ObjectMethod): t.ObjectExpression | undefined {
+        if (t.isBlockStatement(methodNode.body)) {
+            for (const stmt of methodNode.body.body) {
+                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
+                    return stmt.argument;
+                }
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * 查找函数返回对象
+     */
+    private findReturnObjectInFunction(funcNode: t.FunctionDeclaration): t.ObjectExpression | undefined {
+        if (t.isBlockStatement(funcNode.body)) {
+            for (const stmt of funcNode.body.body) {
+                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
+                    return stmt.argument;
+                }
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * 获取解析结果
+     */
+    getIndex(): IndexItem[] {
+        return this.index;
+    }
+}
+
+/**
+ * 构建高效索引
+ */
+async function buildASTIndex(scriptContent: string): Promise<IndexItem[]> {
+    const cacheKey = scriptContent;
+    
+    // 检查缓存
+    const cachedIndex = astIndexCache.getIndex(cacheKey);
+    if (cachedIndex) {
+        return cachedIndex;
+    }
+
+    const result = await safeExecute(() => {
+        const ast = parser.parse(scriptContent, {
+            sourceType: 'module',
+            plugins: ['jsx'],
+            errorRecovery: true,
+        });
+
+        const vueParser = new VueComponentParser();
+        vueParser.parseVueComponent(ast);
+        
+        const index = vueParser.getIndex();
+        
+        // 缓存结果
+        astIndexCache.setIndex(cacheKey, index);
+        
+        console.log(`[AST Parser] 构建索引完成，共 ${index.length} 个项目`);
+        return index;
+    }, ErrorType.PARSE_ERROR);
+    
+    return result || [];
+}
+
+/**
+ * 查找定义 - 主要入口函数
+ */
+export async function parseAST(scriptContent: string, searchWord: string, isThisCall: boolean): Promise<{ line: number; column: number } | null> {
+    console.time('[AST Parser] 查找定义耗时');
+    
+    try {
+        const { targetName, isThisCall: parsedIsThisCall } = parseSearchWord(searchWord);
+        const shouldUseThisCall = isThisCall || parsedIsThisCall;
+
+        console.log(`[AST Parser] 查找: ${targetName}, isThisCall: ${shouldUseThisCall}`);
+
+        // 构建索引
+        const index = await buildASTIndex(scriptContent);
+
+        // 查找匹配项
+        const matchItems = index.filter(item => item.name === targetName);
+        
+        if (matchItems.length > 0) {
+            // 根据调用类型重新计算优先级并排序
+            const sortedItems = matchItems.map(item => ({
+                ...item,
+                priority: getItemPriority(item.type, shouldUseThisCall)
+            })).sort((a, b) => a.priority - b.priority);
+
             const bestMatch = sortedItems[0];
             console.log(`[AST Parser] 找到最佳匹配: ${bestMatch.name} (${bestMatch.type}) 在 ${bestMatch.context}`);
             console.timeEnd('[AST Parser] 查找定义耗时');
@@ -681,67 +575,31 @@ export function parseAST(scriptContent: string, searchWord: string, isThisCall: 
         console.timeEnd('[AST Parser] 查找定义耗时');
         return null;
     } catch (error) {
-        console.error('[AST Parser] Error in parseAST:', error);
+        console.error('[AST Parser] 查找定义时出错:', error);
         console.timeEnd('[AST Parser] 查找定义耗时');
         return null;
     }
 }
 
 /**
- * 按优先级对找到的项目排序
- */
-function sortItemsByPriority(items: IndexItem[], isThisCall: boolean): IndexItem[] {
-    return items.slice().sort((a, b) => {
-        // 如果是this调用，优先Vue相关项
-        if (isThisCall) {
-            const aIsVue = ['method', 'computed', 'data', 'mixin-method', 'mixin-computed', 'mixin-data'].includes(a.type);
-            const bIsVue = ['method', 'computed', 'data', 'mixin-method', 'mixin-computed', 'mixin-data'].includes(b.type);
-
-            if (aIsVue && !bIsVue) return -1;
-            if (!aIsVue && bIsVue) return 1;
-
-            // Vue组件内部优先级: method > computed > data
-            if (aIsVue && bIsVue) {
-                const typeOrder: Record<string, number> = {
-                    'method': 1,
-                    'computed': 2,
-                    'data': 3,
-                    'mixin-method': 4,
-                    'mixin-computed': 5,
-                    'mixin-data': 6
-                };
-                return typeOrder[a.type] - typeOrder[b.type];
-            }
-        }
-
-        // 普通调用，优先函数和方法
-        const aIsFunc = ['function', 'method', 'mixin-method'].includes(a.type);
-        const bIsFunc = ['function', 'method', 'mixin-method'].includes(b.type);
-
-        if (aIsFunc && !bIsFunc) return -1;
-        if (!aIsFunc && bIsFunc) return 1;
-
-        return 0;
-    });
-}
-
-/**
- * 高效解析文档，提取变量和方法 - 完全重写版
- * 直接利用缓存的索引，不再重复遍历AST
+ * 解析文档，提取变量和方法
  */
 export async function parseDocument(document: vscode.TextDocument): Promise<ParseResult | null> {
     const text = document.getText();
     const filename = document.fileName;
-    console.time('[AST Parser] 解析文档耗时'); try {
-        // 使用已经构建的索引，一次构建多次使用
-        const index = buildASTIndex(text);
+    
+    console.time('[AST Parser] 解析文档耗时');
+    
+    try {
+        // 使用已经构建的索引
+        const index = await buildASTIndex(text);
 
         // 初始化结果
         const variables: vscode.CompletionItem[] = [];
         const methods: vscode.CompletionItem[] = [];
         const thisReferences = new Map<string, vscode.CompletionItem>();
 
-        // 从索引直接转换为补全项，不再重复遍历AST
+        // 从索引转换为补全项
         for (const item of index) {
             const completionItem = new vscode.CompletionItem(
                 item.name,
@@ -787,7 +645,7 @@ export async function parseDocument(document: vscode.TextDocument): Promise<Pars
             timestamp: Date.now()
         };
     } catch (error) {
-        console.error(`[AST Parser] Error parsing ${filename}:`, error);
+        console.error(`[AST Parser] 解析文档 ${filename} 时出错:`, error);
         console.timeEnd('[AST Parser] 解析文档耗时');
         return {
             variables: [],

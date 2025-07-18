@@ -5,7 +5,8 @@ import * as vscode from 'vscode';
 import { 
     insertConsoleLog,
     quickInsertConsoleLog,
-    logSelectedVariable
+    logSelectedVariable,
+    performanceMonitor
 } from '../utils';
 import { compressMultipleLines } from '../utils/codeCompressor';
 import { findVueDefinition } from '../utils/vueHelper';
@@ -120,6 +121,13 @@ export function registerCommands(context: vscode.ExtensionContext) {    // Regis
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.LOG_SELECTED_VARIABLE, () => {
             logSelectedVariable();
+        })
+    );
+
+    // 注册性能报告命令
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.showPerformanceReport', async () => {
+            await performanceMonitor.showReport();
         })
     );
 }

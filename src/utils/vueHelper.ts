@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { parseAST } from './astParser';
+import { safeExecute, handleFileNotFoundError, ErrorType } from './errorHandler';
 
 /**
  * 查找 Vue 定义
@@ -69,16 +70,23 @@ export async function findVueDefinition(document: vscode.TextDocument, position:
         ];
 
         for (const jsFilePath of possibleJsFiles) {
-            try {
+            const fileContent = await safeExecute(() => {
                 if (fs.existsSync(jsFilePath)) {
-                    scriptContent = fs.readFileSync(jsFilePath, 'utf8');
-                    sourceUri = vscode.Uri.file(jsFilePath);
-                    scriptStartLine = 0; // External file starts at line 0
+                    const content = fs.readFileSync(jsFilePath, 'utf8');
                     console.log(`[HTML Vue Jump] Found external JS file: ${jsFilePath}`);
-                    break;
+                    return content;
                 }
-            } catch (error) {
-                console.warn(`[HTML Vue Jump] Error reading ${jsFilePath}:`, error);
+                return null;
+            }, ErrorType.FILE_NOT_FOUND, {
+                file: jsFilePath,
+                details: `尝试读取外部JS文件`
+            });
+
+            if (fileContent) {
+                scriptContent = fileContent;
+                sourceUri = vscode.Uri.file(jsFilePath);
+                scriptStartLine = 0; // External file starts at line 0
+                break;
             }
         }
     }
@@ -89,22 +97,24 @@ export async function findVueDefinition(document: vscode.TextDocument, position:
     }
 
     // --- Parse script content to find the method/variable ---
-    try {
-        const result = parseAST(scriptContent, searchWord, isThisCall);
-        if (result) {
-            const targetLine = scriptStartLine + result.line;
-            const targetColumn = result.column;
+    const result = await safeExecute(async () => {
+        return await parseAST(scriptContent, searchWord, isThisCall);
+    }, ErrorType.PARSE_ERROR, {
+        file: document.fileName,
+        details: `解析脚本内容查找定义: ${searchWord}`
+    });
 
-            const location = new vscode.Location(
-                sourceUri,
-                new vscode.Position(targetLine, targetColumn)
-            );
+    if (result) {
+        const targetLine = scriptStartLine + result.line;
+        const targetColumn = result.column;
 
-            console.log(`[HTML Vue Jump] Found definition at line ${targetLine}, column ${targetColumn}`);
-            return location;
-        }
-    } catch (error) {
-        console.error('[HTML Vue Jump] Error parsing script content:', error);
+        const location = new vscode.Location(
+            sourceUri,
+            new vscode.Position(targetLine, targetColumn)
+        );
+
+        console.log(`[HTML Vue Jump] Found definition at line ${targetLine}, column ${targetColumn}`);
+        return location;
     }
 
     console.log(`[HTML Vue Jump] Definition for '${searchWord}' not found.`);
