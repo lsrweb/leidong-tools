@@ -6,16 +6,21 @@ import {
     insertConsoleLog,
     quickInsertConsoleLog,
     logSelectedVariable,
-    performanceMonitor
+    performanceMonitor,
+    DefinitionLogic
 } from '../utils';
 import { compressMultipleLines } from '../utils/codeCompressor';
-import { findVueDefinition } from '../utils/vueHelper';
 import { COMMANDS } from './config';
+import { clearVueIndexCache } from '../utils/parseDocument';
+import { clearTemplateIndexCache, showTemplateIndexSummary } from '../utils/templateIndexer';
 
 /**
  * 注册所有命令
  */
-export function registerCommands(context: vscode.ExtensionContext) {    // Register the new command to open definition in a new tab
+export function registerCommands(context: vscode.ExtensionContext) {
+    const definitionLogic = new DefinitionLogic();
+    
+    // Register the new command to open definition in a new tab
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.GO_TO_DEFINITION_NEW_TAB, async () => {
             console.log('[HTML Vue Jump] goToDefinitionInNewTab command triggered.');
@@ -29,10 +34,10 @@ export function registerCommands(context: vscode.ExtensionContext) {    // Regis
             const document = editor.document;
             const position = editor.selection.active;
 
-            // Use the helper function to find the definition
-            console.log('[HTML Vue Jump] Calling findVueDefinition...');
-            const location = await findVueDefinition(document, position);
-            console.log('[HTML Vue Jump] findVueDefinition returned:', location);
+            // Use the new definition logic to find the definition
+            console.log('[HTML Vue Jump] Calling definitionLogic.provideDefinition...');
+            const location = await definitionLogic.provideDefinition(document, position);
+            console.log('[HTML Vue Jump] definitionLogic.provideDefinition returned:', location);
 
             if (location) {
                 try {
@@ -128,6 +133,33 @@ export function registerCommands(context: vscode.ExtensionContext) {    // Regis
     context.subscriptions.push(
         vscode.commands.registerCommand('leidong-tools.showPerformanceReport', async () => {
             await performanceMonitor.showReport();
+        })
+    );
+
+    // 清理索引缓存命令（内部）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.clearIndexCache', () => {
+            clearVueIndexCache();
+            clearTemplateIndexCache();
+            vscode.window.showInformationMessage('索引缓存已清理');
+        })
+    );
+
+    // 展示索引摘要
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.showIndexSummary', () => {
+            showTemplateIndexSummary();
+            vscode.window.showInformationMessage('已输出索引摘要到控制台');
+        })
+    );
+
+    // 切换日志
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.toggleIndexLogging', async () => {
+            const cfg = vscode.workspace.getConfiguration('leidong-tools');
+            const current = cfg.get<boolean>('indexLogging', true) === true;
+            await cfg.update('indexLogging', !current, vscode.ConfigurationTarget.Workspace);
+            vscode.window.showInformationMessage(`Index Logging 已切换为 ${!current}`);
         })
     );
 }

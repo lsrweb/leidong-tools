@@ -1,5 +1,35 @@
 # 更新日志
 
+## [1.1.0] - 2025-09-01 ✨ 模板索引与跳转增强
+
+### 新功能 🚀
+- **模板局部变量智能跳转**: 支持 `v-for` (含 `(item,index)` / 解构 / 单变量)、`slot-scope`、`v-slot`、`#slot` 语法内的局部变量索引与优先跳转。
+- **作用域判定**: 通过轻量标签栈估算变量生效范围，实现局部变量优先于 `data/methods`、`mixin` 命中。
+- **索引摘要命令**: 新增 `Show Index Summary (Template + Vue)`（`leidong-tools.showIndexSummary`）输出模板与 Vue 索引统计。
+- **日志开关命令**: 新增 `Toggle Index Logging`（`leidong-tools.toggleIndexLogging`）快速启用/关闭索引与跳转调试日志。
+- **统一缓存清理**: `Clear Vue Index Cache` 现同时清理模板索引缓存。
+
+### 性能与架构 🧠
+- **模板索引缓存 (LRU)**: 最多 50 份，超出按最久未访问淘汰，避免内存膨胀。
+- **Vue 索引 + 模板索引并行体系**: 模板局部 -> VueIndex(data > mixinData > methods > mixinMethods) 分层优先级更清晰。
+- **可配置日志**: 新增配置项 `leidong-tools.indexLogging` 控制 `[template-index]`、`[jump]`、`[build]` 等调试输出。
+
+### 调试与可观测性 🔍
+- 结构化日志前缀：`[template-index][build|hit]`、`[jump][html][template-hit]`、`[jump][js]` 等，便于过滤排查。
+- 清理命令增加模板索引同步清理，保证问题复现时可完全重建。
+
+### 兼容与稳定性 ✅
+- 不改变既有 `data/method` 跳转逻辑；在无模板局部变量命中时保持旧行为。
+- 代码增量式引入（`templateIndexer.ts`），对其他功能零侵入。
+
+### 后续规划 🔭
+- 指令/插值表达式内更细粒度 token 跳转
+- 嵌套链条更深层属性根定位
+- 更精确的作用域结束判定（自闭合/嵌套不完整场景）
+- 模板变量增量更新而非整文重建
+
+> 升级到 1.1.0 后即可直接使用新命令与局部变量跳转功能，如需关闭调试输出可运行 `Toggle Index Logging` 或在设置中关闭。
+
 ## [1.0.0] - 2025-05-29 🎉 正式版发布
 
 ### 重大优化和完善 🚀

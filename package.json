@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "雷动三千开发的VS Code效率工具集：Vue.js智能跳转、JavaScript补全、多行压缩、注释压缩、快速日志等功能",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "publisher": "KuCai",
   "icon": "logo.jpg",
   "repository": {
@@ -96,8 +96,33 @@
         "command": "leidong-tools.showPerformanceReport",
         "title": "Show Performance Report",
         "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.clearIndexCache",
+        "title": "Clear Vue Index Cache",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.showIndexSummary",
+        "title": "Show Index Summary (Template + Vue)",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.toggleIndexLogging",
+        "title": "Toggle Index Logging",
+        "category": "雷动三千工具集"
       }
     ],
+    "configuration": {
+      "title": "Leidong Tools",
+      "properties": {
+        "leidong-tools.indexLogging": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用/关闭索引与跳转调试日志"
+        }
+      }
+    },
     "keybindings": [
       {
         "command": "leidong-tools.logVariable",
@@ -193,6 +218,7 @@
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
+  "vsix": "vsce package",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -224,5 +250,6 @@
     "typescript": "^5.8.2",
     "webpack": "^5.98.0",
     "webpack-cli": "^6.0.1"
+  ,"@vscode/vsce": "^3.0.0"
   }
 }

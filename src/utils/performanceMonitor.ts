@@ -30,6 +30,57 @@ export interface PerformanceStats {
 }
 
 /**
+ * 性能监控装饰器
+ */
+// 宽松类型以兼容 TS 新旧装饰器实现
+export function monitor(operation: string): any {
+    // Support both legacy (experimentalDecorators) and new TC39 stage-3 decorator semantics
+    return function (...decoratorArgs: any[]) {
+        // New decorator: (value, context)
+        if (decoratorArgs.length === 2 && typeof decoratorArgs[1] === 'object' && decoratorArgs[1] !== null && 'kind' in decoratorArgs[1]) {
+            const [value, context] = decoratorArgs as [Function, any];
+            if (context.kind !== 'method') {
+                return value; // Only wrap methods
+            }
+            return async function(this: any, ...args: any[]) {
+                const stopTimer = performanceMonitor.startTimer(operation);
+                try {
+                    const result = await value.apply(this, args);
+                    stopTimer(true);
+                    return result;
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    stopTimer(false, { error: errorMessage });
+                    console.error(`[Performance] Operation "${operation}" failed: ${errorMessage}`);
+                    throw error;
+                }
+            };
+        }
+
+        // Legacy decorator: (target, propertyKey, descriptor)
+        const [target, propertyKey, descriptor] = decoratorArgs as [any, string | symbol, PropertyDescriptor | undefined];
+        if (!descriptor || typeof descriptor.value !== 'function') {
+            // Fallback: nothing to wrap to avoid runtime error
+            return;
+        }
+        const original = descriptor.value;
+        descriptor.value = async function(this: any, ...args: any[]) {
+            const stopTimer = performanceMonitor.startTimer(operation);
+            try {
+                const result = await original.apply(this, args);
+                stopTimer(true);
+                return result;
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                stopTimer(false, { error: errorMessage });
+                console.error(`[Performance] Operation "${operation}" failed: ${errorMessage}`);
+                throw error;
+            }
+        };
+    };
+}
+
+/**
  * 性能监控器类
  */
 export class PerformanceMonitor {
@@ -238,28 +289,6 @@ export class PerformanceMonitor {
 
 // 导出单例实例
 export const performanceMonitor = PerformanceMonitor.getInstance();
-
-/**
- * 性能监控装饰器
- */
-export function monitorPerformance(operation: string) {
-    return function (target: any, propertyName: string, descriptor: PropertyDescriptor) {
-        const method = descriptor.value;
-
-        descriptor.value = async function (...args: any[]) {
-            const stopTimer = performanceMonitor.startTimer(operation);
-            
-            try {
-                const result = await method.apply(this, args);
-                stopTimer(true);
-                return result;
-            } catch (error) {
-                stopTimer(false, { error: error instanceof Error ? error.message : String(error) });
-                throw error;
-            }
-        };
-    };
-}
 
 /**
  * 便捷的性能监控函数

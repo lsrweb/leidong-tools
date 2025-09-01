@@ -46,13 +46,16 @@ exports.registerCommands = registerCommands;
  */
 const vscode = __importStar(__webpack_require__(2));
 const utils_1 = __webpack_require__(3);
-const codeCompressor_1 = __webpack_require__(180);
-const vueHelper_1 = __webpack_require__(178);
-const config_1 = __webpack_require__(177);
+const codeCompressor_1 = __webpack_require__(181);
+const config_1 = __webpack_require__(178);
+const parseDocument_1 = __webpack_require__(184);
+const templateIndexer_1 = __webpack_require__(182);
 /**
  * 注册所有命令
  */
 function registerCommands(context) {
+    const definitionLogic = new utils_1.DefinitionLogic();
+    // Register the new command to open definition in a new tab
     context.subscriptions.push(vscode.commands.registerCommand(config_1.COMMANDS.GO_TO_DEFINITION_NEW_TAB, async () => {
         console.log('[HTML Vue Jump] goToDefinitionInNewTab command triggered.');
         const editor = vscode.window.activeTextEditor;
@@ -62,10 +65,10 @@ function registerCommands(context) {
         }
         const document = editor.document;
         const position = editor.selection.active;
-        // Use the helper function to find the definition
-        console.log('[HTML Vue Jump] Calling findVueDefinition...');
-        const location = await (0, vueHelper_1.findVueDefinition)(document, position);
-        console.log('[HTML Vue Jump] findVueDefinition returned:', location);
+        // Use the new definition logic to find the definition
+        console.log('[HTML Vue Jump] Calling definitionLogic.provideDefinition...');
+        const location = await definitionLogic.provideDefinition(document, position);
+        console.log('[HTML Vue Jump] definitionLogic.provideDefinition returned:', location);
         if (location) {
             try {
                 console.log('[HTML Vue Jump] Location found. Opening in new tab...');
@@ -131,6 +134,24 @@ function registerCommands(context) {
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.showPerformanceReport', async () => {
         await utils_1.performanceMonitor.showReport();
     }));
+    // 清理索引缓存命令（内部）
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.clearIndexCache', () => {
+        (0, parseDocument_1.clearVueIndexCache)();
+        (0, templateIndexer_1.clearTemplateIndexCache)();
+        vscode.window.showInformationMessage('索引缓存已清理');
+    }));
+    // 展示索引摘要
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.showIndexSummary', () => {
+        (0, templateIndexer_1.showTemplateIndexSummary)();
+        vscode.window.showInformationMessage('已输出索引摘要到控制台');
+    }));
+    // 切换日志
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.toggleIndexLogging', async () => {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        const current = cfg.get('indexLogging', true) === true;
+        await cfg.update('indexLogging', !current, vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage(`Index Logging 已切换为 ${!current}`);
+    }));
 }
 
 
@@ -165,13 +186,17 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 /**
  * 工具函数统一导出
  */
-__exportStar(__webpack_require__(4), exports);
-__exportStar(__webpack_require__(175), exports);
-__exportStar(__webpack_require__(178), exports);
-__exportStar(__webpack_require__(180), exports);
-__exportStar(__webpack_require__(174), exports);
-__exportStar(__webpack_require__(173), exports);
+// astParser 旧实现保留源码但不再对外导出
+__exportStar(__webpack_require__(176), exports);
+__exportStar(__webpack_require__(179), exports);
 __exportStar(__webpack_require__(181), exports);
+__exportStar(__webpack_require__(173), exports);
+__exportStar(__webpack_require__(174), exports);
+__exportStar(__webpack_require__(175), exports);
+// scriptFinder 已被新索引方案替代
+__exportStar(__webpack_require__(183), exports);
+__exportStar(__webpack_require__(184), exports);
+__exportStar(__webpack_require__(182), exports);
 
 
 /***/ }),
@@ -196,6 +221,12 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
 var __importStar = (this && this.__importStar) || (function () {
     var ownKeys = function(o) {
         ownKeys = Object.getOwnPropertyNames || function (o) {
@@ -217,578 +248,178 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AstParser = void 0;
 exports.parseAST = parseAST;
-exports.parseDocument = parseDocument;
 /**
- * 高性能 AST 解析工具 - 重构版本
- * 专注于变量跳转和定义查找
+ * @file astParser.ts
+ * @description 轻量级、专注的AST解析器，用于从JS代码中查找Vue定义
  */
+const vscode = __importStar(__webpack_require__(2));
 const parser = __importStar(__webpack_require__(5));
 const traverse_1 = __importDefault(__webpack_require__(6));
 const t = __importStar(__webpack_require__(25));
-const vscode = __importStar(__webpack_require__(2));
-// 导入新的缓存和错误处理模块
-const cacheManager_1 = __webpack_require__(173);
-const errorHandler_1 = __webpack_require__(174);
-// 优先级配置
-const PRIORITY_CONFIG = {
-    VUE_METHOD: 1,
-    VUE_COMPUTED: 2,
-    VUE_DATA: 3,
-    MIXIN_METHOD: 4,
-    MIXIN_COMPUTED: 5,
-    MIXIN_DATA: 6,
-    FUNCTION: 7,
-    VARIABLE: 8
-};
-/**
- * 解析搜索词，提取目标名称和调用类型
- */
-function parseSearchWord(searchWord) {
-    const isThisCall = searchWord.startsWith('this.');
-    const targetName = isThisCall ? searchWord.substring(5).split('(')[0] : searchWord.split('.')[0];
-    const subProperty = searchWord.includes('.') ? searchWord.split('.').slice(1).join('.') : '';
-    return { targetName, isThisCall, subProperty };
-}
-/**
- * 获取项目类型的优先级
- */
-function getItemPriority(type, isThisCall) {
-    if (isThisCall) {
-        // this调用时，Vue相关项优先级更高
-        switch (type) {
-            case 'method': return PRIORITY_CONFIG.VUE_METHOD;
-            case 'computed': return PRIORITY_CONFIG.VUE_COMPUTED;
-            case 'data': return PRIORITY_CONFIG.VUE_DATA;
-            case 'mixin-method': return PRIORITY_CONFIG.MIXIN_METHOD;
-            case 'mixin-computed': return PRIORITY_CONFIG.MIXIN_COMPUTED;
-            case 'mixin-data': return PRIORITY_CONFIG.MIXIN_DATA;
-            default: return PRIORITY_CONFIG.VARIABLE;
-        }
-    }
-    else {
-        // 普通调用时，函数和方法优先级更高
-        switch (type) {
-            case 'function':
-            case 'method':
-            case 'mixin-method': return PRIORITY_CONFIG.FUNCTION;
-            default: return PRIORITY_CONFIG.VARIABLE;
-        }
-    }
-}
-/**
- * 创建索引项
- */
-function createIndexItem(name, location, type, context = 'vue') {
-    return {
-        name,
-        location,
-        type,
-        context,
-        priority: getItemPriority(type, false)
-    };
-}
-/**
- * Vue组件解析器
- */
-class VueComponentParser {
-    index = [];
+const errorHandler_1 = __webpack_require__(173);
+const cacheManager_1 = __webpack_require__(174);
+const performanceMonitor_1 = __webpack_require__(175);
+class AstParser {
     /**
-     * 解析Vue组件结构
+     * 查找定义的主函数
+     * @param scriptSource 脚本源对象
+     * @param variableName 要查找的变量名
      */
-    parseVueComponent(ast) {
-        (0, traverse_1.default)(ast, {
-            // 处理Vue组件对象
-            ObjectExpression: (path) => {
-                this.processVueObject(path);
-            },
-            // 处理函数声明（mixin函数）
-            FunctionDeclaration: (path) => {
-                this.processMixinFunction(path);
-            },
-            // 处理变量声明
-            VariableDeclarator: (path) => {
-                this.processVariableDeclaration(path);
-            }
-        });
+    // 使用性能监控装饰器
+    async findDefinition(scriptSource, variableName) {
+        const definitions = await this.parseScriptForDefinitions(scriptSource);
+        if (!definitions) {
+            return null;
+        }
+        // 查找完全匹配的定义
+        const definition = definitions.find(def => def.name === variableName);
+        return definition ? definition.location : null;
     }
     /**
-     * 处理Vue组件对象
+     * 解析脚本以提取所有 data 和 methods 定义。
+     * 利用缓存机制避免重复解析。
+     * @param scriptSource
      */
-    processVueObject(path) {
-        const properties = path.node.properties;
-        if (!properties)
-            return;
-        // 检查是否是Vue组件对象
-        const hasVueProps = properties.some((prop) => {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                return ['data', 'methods', 'computed', 'mixins'].includes(prop.key.name);
-            }
-            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
-                return ['data', 'methods', 'computed'].includes(prop.key.name);
-            }
-            return false;
-        });
-        if (!hasVueProps)
-            return;
-        // 处理Vue组件的各个部分
-        for (const prop of properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                switch (prop.key.name) {
-                    case 'data':
-                        this.processDataProperty(prop);
-                        break;
-                    case 'methods':
-                        this.processMethodsProperty(prop);
-                        break;
-                    case 'computed':
-                        this.processComputedProperty(prop);
-                        break;
-                    case 'mixins':
-                        this.processMixinsProperty(prop);
-                        break;
-                }
-            }
-            else if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
-                switch (prop.key.name) {
-                    case 'data':
-                        this.processDataMethod(prop);
-                        break;
-                    case 'methods':
-                        this.processMethodsMethod(prop);
-                        break;
-                    case 'computed':
-                        this.processComputedMethod(prop);
-                        break;
-                }
-            }
+    async parseScriptForDefinitions(scriptSource) {
+        const cacheKey = scriptSource.content;
+        const cachedDefinitions = cacheManager_1.astIndexCache.getIndex(cacheKey);
+        if (cachedDefinitions) {
+            performanceMonitor_1.performanceMonitor.recordCacheHit();
+            return cachedDefinitions;
         }
-    }
-    /**
-     * 处理data属性
-     */
-    processDataProperty(prop) {
-        if (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value)) {
-            const returnObj = this.findReturnObject(prop.value);
-            if (returnObj) {
-                this.processDataReturnObject(returnObj);
-            }
-        }
-    }
-    /**
-     * 处理data方法
-     */
-    processDataMethod(method) {
-        const returnObj = this.findReturnObjectInMethod(method);
-        if (returnObj) {
-            this.processDataReturnObject(returnObj);
-        }
-    }
-    /**
-     * 处理methods属性
-     */
-    processMethodsProperty(prop) {
-        if (t.isObjectExpression(prop.value)) {
-            this.processMethodsObject(prop.value);
-        }
-    }
-    /**
-     * 处理methods方法
-     */
-    processMethodsMethod(method) {
-        if (t.isBlockStatement(method.body)) {
-            for (const stmt of method.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    this.processMethodsObject(stmt.argument);
-                    break;
-                }
-            }
-        }
-    }
-    /**
-     * 处理computed属性
-     */
-    processComputedProperty(prop) {
-        if (t.isObjectExpression(prop.value)) {
-            this.processComputedObject(prop.value);
-        }
-    }
-    /**
-     * 处理computed方法
-     */
-    processComputedMethod(method) {
-        if (t.isBlockStatement(method.body)) {
-            for (const stmt of method.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    this.processComputedObject(stmt.argument);
-                    break;
-                }
-            }
-        }
-    }
-    /**
-     * 处理mixins属性
-     */
-    processMixinsProperty(prop) {
-        if (t.isArrayExpression(prop.value)) {
-            for (const element of prop.value.elements) {
-                if (t.isIdentifier(element)) {
-                    // 这里可以进一步处理mixin引用
-                    console.log(`[Vue Parser] Found mixin reference: ${element.name}`);
-                }
-            }
-        }
-    }
-    /**
-     * 处理data返回对象
-     */
-    processDataReturnObject(objExpr) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'data', 'vue'));
-            }
-        }
-    }
-    /**
-     * 处理方法对象
-     */
-    processMethodsObject(objExpr) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'method', 'vue'));
-            }
-            else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'method', 'vue'));
-            }
-        }
-    }
-    /**
-     * 处理计算属性对象
-     */
-    processComputedObject(objExpr) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'computed', 'vue'));
-            }
-            else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'computed', 'vue'));
-            }
-        }
-    }
-    /**
-     * 处理mixin函数
-     */
-    processMixinFunction(path) {
-        if (!path.node.id || !t.isIdentifier(path.node.id))
-            return;
-        const functionName = path.node.id.name;
-        const returnObj = this.findReturnObjectInFunction(path.node);
-        if (returnObj) {
-            // 处理mixin返回对象
-            this.processMixinReturnObject(returnObj, functionName);
-        }
-    }
-    /**
-     * 处理变量声明
-     */
-    processVariableDeclaration(path) {
-        if (t.isIdentifier(path.node.id) && path.node.init && path.node.loc) {
-            const name = path.node.id.name;
-            // 检查是否是函数或对象
-            if (t.isFunctionExpression(path.node.init) || t.isArrowFunctionExpression(path.node.init)) {
-                this.index.push(createIndexItem(name, { line: path.node.loc.start.line - 1, column: path.node.loc.start.column }, 'function', 'global'));
-            }
-            else if (t.isObjectExpression(path.node.init)) {
-                // 检查是否是mixin对象
-                const hasMixinProps = path.node.init.properties.some((prop) => {
-                    if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                        return ['data', 'methods', 'computed'].includes(prop.key.name);
+        performanceMonitor_1.performanceMonitor.recordCacheMiss();
+        return (0, errorHandler_1.safeExecute)(() => {
+            const cleanContent = this.cleanupPhpAndOtherTemplates(scriptSource.content);
+            const ast = parser.parse(cleanContent, {
+                sourceType: 'module',
+                plugins: ['jsx'], // 保持对JSX的支持
+                errorRecovery: true, // 对混合代码容错至关重要
+            });
+            const definitions = [];
+            (0, traverse_1.default)(ast, {
+                // new Vue({ data: ..., methods: ... })
+                ObjectProperty: (path) => {
+                    const key = path.node.key;
+                    if (t.isIdentifier(key)) {
+                        if (key.name === 'data') {
+                            this.extractDataDefinitions(path.node.value, scriptSource, definitions);
+                        }
+                        else if (key.name === 'methods') {
+                            this.extractMethodsDefinitions(path.node.value, scriptSource, definitions);
+                        }
                     }
-                    return false;
-                });
-                if (hasMixinProps) {
-                    this.processMixinReturnObject(path.node.init, name);
-                }
-                else {
-                    this.index.push(createIndexItem(name, { line: path.node.loc.start.line - 1, column: path.node.loc.start.column }, 'variable', 'global'));
-                }
-            }
-            else {
-                this.index.push(createIndexItem(name, { line: path.node.loc.start.line - 1, column: path.node.loc.start.column }, 'variable', 'global'));
-            }
-        }
-    }
-    /**
-     * 处理mixin返回对象
-     */
-    processMixinReturnObject(objExpr, mixinName) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                switch (prop.key.name) {
-                    case 'data':
-                        if (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value)) {
-                            const returnObj = this.findReturnObject(prop.value);
-                            if (returnObj) {
-                                this.processMixinDataReturnObject(returnObj, mixinName);
+                },
+                // export default { data(){...}, methods:{...} }
+                ObjectMethod: (path) => {
+                    const key = path.node.key;
+                    if (t.isIdentifier(key) && key.name === 'data') {
+                        (0, traverse_1.default)(path.node.body, {
+                            ReturnStatement: (returnPath) => {
+                                this.extractDataDefinitions(returnPath.node.argument, scriptSource, definitions);
+                                returnPath.stop(); // 找到即停
                             }
-                        }
-                        break;
-                    case 'methods':
-                        if (t.isObjectExpression(prop.value)) {
-                            this.processMixinMethodsObject(prop.value, mixinName);
-                        }
-                        break;
-                    case 'computed':
-                        if (t.isObjectExpression(prop.value)) {
-                            this.processMixinComputedObject(prop.value, mixinName);
-                        }
-                        break;
-                }
-            }
-        }
-    }
-    /**
-     * 处理mixin data返回对象
-     */
-    processMixinDataReturnObject(objExpr, mixinName) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'mixin-data', mixinName));
-            }
-        }
-    }
-    /**
-     * 处理mixin methods对象
-     */
-    processMixinMethodsObject(objExpr, mixinName) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'mixin-method', mixinName));
-            }
-        }
-    }
-    /**
-     * 处理mixin computed对象
-     */
-    processMixinComputedObject(objExpr, mixinName) {
-        for (const prop of objExpr.properties) {
-            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                this.index.push(createIndexItem(prop.key.name, { line: prop.loc.start.line - 1, column: prop.loc.start.column }, 'mixin-computed', mixinName));
-            }
-        }
-    }
-    /**
-     * 查找函数返回对象
-     */
-    findReturnObject(funcNode) {
-        if (t.isArrowFunctionExpression(funcNode) && t.isObjectExpression(funcNode.body)) {
-            return funcNode.body;
-        }
-        if (t.isBlockStatement(funcNode.body)) {
-            for (const stmt of funcNode.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    return stmt.argument;
-                }
-            }
-        }
-        return undefined;
-    }
-    /**
-     * 查找方法返回对象
-     */
-    findReturnObjectInMethod(methodNode) {
-        if (t.isBlockStatement(methodNode.body)) {
-            for (const stmt of methodNode.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    return stmt.argument;
-                }
-            }
-        }
-        return undefined;
-    }
-    /**
-     * 查找函数返回对象
-     */
-    findReturnObjectInFunction(funcNode) {
-        if (t.isBlockStatement(funcNode.body)) {
-            for (const stmt of funcNode.body.body) {
-                if (t.isReturnStatement(stmt) && t.isObjectExpression(stmt.argument)) {
-                    return stmt.argument;
-                }
-            }
-        }
-        return undefined;
-    }
-    /**
-     * 获取解析结果
-     */
-    getIndex() {
-        return this.index;
-    }
-}
-/**
- * 构建高效索引
- */
-async function buildASTIndex(scriptContent) {
-    const cacheKey = scriptContent;
-    // 检查缓存
-    const cachedIndex = cacheManager_1.astIndexCache.getIndex(cacheKey);
-    if (cachedIndex) {
-        return cachedIndex;
-    }
-    const result = await (0, errorHandler_1.safeExecute)(() => {
-        const ast = parser.parse(scriptContent, {
-            sourceType: 'module',
-            plugins: ['jsx'],
-            errorRecovery: true,
-        });
-        const vueParser = new VueComponentParser();
-        vueParser.parseVueComponent(ast);
-        const index = vueParser.getIndex();
-        // 缓存结果
-        cacheManager_1.astIndexCache.setIndex(cacheKey, index);
-        console.log(`[AST Parser] 构建索引完成，共 ${index.length} 个项目`);
-        return index;
-    }, errorHandler_1.ErrorType.PARSE_ERROR);
-    return result || [];
-}
-/**
- * 查找定义 - 主要入口函数
- */
-async function parseAST(scriptContent, searchWord, isThisCall) {
-    console.time('[AST Parser] 查找定义耗时');
-    try {
-        const { targetName, isThisCall: parsedIsThisCall } = parseSearchWord(searchWord);
-        const shouldUseThisCall = isThisCall || parsedIsThisCall;
-        console.log(`[AST Parser] 查找: ${targetName}, isThisCall: ${shouldUseThisCall}`);
-        // 构建索引
-        const index = await buildASTIndex(scriptContent);
-        // 查找匹配项
-        const matchItems = index.filter(item => item.name === targetName);
-        if (matchItems.length > 0) {
-            // 根据调用类型重新计算优先级并排序
-            const sortedItems = matchItems.map(item => ({
-                ...item,
-                priority: getItemPriority(item.type, shouldUseThisCall)
-            })).sort((a, b) => a.priority - b.priority);
-            const bestMatch = sortedItems[0];
-            console.log(`[AST Parser] 找到最佳匹配: ${bestMatch.name} (${bestMatch.type}) 在 ${bestMatch.context}`);
-            console.timeEnd('[AST Parser] 查找定义耗时');
-            return bestMatch.location;
-        }
-        console.log(`[AST Parser] 未找到匹配项: ${targetName}`);
-        console.timeEnd('[AST Parser] 查找定义耗时');
-        return null;
-    }
-    catch (error) {
-        console.error('[AST Parser] 查找定义时出错:', error);
-        console.timeEnd('[AST Parser] 查找定义耗时');
-        return null;
-    }
-}
-/**
- * 解析文档，提取变量和方法
- */
-async function parseDocument(document) {
-    const text = document.getText();
-    const filename = document.fileName;
-    console.time('[AST Parser] 解析文档耗时');
-    try {
-        // 使用已经构建的索引
-        const index = await buildASTIndex(text);
-        // 初始化结果
-        const variables = [];
-        const methods = [];
-        const thisReferences = new Map();
-        // 从索引转换为补全项
-        for (const item of index) {
-            const completionItem = new vscode.CompletionItem(item.name, getCompletionItemKind(item.type));
-            completionItem.detail = getCompletionItemDetail(item);
-            // 根据类型添加到对应集合
-            switch (item.type) {
-                case 'variable':
-                    variables.push(completionItem);
-                    break;
-                case 'function':
-                case 'method':
-                case 'mixin-method':
-                    methods.push(completionItem);
-                    // 如果是Vue方法，也添加到this引用中
-                    if (item.type !== 'function') {
-                        thisReferences.set(item.name, completionItem);
+                        }, path.scope, path);
                     }
-                    break;
-                case 'computed':
-                case 'data':
-                case 'mixin-computed':
-                case 'mixin-data':
-                    // Vue相关属性添加到this引用
-                    thisReferences.set(item.name, completionItem);
-                    break;
+                }
+            });
+            cacheManager_1.astIndexCache.setIndex(cacheKey, definitions);
+            console.log(`[parser] AST解析完成, 找到 ${definitions.length} 个定义。`);
+            return definitions;
+        }, errorHandler_1.ErrorType.PARSE_ERROR, { file: scriptSource.uri.fsPath });
+    }
+    /**
+     * 从 data 属性节点中提取所有变量定义
+     */
+    extractDataDefinitions(dataNode, scriptSource, definitions) {
+        let objectToParse = dataNode;
+        // 处理 data: function() { return { ... } } 或 data: () => ({...})
+        if (t.isFunctionExpression(dataNode) || t.isArrowFunctionExpression(dataNode)) {
+            if (t.isBlockStatement(dataNode.body)) {
+                let returnStatementFound = false;
+                (0, traverse_1.default)(dataNode.body, {
+                    ReturnStatement: (path) => {
+                        objectToParse = path.node.argument;
+                        returnStatementFound = true;
+                        path.stop();
+                    }
+                });
+                if (!returnStatementFound) {
+                    objectToParse = null;
+                }
+            }
+            else if (t.isObjectExpression(dataNode.body)) { // 箭头函数简写
+                objectToParse = dataNode.body;
             }
         }
-        console.timeEnd('[AST Parser] 解析文档耗时');
-        console.log(`[AST Parser] 解析结果: ${variables.length}个变量, ${methods.length}个方法, ${thisReferences.size}个this引用`);
-        return {
-            variables,
-            methods,
-            thisReferences,
-            timestamp: Date.now()
-        };
+        if (!objectToParse || !t.isObjectExpression(objectToParse)) {
+            return;
+        }
+        objectToParse.properties.forEach(prop => {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                const location = new vscode.Location(scriptSource.uri, new vscode.Position(scriptSource.startLine + prop.loc.start.line - 1, // 加上内联脚本的起始行
+                prop.loc.start.column));
+                definitions.push({ name: prop.key.name, location, type: 'data' });
+            }
+        });
     }
-    catch (error) {
-        console.error(`[AST Parser] 解析文档 ${filename} 时出错:`, error);
-        console.timeEnd('[AST Parser] 解析文档耗时');
-        return {
-            variables: [],
-            methods: [],
-            thisReferences: new Map(),
-            timestamp: Date.now()
-        };
+    /**
+     * 从 methods 属性节点中提取所有方法定义
+     */
+    extractMethodsDefinitions(methodsNode, scriptSource, definitions) {
+        if (!methodsNode || !t.isObjectExpression(methodsNode)) {
+            return;
+        }
+        methodsNode.properties.forEach(prop => {
+            // 支持 { myMethod() {} } 和 { myMethod: function() {} }
+            if ((t.isObjectMethod(prop) || t.isObjectProperty(prop)) && t.isIdentifier(prop.key) && prop.loc) {
+                const location = new vscode.Location(scriptSource.uri, new vscode.Position(scriptSource.startLine + prop.loc.start.line - 1, // 加上内联脚本的起始行
+                prop.loc.start.column));
+                definitions.push({ name: prop.key.name, location, type: 'method' });
+            }
+        });
     }
-}
-/**
- * 获取补全项的类型
- */
-function getCompletionItemKind(type) {
-    switch (type) {
-        case 'method':
-        case 'mixin-method':
-            return vscode.CompletionItemKind.Method;
-        case 'function':
-            return vscode.CompletionItemKind.Function;
-        case 'computed':
-        case 'mixin-computed':
-        case 'data':
-        case 'mixin-data':
-            return vscode.CompletionItemKind.Property;
-        case 'variable':
-        default:
-            return vscode.CompletionItemKind.Variable;
+    /**
+     * 清理JS代码中的PHP和Layui模板标记
+     */
+    cleanupPhpAndOtherTemplates(content) {
+        return content
+            // 移除 <?php ... ?> 和 <?= ... ?>
+            .replace(/<\?(=|php)?([\s\S]*?)\?>/g, (match) => ' '.repeat(match.length))
+            // 移除 Layui 的 {{ ... }} 风格模板
+            .replace(/\{\{([\s\S]*?)\}\}/g, (match) => `''/*${' '.repeat(match.length - 5)}*/`);
     }
 }
+exports.AstParser = AstParser;
+__decorate([
+    (0, performanceMonitor_1.monitor)('findDefinitionInAst')
+], AstParser.prototype, "findDefinition", null);
 /**
- * 获取补全项的详情文本
+ * 简化版 parseAST 函数 (兼容旧代码引用)
+ * 返回首次匹配到标识符的大致行列位置（零基）
  */
-function getCompletionItemDetail(item) {
-    switch (item.type) {
-        case 'method':
-            return `(Vue method) ${item.name}`;
-        case 'mixin-method':
-            return `(Mixin '${item.context}' method) ${item.name}`;
-        case 'computed':
-            return `(Vue computed) ${item.name}`;
-        case 'mixin-computed':
-            return `(Mixin '${item.context}' computed) ${item.name}`;
-        case 'data':
-            return `(Vue data property) ${item.name}`;
-        case 'mixin-data':
-            return `(Mixin '${item.context}' data) ${item.name}`;
-        case 'function':
-            return `(函数) ${item.name}`;
-        case 'variable':
-        default:
-            return `(变量) ${item.name}`;
+async function parseAST(scriptContent, searchWord, _isThisCall) {
+    try {
+        if (!searchWord) {
+            return null;
+        }
+        const escaped = searchWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escaped}\\b`, 'g');
+        const match = regex.exec(scriptContent);
+        if (!match) {
+            return null;
+        }
+        const index = match.index;
+        const pre = scriptContent.slice(0, index);
+        const lines = pre.split(/\r?\n/);
+        const line = lines.length - 1;
+        const column = lines[lines.length - 1].length;
+        return { line, column };
+    }
+    catch (e) {
+        console.error('[parseAST] Error:', e);
+        return null;
     }
 }
 
@@ -16124,7 +15755,7 @@ function save(namespaces) {
 function load() {
 	let r;
 	try {
-		r = exports.storage.getItem('debug');
+		r = exports.storage.getItem('debug') || exports.storage.getItem('DEBUG') ;
 	} catch (error) {
 		// Swallow
 		// XXX (@Qix-) should we be logging these?
@@ -16351,7 +15982,7 @@ function setup(env) {
 
 		const split = (typeof namespaces === 'string' ? namespaces : '')
 			.trim()
-			.replace(' ', ',')
+			.replace(/\s+/g, ',')
 			.split(',')
 			.filter(Boolean);
 
@@ -46200,13 +45831,265 @@ exports["default"] = Hub;
 
 /***/ }),
 /* 173 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.errorHandler = exports.ErrorHandler = exports.ErrorType = void 0;
+exports.safeExecute = safeExecute;
+exports.handleParseError = handleParseError;
+exports.handleFileNotFoundError = handleFileNotFoundError;
+exports.handleInvalidPositionError = handleInvalidPositionError;
+exports.handleCacheError = handleCacheError;
+/**
+ * 错误处理模块
+ * 提供统一的错误处理和日志记录功能
+ */
+const vscode = __importStar(__webpack_require__(2));
+// 错误类型枚举
+var ErrorType;
+(function (ErrorType) {
+    ErrorType["PARSE_ERROR"] = "PARSE_ERROR";
+    ErrorType["FILE_NOT_FOUND"] = "FILE_NOT_FOUND";
+    ErrorType["INVALID_POSITION"] = "INVALID_POSITION";
+    ErrorType["CACHE_ERROR"] = "CACHE_ERROR";
+    ErrorType["NETWORK_ERROR"] = "NETWORK_ERROR";
+    ErrorType["UNKNOWN_ERROR"] = "UNKNOWN_ERROR";
+})(ErrorType || (exports.ErrorType = ErrorType = {}));
+// 错误处理配置
+const ERROR_CONFIG = {
+    // 是否显示错误通知
+    SHOW_NOTIFICATIONS: true,
+    // 是否记录详细日志
+    LOG_DETAILS: true,
+    // 错误消息模板
+    MESSAGES: {
+        [ErrorType.PARSE_ERROR]: '解析文件时出错',
+        [ErrorType.FILE_NOT_FOUND]: '文件未找到',
+        [ErrorType.INVALID_POSITION]: '无效的位置',
+        [ErrorType.CACHE_ERROR]: '缓存操作失败',
+        [ErrorType.NETWORK_ERROR]: '网络请求失败',
+        [ErrorType.UNKNOWN_ERROR]: '未知错误'
+    }
+};
+/**
+ * 错误处理器类
+ */
+class ErrorHandler {
+    constructor() {
+        this.errorLog = [];
+        this.maxLogSize = 100;
+    }
+    /**
+     * 获取单例实例
+     */
+    static getInstance() {
+        if (!ErrorHandler.instance) {
+            ErrorHandler.instance = new ErrorHandler();
+        }
+        return ErrorHandler.instance;
+    }
+    /**
+     * 处理错误
+     */
+    handleError(error, type = ErrorType.UNKNOWN_ERROR, context) {
+        const errorInfo = {
+            type,
+            message: typeof error === 'string' ? error : error.message,
+            details: context?.details || (error instanceof Error ? error.stack : undefined),
+            file: context?.file,
+            line: context?.line,
+            column: context?.column,
+            timestamp: Date.now()
+        };
+        // 记录错误
+        this.logError(errorInfo);
+        // 显示用户通知
+        if (ERROR_CONFIG.SHOW_NOTIFICATIONS) {
+            this.showUserNotification(errorInfo);
+        }
+    }
+    /**
+     * 记录错误到日志
+     */
+    logError(errorInfo) {
+        // 添加到内存日志
+        this.errorLog.push(errorInfo);
+        // 限制日志大小
+        if (this.errorLog.length > this.maxLogSize) {
+            this.errorLog = this.errorLog.slice(-this.maxLogSize);
+        }
+        // 控制台日志
+        const logMessage = this.formatLogMessage(errorInfo);
+        console.error(logMessage);
+        if (ERROR_CONFIG.LOG_DETAILS && errorInfo.details) {
+            console.error('[Error Details]:', errorInfo.details);
+        }
+    }
+    /**
+     * 显示用户通知
+     */
+    showUserNotification(errorInfo) {
+        const message = ERROR_CONFIG.MESSAGES[errorInfo.type] || errorInfo.message;
+        // 根据错误类型选择通知类型
+        switch (errorInfo.type) {
+            case ErrorType.FILE_NOT_FOUND:
+            case ErrorType.INVALID_POSITION:
+                vscode.window.showWarningMessage(message);
+                break;
+            case ErrorType.PARSE_ERROR:
+            case ErrorType.CACHE_ERROR:
+            case ErrorType.NETWORK_ERROR:
+            case ErrorType.UNKNOWN_ERROR:
+            default:
+                vscode.window.showErrorMessage(message);
+                break;
+        }
+    }
+    /**
+     * 格式化日志消息
+     */
+    formatLogMessage(errorInfo) {
+        const parts = [
+            `[${errorInfo.type}]`,
+            errorInfo.message
+        ];
+        if (errorInfo.file) {
+            parts.push(`文件: ${errorInfo.file}`);
+        }
+        if (errorInfo.line !== undefined) {
+            parts.push(`行: ${errorInfo.line + 1}`);
+        }
+        if (errorInfo.column !== undefined) {
+            parts.push(`列: ${errorInfo.column + 1}`);
+        }
+        return parts.join(' | ');
+    }
+    /**
+     * 获取错误日志
+     */
+    getErrorLog() {
+        return [...this.errorLog];
+    }
+    /**
+     * 清空错误日志
+     */
+    clearErrorLog() {
+        this.errorLog = [];
+    }
+    /**
+     * 获取特定类型的错误
+     */
+    getErrorsByType(type) {
+        return this.errorLog.filter(error => error.type === type);
+    }
+    /**
+     * 获取最近的错误
+     */
+    getRecentErrors(count = 10) {
+        return this.errorLog.slice(-count);
+    }
+}
+exports.ErrorHandler = ErrorHandler;
+/**
+ * 便捷的错误处理函数
+ */
+exports.errorHandler = ErrorHandler.getInstance();
+/**
+ * 安全执行函数，自动处理错误
+ */
+async function safeExecute(fn, errorType = ErrorType.UNKNOWN_ERROR, context) {
+    try {
+        return await fn();
+    }
+    catch (error) {
+        exports.errorHandler.handleError(error instanceof Error ? error : String(error), errorType, context);
+        return null;
+    }
+}
+/**
+ * 解析错误处理
+ */
+function handleParseError(error, file, line, column) {
+    exports.errorHandler.handleError(error, ErrorType.PARSE_ERROR, {
+        file,
+        line,
+        column,
+        details: `解析文件时发生错误: ${error.message}`
+    });
+}
+/**
+ * 文件未找到错误处理
+ */
+function handleFileNotFoundError(filePath, context) {
+    exports.errorHandler.handleError(`文件未找到: ${filePath}`, ErrorType.FILE_NOT_FOUND, {
+        file: filePath,
+        details: context
+    });
+}
+/**
+ * 位置错误处理
+ */
+function handleInvalidPositionError(position, file) {
+    exports.errorHandler.handleError(`无效的位置: 行 ${position.line + 1}, 列 ${position.column + 1}`, ErrorType.INVALID_POSITION, {
+        file,
+        line: position.line,
+        column: position.column
+    });
+}
+/**
+ * 缓存错误处理
+ */
+function handleCacheError(error, operation) {
+    exports.errorHandler.handleError(error, ErrorType.CACHE_ERROR, {
+        details: `缓存操作失败 (${operation}): ${error.message}`
+    });
+}
+
+
+/***/ }),
+/* 174 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.documentParseCache = exports.astIndexCache = exports.DocumentParseCacheManager = exports.ASTIndexCacheManager = exports.CacheManager = void 0;
-const errorHandler_1 = __webpack_require__(174);
+const errorHandler_1 = __webpack_require__(173);
 // 默认缓存配置
 const DEFAULT_CACHE_CONFIG = {
     maxSize: 1000,
@@ -46217,10 +46100,8 @@ const DEFAULT_CACHE_CONFIG = {
  * 通用缓存管理器
  */
 class CacheManager {
-    cache = new Map();
-    config;
-    cleanupTimer;
     constructor(config = {}) {
+        this.cache = new Map();
         this.config = { ...DEFAULT_CACHE_CONFIG, ...config };
         this.startCleanupTimer();
     }
@@ -46395,8 +46276,6 @@ exports.CacheManager = CacheManager;
  * AST索引缓存管理器
  */
 class ASTIndexCacheManager {
-    static instance;
-    cache;
     constructor() {
         this.cache = new CacheManager({
             maxSize: 500,
@@ -46452,8 +46331,6 @@ exports.ASTIndexCacheManager = ASTIndexCacheManager;
  * 文档解析缓存管理器
  */
 class DocumentParseCacheManager {
-    static instance;
-    cache;
     constructor() {
         this.cache = new CacheManager({
             maxSize: 200,
@@ -46511,7 +46388,7 @@ exports.documentParseCache = DocumentParseCacheManager.getInstance();
 
 
 /***/ }),
-/* 174 */
+/* 175 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -46550,220 +46427,262 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.errorHandler = exports.ErrorHandler = exports.ErrorType = void 0;
-exports.safeExecute = safeExecute;
-exports.handleParseError = handleParseError;
-exports.handleFileNotFoundError = handleFileNotFoundError;
-exports.handleInvalidPositionError = handleInvalidPositionError;
-exports.handleCacheError = handleCacheError;
+exports.performanceMonitor = exports.PerformanceMonitor = void 0;
+exports.monitor = monitor;
+exports.withPerformanceMonitoring = withPerformanceMonitoring;
 /**
- * 错误处理模块
- * 提供统一的错误处理和日志记录功能
+ * 性能监控模块
+ * 用于跟踪和优化变量跳转的性能
  */
 const vscode = __importStar(__webpack_require__(2));
-// 错误类型枚举
-var ErrorType;
-(function (ErrorType) {
-    ErrorType["PARSE_ERROR"] = "PARSE_ERROR";
-    ErrorType["FILE_NOT_FOUND"] = "FILE_NOT_FOUND";
-    ErrorType["INVALID_POSITION"] = "INVALID_POSITION";
-    ErrorType["CACHE_ERROR"] = "CACHE_ERROR";
-    ErrorType["NETWORK_ERROR"] = "NETWORK_ERROR";
-    ErrorType["UNKNOWN_ERROR"] = "UNKNOWN_ERROR";
-})(ErrorType || (exports.ErrorType = ErrorType = {}));
-// 错误处理配置
-const ERROR_CONFIG = {
-    // 是否显示错误通知
-    SHOW_NOTIFICATIONS: true,
-    // 是否记录详细日志
-    LOG_DETAILS: true,
-    // 错误消息模板
-    MESSAGES: {
-        [ErrorType.PARSE_ERROR]: '解析文件时出错',
-        [ErrorType.FILE_NOT_FOUND]: '文件未找到',
-        [ErrorType.INVALID_POSITION]: '无效的位置',
-        [ErrorType.CACHE_ERROR]: '缓存操作失败',
-        [ErrorType.NETWORK_ERROR]: '网络请求失败',
-        [ErrorType.UNKNOWN_ERROR]: '未知错误'
-    }
-};
 /**
- * 错误处理器类
+ * 性能监控装饰器
  */
-class ErrorHandler {
-    static instance;
-    errorLog = [];
-    maxLogSize = 100;
-    constructor() { }
+// 宽松类型以兼容 TS 新旧装饰器实现
+function monitor(operation) {
+    // Support both legacy (experimentalDecorators) and new TC39 stage-3 decorator semantics
+    return function (...decoratorArgs) {
+        // New decorator: (value, context)
+        if (decoratorArgs.length === 2 && typeof decoratorArgs[1] === 'object' && decoratorArgs[1] !== null && 'kind' in decoratorArgs[1]) {
+            const [value, context] = decoratorArgs;
+            if (context.kind !== 'method') {
+                return value; // Only wrap methods
+            }
+            return async function (...args) {
+                const stopTimer = exports.performanceMonitor.startTimer(operation);
+                try {
+                    const result = await value.apply(this, args);
+                    stopTimer(true);
+                    return result;
+                }
+                catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    stopTimer(false, { error: errorMessage });
+                    console.error(`[Performance] Operation "${operation}" failed: ${errorMessage}`);
+                    throw error;
+                }
+            };
+        }
+        // Legacy decorator: (target, propertyKey, descriptor)
+        const [target, propertyKey, descriptor] = decoratorArgs;
+        if (!descriptor || typeof descriptor.value !== 'function') {
+            // Fallback: nothing to wrap to avoid runtime error
+            return;
+        }
+        const original = descriptor.value;
+        descriptor.value = async function (...args) {
+            const stopTimer = exports.performanceMonitor.startTimer(operation);
+            try {
+                const result = await original.apply(this, args);
+                stopTimer(true);
+                return result;
+            }
+            catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                stopTimer(false, { error: errorMessage });
+                console.error(`[Performance] Operation "${operation}" failed: ${errorMessage}`);
+                throw error;
+            }
+        };
+    };
+}
+/**
+ * 性能监控器类
+ */
+class PerformanceMonitor {
+    constructor() {
+        this.metrics = [];
+        this.maxMetrics = 1000;
+        this.cacheHits = 0;
+        this.totalCacheAccesses = 0;
+    }
     /**
      * 获取单例实例
      */
     static getInstance() {
-        if (!ErrorHandler.instance) {
-            ErrorHandler.instance = new ErrorHandler();
+        if (!PerformanceMonitor.instance) {
+            PerformanceMonitor.instance = new PerformanceMonitor();
         }
-        return ErrorHandler.instance;
+        return PerformanceMonitor.instance;
     }
     /**
-     * 处理错误
+     * 开始性能监控
      */
-    handleError(error, type = ErrorType.UNKNOWN_ERROR, context) {
-        const errorInfo = {
-            type,
-            message: typeof error === 'string' ? error : error.message,
-            details: context?.details || (error instanceof Error ? error.stack : undefined),
-            file: context?.file,
-            line: context?.line,
-            column: context?.column,
-            timestamp: Date.now()
+    startTimer(operation) {
+        const startTime = Date.now();
+        return (success = true, details) => {
+            const duration = Date.now() - startTime;
+            this.recordMetric(operation, duration, success, details);
         };
-        // 记录错误
-        this.logError(errorInfo);
-        // 显示用户通知
-        if (ERROR_CONFIG.SHOW_NOTIFICATIONS) {
-            this.showUserNotification(errorInfo);
+    }
+    /**
+     * 记录性能指标
+     */
+    recordMetric(operation, duration, success, details) {
+        const metric = {
+            operation,
+            duration,
+            timestamp: Date.now(),
+            success,
+            details
+        };
+        this.metrics.push(metric);
+        // 限制指标数量
+        if (this.metrics.length > this.maxMetrics) {
+            this.metrics = this.metrics.slice(-this.maxMetrics);
+        }
+        // 记录缓存命中
+        if (details?.cacheHit) {
+            this.cacheHits++;
+        }
+        if (details?.cacheHit !== undefined) {
+            this.totalCacheAccesses++;
+        }
+        // 记录慢操作
+        if (duration > 1000) { // 超过1秒的操作
+            console.warn(`[Performance] 慢操作检测: ${operation} 耗时 ${duration}ms`);
         }
     }
     /**
-     * 记录错误到日志
+     * 记录缓存命中
      */
-    logError(errorInfo) {
-        // 添加到内存日志
-        this.errorLog.push(errorInfo);
-        // 限制日志大小
-        if (this.errorLog.length > this.maxLogSize) {
-            this.errorLog = this.errorLog.slice(-this.maxLogSize);
-        }
-        // 控制台日志
-        const logMessage = this.formatLogMessage(errorInfo);
-        console.error(logMessage);
-        if (ERROR_CONFIG.LOG_DETAILS && errorInfo.details) {
-            console.error('[Error Details]:', errorInfo.details);
-        }
+    recordCacheHit() {
+        this.cacheHits++;
+        this.totalCacheAccesses++;
     }
     /**
-     * 显示用户通知
+     * 记录缓存未命中
      */
-    showUserNotification(errorInfo) {
-        const message = ERROR_CONFIG.MESSAGES[errorInfo.type] || errorInfo.message;
-        // 根据错误类型选择通知类型
-        switch (errorInfo.type) {
-            case ErrorType.FILE_NOT_FOUND:
-            case ErrorType.INVALID_POSITION:
-                vscode.window.showWarningMessage(message);
-                break;
-            case ErrorType.PARSE_ERROR:
-            case ErrorType.CACHE_ERROR:
-            case ErrorType.NETWORK_ERROR:
-            case ErrorType.UNKNOWN_ERROR:
-            default:
-                vscode.window.showErrorMessage(message);
-                break;
+    recordCacheMiss() {
+        this.totalCacheAccesses++;
+    }
+    /**
+     * 获取性能统计
+     */
+    getStats(operation) {
+        const filteredMetrics = operation
+            ? this.metrics.filter(m => m.operation === operation)
+            : this.metrics;
+        if (filteredMetrics.length === 0) {
+            return {
+                totalOperations: 0,
+                averageDuration: 0,
+                minDuration: 0,
+                maxDuration: 0,
+                successRate: 0,
+                cacheHitRate: 0,
+                recentMetrics: []
+            };
         }
+        const durations = filteredMetrics.map(m => m.duration);
+        const successful = filteredMetrics.filter(m => m.success);
+        const cacheHits = filteredMetrics.filter(m => m.details?.cacheHit).length;
+        return {
+            totalOperations: filteredMetrics.length,
+            averageDuration: durations.reduce((a, b) => a + b, 0) / durations.length,
+            minDuration: Math.min(...durations),
+            maxDuration: Math.max(...durations),
+            successRate: successful.length / filteredMetrics.length,
+            cacheHitRate: this.totalCacheAccesses > 0 ? this.cacheHits / this.totalCacheAccesses : 0,
+            recentMetrics: filteredMetrics.slice(-10)
+        };
     }
     /**
-     * 格式化日志消息
+     * 获取特定操作的性能统计
      */
-    formatLogMessage(errorInfo) {
-        const parts = [
-            `[${errorInfo.type}]`,
-            errorInfo.message
-        ];
-        if (errorInfo.file) {
-            parts.push(`文件: ${errorInfo.file}`);
+    getOperationStats(operation) {
+        return this.getStats(operation);
+    }
+    /**
+     * 获取所有操作的性能统计
+     */
+    getAllStats() {
+        return this.getStats();
+    }
+    /**
+     * 获取慢操作列表
+     */
+    getSlowOperations(threshold = 500) {
+        return this.metrics.filter(m => m.duration > threshold);
+    }
+    /**
+     * 获取失败的操作
+     */
+    getFailedOperations() {
+        return this.metrics.filter(m => !m.success);
+    }
+    /**
+     * 清空性能指标
+     */
+    clear() {
+        this.metrics = [];
+        this.cacheHits = 0;
+        this.totalCacheAccesses = 0;
+    }
+    /**
+     * 输出性能报告
+     */
+    generateReport() {
+        const stats = this.getAllStats();
+        const slowOps = this.getSlowOperations();
+        const failedOps = this.getFailedOperations();
+        let report = '=== 性能监控报告 ===\n';
+        report += `总操作数: ${stats.totalOperations}\n`;
+        report += `平均耗时: ${stats.averageDuration.toFixed(2)}ms\n`;
+        report += `最小耗时: ${stats.minDuration}ms\n`;
+        report += `最大耗时: ${stats.maxDuration}ms\n`;
+        report += `成功率: ${(stats.successRate * 100).toFixed(2)}%\n`;
+        report += `缓存命中率: ${(stats.cacheHitRate * 100).toFixed(2)}%\n`;
+        report += `慢操作数 (>500ms): ${slowOps.length}\n`;
+        report += `失败操作数: ${failedOps.length}\n`;
+        if (slowOps.length > 0) {
+            report += '\n=== 慢操作列表 ===\n';
+            slowOps.slice(-5).forEach(op => {
+                report += `${op.operation}: ${op.duration}ms (${op.success ? '成功' : '失败'})\n`;
+            });
         }
-        if (errorInfo.line !== undefined) {
-            parts.push(`行: ${errorInfo.line + 1}`);
+        if (failedOps.length > 0) {
+            report += '\n=== 失败操作列表 ===\n';
+            failedOps.slice(-5).forEach(op => {
+                report += `${op.operation}: ${op.duration}ms - ${op.details?.error || '未知错误'}\n`;
+            });
         }
-        if (errorInfo.column !== undefined) {
-            parts.push(`列: ${errorInfo.column + 1}`);
-        }
-        return parts.join(' | ');
+        return report;
     }
     /**
-     * 获取错误日志
+     * 显示性能报告
      */
-    getErrorLog() {
-        return [...this.errorLog];
-    }
-    /**
-     * 清空错误日志
-     */
-    clearErrorLog() {
-        this.errorLog = [];
-    }
-    /**
-     * 获取特定类型的错误
-     */
-    getErrorsByType(type) {
-        return this.errorLog.filter(error => error.type === type);
-    }
-    /**
-     * 获取最近的错误
-     */
-    getRecentErrors(count = 10) {
-        return this.errorLog.slice(-count);
+    async showReport() {
+        const report = this.generateReport();
+        const document = await vscode.workspace.openTextDocument({
+            content: report,
+            language: 'markdown'
+        });
+        await vscode.window.showTextDocument(document);
     }
 }
-exports.ErrorHandler = ErrorHandler;
+exports.PerformanceMonitor = PerformanceMonitor;
+// 导出单例实例
+exports.performanceMonitor = PerformanceMonitor.getInstance();
 /**
- * 便捷的错误处理函数
+ * 便捷的性能监控函数
  */
-exports.errorHandler = ErrorHandler.getInstance();
-/**
- * 安全执行函数，自动处理错误
- */
-async function safeExecute(fn, errorType = ErrorType.UNKNOWN_ERROR, context) {
+async function withPerformanceMonitoring(operation, fn) {
+    const stopTimer = exports.performanceMonitor.startTimer(operation);
     try {
-        return await fn();
+        const result = await fn();
+        stopTimer(true);
+        return result;
     }
     catch (error) {
-        exports.errorHandler.handleError(error instanceof Error ? error : String(error), errorType, context);
-        return null;
+        stopTimer(false, { error: error instanceof Error ? error.message : String(error) });
+        throw error;
     }
-}
-/**
- * 解析错误处理
- */
-function handleParseError(error, file, line, column) {
-    exports.errorHandler.handleError(error, ErrorType.PARSE_ERROR, {
-        file,
-        line,
-        column,
-        details: `解析文件时发生错误: ${error.message}`
-    });
-}
-/**
- * 文件未找到错误处理
- */
-function handleFileNotFoundError(filePath, context) {
-    exports.errorHandler.handleError(`文件未找到: ${filePath}`, ErrorType.FILE_NOT_FOUND, {
-        file: filePath,
-        details: context
-    });
-}
-/**
- * 位置错误处理
- */
-function handleInvalidPositionError(position, file) {
-    exports.errorHandler.handleError(`无效的位置: 行 ${position.line + 1}, 列 ${position.column + 1}`, ErrorType.INVALID_POSITION, {
-        file,
-        line: position.line,
-        column: position.column
-    });
-}
-/**
- * 缓存错误处理
- */
-function handleCacheError(error, operation) {
-    exports.errorHandler.handleError(error, ErrorType.CACHE_ERROR, {
-        details: `缓存操作失败 (${operation}): ${error.message}`
-    });
 }
 
 
 /***/ }),
-/* 175 */
+/* 176 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -46810,8 +46729,8 @@ exports.logSelectedVariable = logSelectedVariable;
  * 控制台日志工具函数
  */
 const vscode = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(176));
-const config_1 = __webpack_require__(177);
+const path = __importStar(__webpack_require__(177));
+const config_1 = __webpack_require__(178);
 /**
  * 插入控制台日志
  */
@@ -46975,14 +46894,14 @@ function logSelectedVariable() {
 
 
 /***/ }),
-/* 176 */
+/* 177 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("path");
 
 /***/ }),
-/* 177 */
+/* 178 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -47064,7 +46983,7 @@ exports.FILE_SELECTORS = {
 
 
 /***/ }),
-/* 178 */
+/* 179 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47109,10 +47028,10 @@ exports.isCommentContent = isCommentContent;
  * Vue 相关工具函数
  */
 const vscode = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(176));
-const fs = __importStar(__webpack_require__(179));
+const path = __importStar(__webpack_require__(177));
+const fs = __importStar(__webpack_require__(180));
 const astParser_1 = __webpack_require__(4);
-const errorHandler_1 = __webpack_require__(174);
+const errorHandler_1 = __webpack_require__(173);
 /**
  * 查找 Vue 定义
  */
@@ -47224,14 +47143,14 @@ function isCommentContent(text) {
 
 
 /***/ }),
-/* 179 */
+/* 180 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("fs");
 
 /***/ }),
-/* 180 */
+/* 181 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47530,7 +47449,7 @@ function compressGeneric(text) {
 
 
 /***/ }),
-/* 181 */
+/* 182 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47569,231 +47488,816 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.performanceMonitor = exports.PerformanceMonitor = void 0;
-exports.monitorPerformance = monitorPerformance;
-exports.withPerformanceMonitoring = withPerformanceMonitoring;
-/**
- * 性能监控模块
- * 用于跟踪和优化变量跳转的性能
- */
+exports.getTemplateIndex = getTemplateIndex;
+exports.findTemplateVar = findTemplateVar;
+exports.showTemplateIndexSummary = showTemplateIndexSummary;
+exports.clearTemplateIndexCache = clearTemplateIndexCache;
 const vscode = __importStar(__webpack_require__(2));
-/**
- * 性能监控器类
- */
-class PerformanceMonitor {
-    static instance;
-    metrics = [];
-    maxMetrics = 1000;
-    cacheHits = 0;
-    totalCacheAccesses = 0;
-    constructor() { }
-    /**
-     * 获取单例实例
-     */
-    static getInstance() {
-        if (!PerformanceMonitor.instance) {
-            PerformanceMonitor.instance = new PerformanceMonitor();
-        }
-        return PerformanceMonitor.instance;
+const templateIndexCache = new Map();
+const MAX_TEMPLATE_INDEX = 50;
+function fastHash(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = (h * 33 + str.charCodeAt(i)) >>> 0;
     }
-    /**
-     * 开始性能监控
-     */
-    startTimer(operation) {
-        const startTime = Date.now();
-        return (success = true, details) => {
-            const duration = Date.now() - startTime;
-            this.recordMetric(operation, duration, success, details);
-        };
+    return h.toString(16);
+}
+function loggingEnabled() {
+    try {
+        return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', true) === true;
     }
-    /**
-     * 记录性能指标
-     */
-    recordMetric(operation, duration, success, details) {
-        const metric = {
-            operation,
-            duration,
-            timestamp: Date.now(),
-            success,
-            details
-        };
-        this.metrics.push(metric);
-        // 限制指标数量
-        if (this.metrics.length > this.maxMetrics) {
-            this.metrics = this.metrics.slice(-this.maxMetrics);
-        }
-        // 记录缓存命中
-        if (details?.cacheHit) {
-            this.cacheHits++;
-        }
-        if (details?.cacheHit !== undefined) {
-            this.totalCacheAccesses++;
-        }
-        // 记录慢操作
-        if (duration > 1000) { // 超过1秒的操作
-            console.warn(`[Performance] 慢操作检测: ${operation} 耗时 ${duration}ms`);
-        }
-    }
-    /**
-     * 记录缓存命中
-     */
-    recordCacheHit() {
-        this.cacheHits++;
-        this.totalCacheAccesses++;
-    }
-    /**
-     * 记录缓存未命中
-     */
-    recordCacheMiss() {
-        this.totalCacheAccesses++;
-    }
-    /**
-     * 获取性能统计
-     */
-    getStats(operation) {
-        const filteredMetrics = operation
-            ? this.metrics.filter(m => m.operation === operation)
-            : this.metrics;
-        if (filteredMetrics.length === 0) {
-            return {
-                totalOperations: 0,
-                averageDuration: 0,
-                minDuration: 0,
-                maxDuration: 0,
-                successRate: 0,
-                cacheHitRate: 0,
-                recentMetrics: []
-            };
-        }
-        const durations = filteredMetrics.map(m => m.duration);
-        const successful = filteredMetrics.filter(m => m.success);
-        const cacheHits = filteredMetrics.filter(m => m.details?.cacheHit).length;
-        return {
-            totalOperations: filteredMetrics.length,
-            averageDuration: durations.reduce((a, b) => a + b, 0) / durations.length,
-            minDuration: Math.min(...durations),
-            maxDuration: Math.max(...durations),
-            successRate: successful.length / filteredMetrics.length,
-            cacheHitRate: this.totalCacheAccesses > 0 ? this.cacheHits / this.totalCacheAccesses : 0,
-            recentMetrics: filteredMetrics.slice(-10)
-        };
-    }
-    /**
-     * 获取特定操作的性能统计
-     */
-    getOperationStats(operation) {
-        return this.getStats(operation);
-    }
-    /**
-     * 获取所有操作的性能统计
-     */
-    getAllStats() {
-        return this.getStats();
-    }
-    /**
-     * 获取慢操作列表
-     */
-    getSlowOperations(threshold = 500) {
-        return this.metrics.filter(m => m.duration > threshold);
-    }
-    /**
-     * 获取失败的操作
-     */
-    getFailedOperations() {
-        return this.metrics.filter(m => !m.success);
-    }
-    /**
-     * 清空性能指标
-     */
-    clear() {
-        this.metrics = [];
-        this.cacheHits = 0;
-        this.totalCacheAccesses = 0;
-    }
-    /**
-     * 输出性能报告
-     */
-    generateReport() {
-        const stats = this.getAllStats();
-        const slowOps = this.getSlowOperations();
-        const failedOps = this.getFailedOperations();
-        let report = '=== 性能监控报告 ===\n';
-        report += `总操作数: ${stats.totalOperations}\n`;
-        report += `平均耗时: ${stats.averageDuration.toFixed(2)}ms\n`;
-        report += `最小耗时: ${stats.minDuration}ms\n`;
-        report += `最大耗时: ${stats.maxDuration}ms\n`;
-        report += `成功率: ${(stats.successRate * 100).toFixed(2)}%\n`;
-        report += `缓存命中率: ${(stats.cacheHitRate * 100).toFixed(2)}%\n`;
-        report += `慢操作数 (>500ms): ${slowOps.length}\n`;
-        report += `失败操作数: ${failedOps.length}\n`;
-        if (slowOps.length > 0) {
-            report += '\n=== 慢操作列表 ===\n';
-            slowOps.slice(-5).forEach(op => {
-                report += `${op.operation}: ${op.duration}ms (${op.success ? '成功' : '失败'})\n`;
-            });
-        }
-        if (failedOps.length > 0) {
-            report += '\n=== 失败操作列表 ===\n';
-            failedOps.slice(-5).forEach(op => {
-                report += `${op.operation}: ${op.duration}ms - ${op.details?.error || '未知错误'}\n`;
-            });
-        }
-        return report;
-    }
-    /**
-     * 显示性能报告
-     */
-    async showReport() {
-        const report = this.generateReport();
-        const document = await vscode.workspace.openTextDocument({
-            content: report,
-            language: 'markdown'
-        });
-        await vscode.window.showTextDocument(document);
+    catch {
+        return true;
     }
 }
-exports.PerformanceMonitor = PerformanceMonitor;
-// 导出单例实例
-exports.performanceMonitor = PerformanceMonitor.getInstance();
 /**
- * 性能监控装饰器
+ * 构建模板变量索引：解析 v-for / slot-scope / v-slot / # / scope.row 根变量
+ * 近似 HTML 结构：通过简易标签栈估算作用域范围
  */
-function monitorPerformance(operation) {
-    return function (target, propertyName, descriptor) {
-        const method = descriptor.value;
-        descriptor.value = async function (...args) {
-            const stopTimer = exports.performanceMonitor.startTimer(operation);
-            try {
-                const result = await method.apply(this, args);
-                stopTimer(true);
-                return result;
+function buildTemplateIndex(doc) {
+    const text = doc.getText();
+    const lines = text.split(/\r?\n/);
+    const vars = [];
+    const stack = [];
+    const tagOpenRegex = /<([a-zA-Z0-9_-]+)([^>]*)>/g;
+    const tagCloseRegex = /<\/([a-zA-Z0-9_-]+)>/g;
+    const pushVar = (name, line) => {
+        const loc = new vscode.Location(doc.uri, new vscode.Position(line, 0));
+        // 作用域：默认到当前栈高度匹配的结束行，暂时填充，稍后回填
+        vars.push({ name, location: loc, scopeStart: line, scopeEnd: lines.length - 1 });
+    };
+    // 首次遍历：标签与变量提取
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+        const line = lines[lineNum];
+        // 关闭标签：回填作用域
+        let mClose;
+        while ((mClose = tagCloseRegex.exec(line)) !== null) {
+            for (let i = stack.length - 1; i >= 0; i--) {
+                if (stack[i].tag === mClose[1]) {
+                    const popped = stack.splice(i, 1)[0];
+                    // 更新在该作用域内声明的变量 scopeEnd
+                    for (const v of vars) {
+                        if (v.scopeStart >= popped.startLine && v.scopeEnd === lines.length - 1) {
+                            v.scopeEnd = lineNum;
+                        }
+                    }
+                    break;
+                }
             }
-            catch (error) {
-                stopTimer(false, { error: error instanceof Error ? error.message : String(error) });
-                throw error;
+        }
+        // 开启标签 & 属性
+        let mOpen;
+        while ((mOpen = tagOpenRegex.exec(line)) !== null) {
+            const tag = mOpen[1];
+            const attrStr = mOpen[2];
+            stack.push({ tag, startLine: lineNum });
+            if (attrStr) {
+                // v-for 变体
+                const vforMatch = /v-for\s*=\s*"([^"]+)"|v-for\s*=\s*'([^']+)'/.exec(attrStr);
+                if (vforMatch) {
+                    const expr = vforMatch[1] || vforMatch[2] || '';
+                    // (item,index) in list | item in list | (item, idx) of list | {a,b} in list
+                    const inMatch = /^(\([^)]*\)|\{[^}]*\}|[^\s]+)\s+(in|of)\s+/.exec(expr.trim());
+                    if (inMatch) {
+                        let head = inMatch[1].trim();
+                        if (head.startsWith('(') && head.endsWith(')')) {
+                            head = head.slice(1, -1);
+                        }
+                        if (head.startsWith('{') && head.endsWith('}')) {
+                            head = head.slice(1, -1);
+                        }
+                        head.split(',').map(s => s.trim()).filter(Boolean).forEach(n => pushVar(n, lineNum));
+                    }
+                }
+                // slot-scope / v-slot / #default="slotProps"
+                const slotScopeMatch = /(slot-scope|v-slot(?::[a-zA-Z0-9_-]+)?|#[a-zA-Z0-9_-]*)\s*=\s*"([^"]+)"/.exec(attrStr) || /(slot-scope|v-slot(?::[a-zA-Z0-9_-]+)?|#[a-zA-Z0-9_-]*)\s*=\s*'([^']+)'/.exec(attrStr);
+                if (slotScopeMatch) {
+                    const slotExpr = slotScopeMatch[2] || slotScopeMatch[1];
+                    // 可能是 { item, index } 或 单变量
+                    let inner = slotExpr.trim();
+                    if (inner.startsWith('{') && inner.endsWith('}')) {
+                        inner = inner.slice(1, -1);
+                    }
+                    inner.split(',').map(s => s.trim()).filter(Boolean).forEach(n => pushVar(n, lineNum));
+                }
             }
+        }
+    }
+    const contentHash = fastHash(text);
+    if (loggingEnabled()) {
+        console.log(`[template-index][build] ${doc.uri.fsPath} vars=${vars.length} hash=${contentHash}`);
+    }
+    return { vars, version: doc.version, builtAt: Date.now(), hash: contentHash };
+}
+function getTemplateIndex(doc) {
+    if (doc.languageId !== 'html') {
+        return null;
+    }
+    const key = doc.uri.toString();
+    const hash = fastHash(doc.getText());
+    const cached = templateIndexCache.get(key);
+    if (cached && cached.index.hash === hash && cached.index.version === doc.version) {
+        cached.lastAccess = Date.now();
+        if (loggingEnabled()) {
+            console.log(`[template-index][hit] ${doc.uri.fsPath}`);
+        }
+        return cached.index;
+    }
+    const idx = buildTemplateIndex(doc);
+    templateIndexCache.set(key, { index: idx, lastAccess: Date.now() });
+    // LRU 修剪
+    if (templateIndexCache.size > MAX_TEMPLATE_INDEX) {
+        let oldestKey = null;
+        let oldestTime = Number.MAX_SAFE_INTEGER;
+        for (const [k, v] of templateIndexCache.entries()) {
+            if (v.lastAccess < oldestTime) {
+                oldestTime = v.lastAccess;
+                oldestKey = k;
+            }
+        }
+        if (oldestKey) {
+            templateIndexCache.delete(oldestKey);
+        }
+    }
+    return idx;
+}
+function findTemplateVar(document, position, name) {
+    const idx = getTemplateIndex(document);
+    if (!idx) {
+        return null;
+    }
+    const line = position.line;
+    // 局部变量优先：在 scope 范围内
+    for (const v of idx.vars) {
+        if (v.name === name && line >= v.scopeStart && line <= v.scopeEnd) {
+            return v.location;
+        }
+    }
+    return null;
+}
+function showTemplateIndexSummary() {
+    console.log('[template-index][summary] entries=' + templateIndexCache.size);
+    templateIndexCache.forEach((entry, k) => {
+        console.log(` - ${k} vars=${entry.index.vars.length}`);
+    });
+}
+function clearTemplateIndexCache() { templateIndexCache.clear(); }
+
+
+/***/ }),
+/* 183 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
         };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DefinitionLogic = void 0;
+/**
+ * 新版定义查找逻辑
+ * 需求点：
+ * 1. 优先匹配 同目录 js/ 同名 .dev.js (允许递归 js 子目录)
+ * 2. 否则解析 HTML 内联 <script> new Vue({...})
+ * 3. 支持 mixins / this.xxx / that.xxx / 普通标识符
+ * 4. 允许 HTML 模板 {{ var }} 与属性里 v-bind / : / @ / v-on 及纯文本中的变量
+ * 5. 性能：内容 hash + 缓存；只在调用时解析
+ */
+const vscode = __importStar(__webpack_require__(2));
+const performanceMonitor_1 = __webpack_require__(175);
+const parseDocument_1 = __webpack_require__(184);
+const templateIndexer_1 = __webpack_require__(182);
+const jsDocIndexCache = new Map();
+const HTML_ATTR_BLACKLIST = new Set([
+    'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'type', 'value', 'name', 'placeholder', 'rel', 'for', 'aria-label'
+]);
+class DefinitionLogic {
+    async provideDefinition(document, position) {
+        const rawWordInfo = this.extractWord(document, position);
+        if (!rawWordInfo) {
+            return null;
+        }
+        const { word, contextType, fullChain } = rawWordInfo;
+        if (!word) {
+            return null;
+        }
+        // JS / TS 文件：直接解析自身
+        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            const content = document.getText();
+            const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+            console.log(`[jump][js] word=${word} chain=${fullChain || ''}`);
+            let target = (0, parseDocument_1.findDefinitionInIndex)(word, index);
+            if (!target && fullChain) {
+                target = (0, parseDocument_1.findChainedRootDefinition)(fullChain, index);
+            }
+            if (target) {
+                console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                return target;
+            }
+            console.log(`[jump][js][miss] ${word}`);
+            return null;
+        }
+        // HTML 文件：尝试外部 js/***.dev.js 或内联脚本
+        if (document.languageId === 'html') {
+            const index = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            if (!index) {
+                return null;
+            }
+            // 先尝试模板局部变量 (包括 v-for / slot-scope) root token
+            const templateHit = (0, templateIndexer_1.findTemplateVar)(document, position, word);
+            if (templateHit) {
+                if (this.shouldLog()) {
+                    console.log(`[jump][html][template-hit] ${word} -> ${templateHit.uri.fsPath}:${templateHit.range.start.line + 1}`);
+                }
+                return templateHit;
+            }
+            console.log(`[jump][html] word=${word} chain=${fullChain || ''}`);
+            let target = (0, parseDocument_1.findDefinitionInIndex)(word, index);
+            if (!target && fullChain) {
+                target = (0, parseDocument_1.findChainedRootDefinition)(fullChain, index);
+            }
+            if (target) {
+                console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                return target;
+            }
+            console.log(`[jump][html][miss] ${word}`);
+        }
+        return null;
+    }
+    /** 提取光标下的词 + 上下文类型 */
+    extractWord(document, position) {
+        const lineText = document.lineAt(position.line).text;
+        const beforeCursor = lineText.substring(0, position.character);
+        // 1. 捕获任意链式访问 (含 this/that/别名) 如 vm.child_type_index / this.a.b / ctx.foo
+        const chainMatch = /([a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)*)$/.exec(beforeCursor);
+        if (chainMatch) {
+            const full = chainMatch[1];
+            const parts = full.split('.');
+            if (parts.length >= 2) {
+                const root = parts[0];
+                const prop = parts[parts.length - 1];
+                if (root === 'this' || root === 'that') {
+                    return { word: prop, contextType: root === 'this' ? 'this' : 'that', fullChain: full };
+                }
+                // 检测是否为 this 的别名 (在当前文件中 root = this 的赋值)
+                if (this.isThisAlias(document, position, root)) {
+                    return { word: prop, contextType: 'alias', fullChain: full };
+                }
+            }
+        }
+        // 2. 单词匹配 (普通场景)
+        const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z_$][\w$]*/);
+        if (!wordRange) {
+            return null;
+        }
+        const w = document.getText(wordRange);
+        if (document.languageId === 'html') {
+            const attrNameMatch = /([a-zA-Z0-9_-]+)\s*=/.exec(lineText);
+            if (attrNameMatch && attrNameMatch[1] === w && HTML_ATTR_BLACKLIST.has(w)) {
+                return null;
+            }
+        }
+        return { word: w, contextType: 'plain', fullChain: w };
+    }
+    // 判断某标识符是否在当前位置之前被赋值为 this (别名)
+    isThisAlias(document, position, alias) {
+        // 简单向上扫描一定行数 (例如 400 行上限) 提升性能
+        const maxScan = 400;
+        const startLine = Math.max(0, position.line - maxScan);
+        const aliasPattern = new RegExp(`\\b(?:const|let|var)?\s*${alias}\\s*=\\s*this\b`);
+        for (let line = position.line; line >= startLine; line--) {
+            const text = document.lineAt(line).text;
+            if (aliasPattern.test(text)) {
+                return true;
+            }
+            // 早停：遇到函数开始大括号之前继续；若遇到 export / new Vue 之类可继续，但不做复杂切分
+        }
+        return false;
+    }
+    shouldLog() {
+        try {
+            return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', true) === true;
+        }
+        catch {
+            return true;
+        }
+    }
+}
+exports.DefinitionLogic = DefinitionLogic;
+__decorate([
+    (0, performanceMonitor_1.monitor)('provideDefinition')
+], DefinitionLogic.prototype, "provideDefinition", null);
+
+
+/***/ }),
+/* 184 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getOrCreateVueIndexFromContent = getOrCreateVueIndexFromContent;
+exports.parseDocument = parseDocument;
+exports.resolveVueIndexForHtml = resolveVueIndexForHtml;
+exports.findDefinitionInIndex = findDefinitionInIndex;
+exports.findChainedRootDefinition = findChainedRootDefinition;
+exports.clearVueIndexCache = clearVueIndexCache;
+exports.logVueIndexCacheSummary = logVueIndexCacheSummary;
+const vscode = __importStar(__webpack_require__(2));
+const parser = __importStar(__webpack_require__(5));
+const traverse_1 = __importDefault(__webpack_require__(6));
+const t = __importStar(__webpack_require__(25));
+const fs = __importStar(__webpack_require__(180));
+const path = __importStar(__webpack_require__(177));
+// 内存缓存
+const indexCache = new Map();
+const MAX_INDEX_CACHE_ENTRIES = 60; // 简单上限，避免无限增长
+function loggingEnabled() {
+    try {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        return cfg.get('indexLogging', true) === true;
+    }
+    catch {
+        return true;
+    }
+}
+// 快速 hash（非安全）
+function fastHash(str) {
+    let h = 0, i = 0, len = str.length;
+    while (i < len) {
+        h = (h * 31 + str.charCodeAt(i++)) >>> 0;
+    }
+    return h.toString(16);
+}
+// 清理 PHP 等干扰项
+function sanitizeContent(raw) {
+    return raw
+        .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => ' '.repeat(m.length))
+        .replace(/\{\{[\s\S]*?\}\}/g, m => ' '.repeat(m.length));
+}
+/**
+ * 解析一个 JS 源（外部或内联）生成 VueIndex
+ */
+function buildVueIndex(jsContent, uri, baseLine = 0) {
+    const clean = sanitizeContent(jsContent);
+    const ast = parser.parse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'], errorRecovery: true });
+    const data = new Map();
+    const methods = new Map();
+    const mixinData = new Map();
+    const mixinMethods = new Map();
+    const mixinVars = []; // 需要解析的变量名
+    const objectVarDecls = {};
+    const functionVarReturns = {}; // 变量 = 函数() { return {...} }
+    const functionDeclarations = {}; // function mixin() { return {...} }
+    // 收集顶层变量对象（可能用作 mixin）
+    (0, traverse_1.default)(ast, {
+        VariableDeclarator(p) {
+            const id = p.node.id;
+            const init = p.node.init;
+            if (t.isIdentifier(id) && init) {
+                if (t.isObjectExpression(init)) {
+                    objectVarDecls[id.name] = init;
+                }
+                else if (t.isFunctionExpression(init) || t.isArrowFunctionExpression(init)) {
+                    // 抓取 return { ... }
+                    let obj = null;
+                    if (t.isBlockStatement(init.body)) {
+                        for (const st of init.body.body) {
+                            if (t.isReturnStatement(st) && st.argument && t.isObjectExpression(st.argument)) {
+                                obj = st.argument;
+                                break;
+                            }
+                        }
+                    }
+                    else if (t.isObjectExpression(init.body)) {
+                        obj = init.body;
+                    }
+                    if (obj) {
+                        functionVarReturns[id.name] = obj;
+                    }
+                }
+            }
+        },
+        FunctionDeclaration(p) {
+            if (t.isIdentifier(p.node.id)) {
+                // 查找 return { ... }
+                for (const st of p.node.body.body) {
+                    if (t.isReturnStatement(st) && st.argument && t.isObjectExpression(st.argument)) {
+                        functionDeclarations[p.node.id.name] = st.argument;
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    const extractData = (node, lineOffset, target) => {
+        if (!node) {
+            return;
+        }
+        let obj = null;
+        if (t.isObjectExpression(node)) {
+            obj = node;
+        }
+        else if (t.isIdentifier(node)) {
+            // 引用变量形式 data: dataObj
+            const name = node.name;
+            if (objectVarDecls[name]) {
+                obj = objectVarDecls[name];
+            }
+            else if (functionVarReturns[name]) {
+                obj = functionVarReturns[name];
+            }
+            else if (functionDeclarations[name]) {
+                obj = functionDeclarations[name];
+            }
+        }
+        else if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node) || t.isObjectMethod(node)) {
+            const body = t.isObjectMethod(node) ? node.body : node.body;
+            if (t.isBlockStatement(body)) {
+                for (const st of body.body) {
+                    if (t.isReturnStatement(st) && st.argument && t.isObjectExpression(st.argument)) {
+                        obj = st.argument;
+                        break;
+                    }
+                }
+            }
+            else if (!t.isObjectMethod(node) && t.isObjectExpression(node.body)) { // arrow 简写
+                obj = node.body;
+            }
+        }
+        else if (node.value && (t.isFunctionExpression(node.value) || t.isArrowFunctionExpression(node.value))) {
+            // 传入的是 ObjectProperty，取其 value 再解析
+            const val = node.value;
+            if (t.isBlockStatement(val.body)) {
+                for (const st of val.body.body) {
+                    if (t.isReturnStatement(st) && st.argument && t.isObjectExpression(st.argument)) {
+                        obj = st.argument;
+                        break;
+                    }
+                }
+            }
+            else if (t.isObjectExpression(val.body)) {
+                obj = val.body;
+            }
+        }
+        if (!obj) {
+            return;
+        }
+        for (const prop of obj.properties) {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                target.set(prop.key.name, loc);
+            }
+        }
+    };
+    const extractMethods = (node, lineOffset, target) => {
+        if (!node || !t.isObjectExpression(node)) {
+            return;
+        }
+        for (const prop of node.properties) {
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                target.set(prop.key.name, loc);
+            }
+            else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc && (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value))) {
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                target.set(prop.key.name, loc);
+            }
+        }
+    };
+    // 解析 new Vue({...}) 结构
+    (0, traverse_1.default)(ast, {
+        NewExpression(p) {
+            if (t.isIdentifier(p.node.callee) && p.node.callee.name === 'Vue') {
+                const first = p.node.arguments[0];
+                if (first && t.isObjectExpression(first)) {
+                    for (const prop of first.properties) {
+                        if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) {
+                            continue;
+                        }
+                        const key = prop.key; // unify
+                        if (!t.isIdentifier(key)) {
+                            continue;
+                        }
+                        const name = key.name;
+                        if (name === 'data') {
+                            // 统一把 prop 传进去, extractData 会处理多种形式
+                            extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), baseLine, data);
+                        }
+                        else if (name === 'methods') {
+                            extractMethods(prop.value ?? prop, baseLine, methods);
+                        }
+                        else if (name === 'mixins') {
+                            // mixins: [mixinA, mixinB]
+                            const value = prop.value;
+                            if (value && t.isArrayExpression(value)) {
+                                value.elements.forEach(el => { if (t.isIdentifier(el)) {
+                                    mixinVars.push(el.name);
+                                } });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    // 解析 mixin 变量对象
+    for (const mixinVar of mixinVars) {
+        const obj = objectVarDecls[mixinVar] || functionVarReturns[mixinVar] || functionDeclarations[mixinVar];
+        if (!obj) {
+            continue;
+        }
+        // mixin 对象自身可能直接包含 data/methods
+        for (const prop of obj.properties) {
+            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
+                const name = prop.key.name;
+                if (name === 'data') {
+                    extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), baseLine, mixinData);
+                }
+                else if (name === 'methods') {
+                    extractMethods(prop.value, baseLine, mixinMethods);
+                }
+            }
+        }
+    }
+    const all = new Map();
+    for (const m of [data, methods, mixinData, mixinMethods]) {
+        m.forEach((loc, k) => { if (!all.has(k)) {
+            all.set(k, loc);
+        } });
+    }
+    return {
+        data, methods, mixinData, mixinMethods, all,
+        version: 0,
+        hash: fastHash(jsContent),
+        builtAt: Date.now()
     };
 }
 /**
- * 便捷的性能监控函数
+ * 获取（或构建）某个 JS 源的 VueIndex，带缓存
  */
-async function withPerformanceMonitoring(operation, fn) {
-    const stopTimer = exports.performanceMonitor.startTimer(operation);
-    try {
-        const result = await fn();
-        stopTimer(true);
-        return result;
+function getOrCreateVueIndexFromContent(content, uri, baseLine = 0) {
+    const key = uri.toString();
+    const hash = fastHash(content);
+    const cached = indexCache.get(key);
+    if (cached && cached.index.hash === hash) {
+        if (loggingEnabled()) {
+            console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinMethods=${cached.index.mixinMethods.size}`);
+        }
+        return cached.index;
     }
-    catch (error) {
-        stopTimer(false, { error: error instanceof Error ? error.message : String(error) });
-        throw error;
+    const index = buildVueIndex(content, uri, baseLine);
+    indexCache.set(key, { index });
+    // LRU 简化：超过上限移除最早插入
+    if (indexCache.size > MAX_INDEX_CACHE_ENTRIES) {
+        const firstKey = indexCache.keys().next().value;
+        if (firstKey) {
+            indexCache.delete(firstKey);
+        }
+    }
+    if (loggingEnabled()) {
+        console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinMethods=${index.mixinMethods.size}`);
+    }
+    return index;
+}
+/**
+ * 针对当前激活文档（JS/TS）生成补全所需的 ParseResult
+ */
+async function parseDocument(document) {
+    try {
+        if (document.languageId !== 'javascript' && document.languageId !== 'typescript') {
+            return null;
+        }
+        const text = document.getText();
+        const index = getOrCreateVueIndexFromContent(text, document.uri, 0);
+        const variables = [];
+        const methods = [];
+        const thisReferences = new Map();
+        index.data.forEach((_loc, name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'data 属性 (雷动三千)';
+            variables.push(item);
+            thisReferences.set(name, item);
+        });
+        index.methods.forEach((_loc, name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+            item.detail = 'methods 方法 (雷动三千)';
+            methods.push(item);
+            thisReferences.set(name, item);
+        });
+        index.mixinData.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = 'mixin data (雷动三千)';
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinMethods.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+                item.detail = 'mixin method (雷动三千)';
+                methods.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        return { variables, methods, timestamp: Date.now(), thisReferences };
+    }
+    catch (e) {
+        console.error('[parseDocument] error', e);
+        return null;
+    }
+}
+const externalFileCache = new Map();
+function getExternalFileIndex(fullPath) {
+    try {
+        const stat = fs.statSync(fullPath);
+        const cached = externalFileCache.get(fullPath);
+        if (cached && cached.mtimeMs === stat.mtimeMs) {
+            if (loggingEnabled()) {
+                console.log(`[vue-index][external-hit] ${fullPath} mtime=${stat.mtimeMs}`);
+            }
+            return cached.index;
+        }
+        const content = fs.readFileSync(fullPath, 'utf8');
+        const index = getOrCreateVueIndexFromContent(content, vscode.Uri.file(fullPath), 0);
+        externalFileCache.set(fullPath, { mtimeMs: stat.mtimeMs, hash: index.hash, index });
+        if (loggingEnabled()) {
+            console.log(`[vue-index][external-build] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`);
+        }
+        return index;
+    }
+    catch {
+        return null;
+    }
+}
+function resolveVueIndexForHtml(document) {
+    const htmlPath = document.uri.fsPath;
+    const dir = path.dirname(htmlPath);
+    const base = path.basename(htmlPath, path.extname(htmlPath));
+    // 递归搜索 js/**/同名.dev.js (深度优先, 首个匹配即返回)
+    const jsRoot = path.join(dir, 'js');
+    const targetFileName = `${base}.dev.js`;
+    if (fs.existsSync(jsRoot)) {
+        const stack = [jsRoot];
+        while (stack.length) {
+            const current = stack.pop();
+            try {
+                const entries = fs.readdirSync(current, { withFileTypes: true });
+                for (const ent of entries) {
+                    const full = path.join(current, ent.name);
+                    if (ent.isDirectory()) {
+                        stack.push(full);
+                    }
+                    else if (ent.isFile() && ent.name === targetFileName) {
+                        const extIdx = getExternalFileIndex(full);
+                        if (extIdx) {
+                            return extIdx;
+                        }
+                        return null;
+                    }
+                }
+            }
+            catch (e) { /* ignore directory read errors */ }
+        }
+    }
+    // 查找内联 <script> new Vue({...})
+    const text = document.getText();
+    const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+    let match;
+    while ((match = scriptRegex.exec(text)) !== null) {
+        const content = match[1];
+        if (/new\s+Vue\s*\(/.test(content)) {
+            const startPos = document.positionAt(match.index + match[0].indexOf('>') + 1);
+            return getOrCreateVueIndexFromContent(content, document.uri, startPos.line);
+        }
+    }
+    return null;
+}
+/**
+ * 查询变量 / 方法 定义位置
+ */
+function findDefinitionInIndex(name, index) {
+    // 优先顺序：data > mixinData > methods > mixinMethods
+    if (index.data.has(name)) {
+        return index.data.get(name);
+    }
+    if (index.mixinData.has(name)) {
+        return index.mixinData.get(name);
+    }
+    if (index.methods.has(name)) {
+        return index.methods.get(name);
+    }
+    if (index.mixinMethods.has(name)) {
+        return index.mixinMethods.get(name);
+    }
+    return index.all.get(name) || null;
+}
+/**
+ * 处理链式访问 this.xxx.yyy / that.xxx.yyy 时根标识符优先解析
+ */
+function findChainedRootDefinition(chainText, index) {
+    const parts = chainText.split('.').filter(Boolean);
+    if (parts.length === 0) {
+        return null;
+    }
+    // 根 token 可能是 this / that
+    if (parts[0] === 'this' || parts[0] === 'that') {
+        if (parts.length >= 2) {
+            return findDefinitionInIndex(parts[1], index);
+        }
+        return null;
+    }
+    return findDefinitionInIndex(parts[0], index);
+}
+/**
+ * 清空缓存（可在需要时暴露命令）
+ */
+function clearVueIndexCache() { indexCache.clear(); }
+// 供调试：打印当前缓存概览
+function logVueIndexCacheSummary() {
+    console.log(`[vue-index][summary] entries=${indexCache.size} (logging=${loggingEnabled()})`);
+    for (const [k, v] of indexCache.entries()) {
+        console.log(`  - ${k} data=${v.index.data.size} methods=${v.index.methods.size} mixinData=${v.index.mixinData.size} mixinMethods=${v.index.mixinMethods.size}`);
     }
 }
 
 
 /***/ }),
-/* 182 */
+/* 185 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47837,9 +48341,9 @@ exports.registerProviders = registerProviders;
  * Provider 注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
-const definitionProvider_1 = __webpack_require__(183);
-const completionProvider_1 = __webpack_require__(184);
-const config_1 = __webpack_require__(177);
+const definitionProvider_1 = __webpack_require__(186);
+const completionProvider_1 = __webpack_require__(187);
+const config_1 = __webpack_require__(178);
 /**
  * 注册所有 Language Providers
  */
@@ -47871,7 +48375,7 @@ function registerProviders(context) {
 
 
 /***/ }),
-/* 183 */
+/* 186 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -47880,16 +48384,18 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueHtmlDefinitionProvider = void 0;
 const utils_1 = __webpack_require__(3);
 class VueHtmlDefinitionProvider {
+    constructor() {
+        this.definitionLogic = new utils_1.DefinitionLogic();
+    }
     async provideDefinition(document, position, token) {
-        // Call the shared helper function
-        return await (0, utils_1.findVueDefinition)(document, position);
+        return await this.definitionLogic.provideDefinition(document, position);
     }
 }
 exports.VueHtmlDefinitionProvider = VueHtmlDefinitionProvider;
 
 
 /***/ }),
-/* 184 */
+/* 187 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47933,7 +48439,7 @@ exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.M
  * 自动补全提供器
  */
 const vscode = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(176));
+const path = __importStar(__webpack_require__(177));
 const utils_1 = __webpack_require__(3);
 /**
  * 快速日志补全提供器
@@ -48084,10 +48590,12 @@ exports.MultiVariableLogCompletionProvider = MultiVariableLogCompletionProvider;
  * JavaScript 变量与函数补全提供器
  */
 class JavaScriptCompletionProvider {
-    // 存储解析结果的缓存
-    parseCache = new Map();
-    // 缓存有效期 (30秒)
-    cacheValidityPeriod = 30 * 1000;
+    constructor() {
+        // 存储解析结果的缓存
+        this.parseCache = new Map();
+        // 缓存有效期 (30秒)
+        this.cacheValidityPeriod = 30 * 1000;
+    }
     // 提供自动完成项目
     async provideCompletionItems(document, position, token, context) {
         try {
@@ -48298,7 +48806,7 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
-const providers_1 = __webpack_require__(182);
+const providers_1 = __webpack_require__(185);
 /**
  * Extension activation function
  */
