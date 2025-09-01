@@ -2,6 +2,26 @@
 
 ## [1.1.0] - 2025-09-01 ✨ 模板索引与跳转增强
 
+## [1.1.1] - 2025-09-01 🛠 计算属性跳转修复
+
+## [1.1.2] - 2025-09-01 ⚡ 跳转稳定性修复
+
+### 修复
+- 添加 `provideDefinition` try/catch，防止单个解析异常导致所有跳转失效。
+- 修正 this 别名检测正则转义问题，避免无故匹配失败导致别名链式跳转失效。
+- 增强日志：若索引结果为空可结合 `[jump][fatal]` 快速定位根因。
+
+### 使用提示
+- 若仍无法跳转：确认 js/ 同名 *.dev.js 是否存在；或内联 `<script>` 是否包含 `new Vue(`。
+- 可通过命令 `Toggle Index Logging` 开启日志，再使用 `Show Index Summary` 查看缓存情况。
+
+### 修复
+- 新增对 `computed` 与 mixin `computed` 属性的索引与跳转支持，解决绑定到计算属性名无法跳转的问题。
+
+### 说明
+- 跳转优先级更新：data > mixinData > computed > mixinComputed > methods > mixinMethods。
+- 计算属性在补全中归类为属性 (Property)。
+
 ### 新功能 🚀
 - **模板局部变量智能跳转**: 支持 `v-for` (含 `(item,index)` / 解构 / 单变量)、`slot-scope`、`v-slot`、`#slot` 语法内的局部变量索引与优先跳转。
 - **作用域判定**: 通过轻量标签栈估算变量生效范围，实现局部变量优先于 `data/methods`、`mixin` 命中。

@@ -23,50 +23,42 @@ const HTML_ATTR_BLACKLIST = new Set([
 export class DefinitionLogic {
     @monitor('provideDefinition')
     public async provideDefinition(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Location | null> {
-    const rawWordInfo = this.extractWord(document, position);
-    if (!rawWordInfo) { return null; }
-    const { word, contextType, fullChain } = rawWordInfo;
-    if (!word) { return null; }
+        try {
+            const rawWordInfo = this.extractWord(document, position);
+            if (!rawWordInfo) { return null; }
+            const { word, contextType, fullChain } = rawWordInfo;
+            if (!word) { return null; }
 
-        // JS / TS 文件：直接解析自身
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-            const content = document.getText();
-            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
-            console.log(`[jump][js] word=${word} chain=${fullChain || ''}`);
-            let target = findDefinitionInIndex(word, index);
-            if (!target && fullChain) {
-                target = findChainedRootDefinition(fullChain, index);
+            // JS / TS 文件：直接解析自身
+            if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+                const content = document.getText();
+                const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+                console.log(`[jump][js] word=${word} chain=${fullChain || ''}`);
+                let target = findDefinitionInIndex(word, index);
+                if (!target && fullChain) { target = findChainedRootDefinition(fullChain, index); }
+                if (target) { console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`); return target; }
+                console.log(`[jump][js][miss] ${word}`);
+                return null;
             }
-            if (target) {
-                console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
-                return target;
+
+            // HTML 文件：尝试外部 js/***.dev.js 或内联脚本
+            if (document.languageId === 'html') {
+                const index = resolveVueIndexForHtml(document);
+                if (!index) { return null; }
+                // 先尝试模板局部变量 (包括 v-for / slot-scope) root token
+                const templateHit = findTemplateVar(document, position, word);
+                if (templateHit) { if (this.shouldLog()) { console.log(`[jump][html][template-hit] ${word} -> ${templateHit.uri.fsPath}:${templateHit.range.start.line + 1}`); } return templateHit; }
+                console.log(`[jump][html] word=${word} chain=${fullChain || ''}`);
+                let target = findDefinitionInIndex(word, index);
+                if (!target && fullChain) { target = findChainedRootDefinition(fullChain, index); }
+                if (target) { console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`); return target; }
+                console.log(`[jump][html][miss] ${word}`);
             }
-            console.log(`[jump][js][miss] ${word}`);
+            return null;
+        } catch (e) {
+            console.error('[jump][fatal]', e);
             return null;
         }
-
-        // HTML 文件：尝试外部 js/***.dev.js 或内联脚本
-        if (document.languageId === 'html') {
-            const index = resolveVueIndexForHtml(document);
-            if (!index) { return null; }
-            // 先尝试模板局部变量 (包括 v-for / slot-scope) root token
-            const templateHit = findTemplateVar(document, position, word);
-            if (templateHit) {
-                if (this.shouldLog()) { console.log(`[jump][html][template-hit] ${word} -> ${templateHit.uri.fsPath}:${templateHit.range.start.line + 1}`); }
-                return templateHit;
-            }
-            console.log(`[jump][html] word=${word} chain=${fullChain || ''}`);
-            let target = findDefinitionInIndex(word, index);
-            if (!target && fullChain) {
-                target = findChainedRootDefinition(fullChain, index);
-            }
-            if (target) {
-                console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
-                return target;
-            }
-            console.log(`[jump][html][miss] ${word}`);
-        }
-        return null;
     }
 
     /** 提取光标下的词 + 上下文类型 */
@@ -108,14 +100,12 @@ export class DefinitionLogic {
 
     // 判断某标识符是否在当前位置之前被赋值为 this (别名)
     private isThisAlias(document: vscode.TextDocument, position: vscode.Position, alias: string): boolean {
-        // 简单向上扫描一定行数 (例如 400 行上限) 提升性能
         const maxScan = 400;
         const startLine = Math.max(0, position.line - maxScan);
-        const aliasPattern = new RegExp(`\\b(?:const|let|var)?\s*${alias}\\s*=\\s*this\b`);
+        const aliasPattern = new RegExp(`\\b(?:const|let|var)?\\s*${alias}\\s*=\\s*this\\b`);
         for (let line = position.line; line >= startLine; line--) {
             const text = document.lineAt(line).text;
             if (aliasPattern.test(text)) { return true; }
-            // 早停：遇到函数开始大括号之前继续；若遇到 export / new Vue 之类可继续，但不做复杂切分
         }
         return false;
     }

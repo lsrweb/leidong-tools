@@ -12,8 +12,10 @@ import { ParseResult } from '../types';
 export interface VueIndex {
     data: Map<string, vscode.Location>;
     methods: Map<string, vscode.Location>;
+    computed: Map<string, vscode.Location>;
     mixinData: Map<string, vscode.Location>;
     mixinMethods: Map<string, vscode.Location>;
+    mixinComputed: Map<string, vscode.Location>;
     all: Map<string, vscode.Location>; // 合并所有
     version: number; // 文档 version
     hash: string;    // 内容 hash
@@ -56,8 +58,10 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
 
     const data = new Map<string, vscode.Location>();
     const methods = new Map<string, vscode.Location>();
+    const computed = new Map<string, vscode.Location>();
     const mixinData = new Map<string, vscode.Location>();
     const mixinMethods = new Map<string, vscode.Location>();
+    const mixinComputed = new Map<string, vscode.Location>();
     const mixinVars: string[] = []; // 需要解析的变量名
     const objectVarDecls: Record<string, t.ObjectExpression> = {};
     const functionVarReturns: Record<string, t.ObjectExpression> = {}; // 变量 = 函数() { return {...} }
@@ -153,6 +157,30 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         }
     };
 
+    const extractComputed = (node: t.Node | null | undefined, lineOffset: number, target: Map<string, vscode.Location>) => {
+        if (!node || !t.isObjectExpression(node)) { return; }
+        for (const prop of node.properties) {
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                // getter / setter 任取一次
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                if (!target.has(prop.key.name)) { target.set(prop.key.name, loc); }
+            } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+                const val = prop.value as any;
+                if (t.isFunctionExpression(val) || t.isArrowFunctionExpression(val)) {
+                    const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                    target.set(prop.key.name, loc);
+                } else if (t.isObjectExpression(val)) {
+                    // 形如 someProp: { get(){}, set(){} }
+                    const hasGetter = val.properties.some(p => t.isObjectMethod(p) && (p.kind === 'get'));
+                    if (hasGetter) {
+                        const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                        target.set(prop.key.name, loc);
+                    }
+                }
+            }
+        }
+    };
+
     // 解析 new Vue({...}) 结构
     traverse(ast, {
         NewExpression(p) {
@@ -169,6 +197,8 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                             extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), baseLine, data);
                         } else if (name === 'methods') {
                             extractMethods((prop as any).value ?? prop, baseLine, methods);
+                        } else if (name === 'computed') {
+                            extractComputed((prop as any).value ?? prop, baseLine, computed);
                         } else if (name === 'mixins') {
                             // mixins: [mixinA, mixinB]
                             const value = (prop as any).value;
@@ -194,18 +224,20 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), baseLine, mixinData);
                 } else if (name === 'methods') {
                     extractMethods(prop.value, baseLine, mixinMethods);
+                } else if (name === 'computed') {
+                    extractComputed(prop.value, baseLine, mixinComputed);
                 }
             }
         }
     }
 
     const all = new Map<string, vscode.Location>();
-    for (const m of [data, methods, mixinData, mixinMethods]) {
+    for (const m of [data, computed, methods, mixinData, mixinComputed, mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
     }
 
     return {
-        data, methods, mixinData, mixinMethods, all,
+    data, methods, computed, mixinData, mixinMethods, mixinComputed, all,
         version: 0,
         hash: fastHash(jsContent),
         builtAt: Date.now()
@@ -220,7 +252,7 @@ export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri,
     const hash = fastHash(content);
     const cached = indexCache.get(key);
     if (cached && cached.index.hash === hash) {
-        if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinMethods=${cached.index.mixinMethods.size}`); }
+    if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
         return cached.index;
     }
     const index = buildVueIndex(content, uri, baseLine);
@@ -230,7 +262,7 @@ export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri,
         const firstKey = indexCache.keys().next().value;
         if (firstKey) { indexCache.delete(firstKey); }
     }
-    if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinMethods=${index.mixinMethods.size}`); }
+    if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`); }
     return index;
 }
 
@@ -261,10 +293,26 @@ export async function parseDocument(document: vscode.TextDocument): Promise<Pars
             methods.push(item);
             thisReferences.set(name, item);
         });
+        index.computed.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = 'computed 属性 (雷动三千)';
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
         index.mixinData.forEach((_loc, name) => {
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
                 item.detail = 'mixin data (雷动三千)';
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinComputed.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = 'mixin computed (雷动三千)';
                 variables.push(item);
                 thisReferences.set(name, item);
             }
@@ -352,9 +400,11 @@ export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex 
  * 查询变量 / 方法 定义位置
  */
 export function findDefinitionInIndex(name: string, index: VueIndex): vscode.Location | null {
-    // 优先顺序：data > mixinData > methods > mixinMethods
+    // 优先顺序：data > mixinData > computed > mixinComputed > methods > mixinMethods
     if (index.data.has(name)) { return index.data.get(name)!; }
     if (index.mixinData.has(name)) { return index.mixinData.get(name)!; }
+    if (index.computed.has(name)) { return index.computed.get(name)!; }
+    if (index.mixinComputed.has(name)) { return index.mixinComputed.get(name)!; }
     if (index.methods.has(name)) { return index.methods.get(name)!; }
     if (index.mixinMethods.has(name)) { return index.mixinMethods.get(name)!; }
     return index.all.get(name) || null;
@@ -384,7 +434,7 @@ export function clearVueIndexCache() { indexCache.clear(); }
 export function logVueIndexCacheSummary() {
     console.log(`[vue-index][summary] entries=${indexCache.size} (logging=${loggingEnabled()})`);
     for (const [k, v] of indexCache.entries()) {
-        console.log(`  - ${k} data=${v.index.data.size} methods=${v.index.methods.size} mixinData=${v.index.mixinData.size} mixinMethods=${v.index.mixinMethods.size}`);
+    console.log(`  - ${k} data=${v.index.data.size} computed=${v.index.computed.size} methods=${v.index.methods.size} mixinData=${v.index.mixinData.size} mixinComputed=${v.index.mixinComputed.size} mixinMethods=${v.index.mixinMethods.size}`);
     }
 }
 

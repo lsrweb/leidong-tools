@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "雷动三千开发的VS Code效率工具集：Vue.js智能跳转、JavaScript补全、多行压缩、注释压缩、快速日志等功能",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "publisher": "KuCai",
   "icon": "logo.jpg",
   "repository": {
