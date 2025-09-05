@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 // Import modular components
 import { registerCommands } from './core/commands';
 import { registerProviders } from './core/providers';
+import { registerIndexLifecycle } from './utils/indexManager';
 
 /**
  * Extension activation function
@@ -19,6 +20,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register all language providers
     registerProviders(context);
+
+    // Register index lifecycle manager (build on open/visible, clear on close)
+    registerIndexLifecycle(context);
 
     console.log('✅ All commands and providers registered successfully!');
 }

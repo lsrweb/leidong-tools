@@ -121,6 +121,22 @@
           "default": true,
           "description": "启用/关闭索引与跳转调试日志"
         }
+        ,
+        "leidong-tools.rebuildOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "仅在文件保存时重建索引（默认：开启）。当关闭时，索引仍会在打开或可见时构建。"
+        },
+        "leidong-tools.maxIndexEntries": {
+          "type": "number",
+          "default": 200,
+          "description": "Vue 索引缓存的最大条目数（LRU）。过高会占用更多内存。"
+        },
+        "leidong-tools.maxTemplateIndexEntries": {
+          "type": "number",
+          "default": 300,
+          "description": "模板索引缓存的最大条目数（LRU）。过高会占用更多内存。"
+        }
       }
     },
     "keybindings": [

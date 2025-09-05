@@ -11,8 +11,8 @@ import {
 } from '../utils';
 import { compressMultipleLines } from '../utils/codeCompressor';
 import { COMMANDS } from './config';
-import { clearVueIndexCache } from '../utils/parseDocument';
-import { clearTemplateIndexCache, showTemplateIndexSummary } from '../utils/templateIndexer';
+import { clearVueIndexCache, removeVueIndexForUri } from '../utils/parseDocument';
+import { removeTemplateIndex, pruneTemplateIndex, showTemplateIndexSummary } from '../utils/templateIndexer';
 
 /**
  * 注册所有命令
@@ -140,7 +140,7 @@ export function registerCommands(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('leidong-tools.clearIndexCache', () => {
             clearVueIndexCache();
-            clearTemplateIndexCache();
+            pruneTemplateIndex(0); // 清理全部
             vscode.window.showInformationMessage('索引缓存已清理');
         })
     );

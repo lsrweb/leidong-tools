@@ -4,6 +4,7 @@ import traverse from '@babel/traverse';
 import * as t from '@babel/types';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LRUCache } from './lruCache';
 import { ParseResult } from '../types';
 
 /**
@@ -24,9 +25,11 @@ export interface VueIndex {
 
 interface CacheEntry { index: VueIndex; }
 
-// 内存缓存
-const indexCache = new Map<string, CacheEntry>();
-const MAX_INDEX_CACHE_ENTRIES = 60; // 简单上限，避免无限增长
+// 使用 LRU 缓存
+function getMaxIndexEntries(): number {
+    try { return Math.max(10, vscode.workspace.getConfiguration('leidong-tools').get<number>('maxIndexEntries', 60)); } catch { return 60; }
+}
+let indexCache = new LRUCache<string, CacheEntry>(getMaxIndexEntries());
 
 function loggingEnabled(): boolean {
     try {
@@ -247,24 +250,33 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
 /**
  * 获取（或构建）某个 JS 源的 VueIndex，带缓存
  */
-export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri, baseLine = 0): VueIndex {
+/**
+ * 获取或创建 VueIndex。默认只在没有缓存时构建。
+ * 如果需要强制重建（例如文件首次打开或显示时），传入 force=true。
+ */
+export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri, baseLine = 0, force = false): VueIndex {
     const key = uri.toString();
     const hash = fastHash(content);
     const cached = indexCache.get(key);
-    if (cached && cached.index.hash === hash) {
-    if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
+    if (!force && cached && cached.index.hash === hash) {
+        if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
         return cached.index;
     }
+    // 构建新索引并缓存
     const index = buildVueIndex(content, uri, baseLine);
     indexCache.set(key, { index });
-    // LRU 简化：超过上限移除最早插入
-    if (indexCache.size > MAX_INDEX_CACHE_ENTRIES) {
-        const firstKey = indexCache.keys().next().value;
-        if (firstKey) { indexCache.delete(firstKey); }
-    }
     if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`); }
     return index;
 }
+
+/** 返回当前缓存（不触发解析） */
+export function getCachedVueIndex(uri: vscode.Uri): VueIndex | null {
+    const entry = indexCache.get(uri.toString());
+    return entry ? entry.index : null;
+}
+
+/** 删除指定 uri 的缓存 */
+export function removeVueIndexForUri(uri: vscode.Uri) { indexCache.delete(uri.toString()); }
 
 /**
  * 针对当前激活文档（JS/TS）生成补全所需的 ParseResult
@@ -430,11 +442,14 @@ export function findChainedRootDefinition(chainText: string, index: VueIndex): v
  * 清空缓存（可在需要时暴露命令）
  */
 export function clearVueIndexCache() { indexCache.clear(); }
+export function pruneVueIndexCache(maxAgeMs = 1000 * 60 * 60) { indexCache.pruneByAge(maxAgeMs); }
+
+export function recreateVueIndexCache() { indexCache = new LRUCache<string, CacheEntry>(getMaxIndexEntries()); }
 // 供调试：打印当前缓存概览
 export function logVueIndexCacheSummary() {
     console.log(`[vue-index][summary] entries=${indexCache.size} (logging=${loggingEnabled()})`);
-    for (const [k, v] of indexCache.entries()) {
-    console.log(`  - ${k} data=${v.index.data.size} computed=${v.index.computed.size} methods=${v.index.methods.size} mixinData=${v.index.mixinData.size} mixinComputed=${v.index.mixinComputed.size} mixinMethods=${v.index.mixinMethods.size}`);
-    }
+    indexCache.forEach((entry, k) => {
+        console.log(`  - ${k} data=${entry.index.data.size} computed=${entry.index.computed.size} methods=${entry.index.methods.size} mixinData=${entry.index.mixinData.size} mixinComputed=${entry.index.mixinComputed.size} mixinMethods=${entry.index.mixinMethods.size}`);
+    });
 }
 

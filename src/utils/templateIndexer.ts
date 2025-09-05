@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LRUCache } from './lruCache';
 
 interface TemplateVar {
     name: string;
@@ -15,8 +16,8 @@ export interface TemplateIndex {
 }
 
 interface CacheEntry { index: TemplateIndex; lastAccess: number; }
-const templateIndexCache = new Map<string, CacheEntry>();
-const MAX_TEMPLATE_INDEX = 50;
+function getMaxTemplateEntries(): number { try { return Math.max(10, vscode.workspace.getConfiguration('leidong-tools').get<number>('maxTemplateIndexEntries', 50)); } catch { return 50; } }
+let templateIndexCache = new LRUCache<string, CacheEntry>(getMaxTemplateEntries());
 
 function fastHash(str: string): string {
     let h = 0; for (let i = 0; i < str.length; i++) { h = (h * 33 + str.charCodeAt(i)) >>> 0; }
@@ -113,18 +114,32 @@ export function getTemplateIndex(doc: vscode.TextDocument): TemplateIndex | null
         if (loggingEnabled()) { console.log(`[template-index][hit] ${doc.uri.fsPath}`); }
         return cached.index;
     }
+    // 不在这里自动构建，避免频繁编辑触发重建。返回 null 表示需要显式构建。
+    return null;
+}
+
+export function buildAndCacheTemplateIndex(doc: vscode.TextDocument): TemplateIndex | null {
+    if (doc.languageId !== 'html') { return null; }
     const idx = buildTemplateIndex(doc);
-    templateIndexCache.set(key, { index: idx, lastAccess: Date.now() });
-    // LRU 修剪
-    if (templateIndexCache.size > MAX_TEMPLATE_INDEX) {
-        let oldestKey: string | null = null; let oldestTime = Number.MAX_SAFE_INTEGER;
-        for (const [k, v] of templateIndexCache.entries()) {
-            if (v.lastAccess < oldestTime) { oldestTime = v.lastAccess; oldestKey = k; }
-        }
-        if (oldestKey) { templateIndexCache.delete(oldestKey); }
-    }
+    const key = doc.uri.toString();
+        templateIndexCache.set(key, { index: idx, lastAccess: Date.now() });
     return idx;
 }
+
+export function getCachedTemplateIndex(doc: vscode.TextDocument): TemplateIndex | null {
+    const key = doc.uri.toString();
+    const cached = templateIndexCache.get(key);
+    if (cached) { cached.lastAccess = Date.now(); return cached.index; }
+    return null;
+}
+
+export function removeTemplateIndex(doc: vscode.TextDocument) { templateIndexCache.delete(doc.uri.toString()); }
+
+export function pruneTemplateIndex(maxAgeMs = 1000 * 60 * 60) {
+    templateIndexCache.pruneByAge(maxAgeMs);
+}
+
+export function recreateTemplateIndexCache() { templateIndexCache = new LRUCache<string, CacheEntry>(getMaxTemplateEntries()); }
 
 export function findTemplateVar(document: vscode.TextDocument, position: vscode.Position, name: string): vscode.Location | null {
     const idx = getTemplateIndex(document);
@@ -139,9 +154,7 @@ export function findTemplateVar(document: vscode.TextDocument, position: vscode.
 
 export function showTemplateIndexSummary() {
     console.log('[template-index][summary] entries=' + templateIndexCache.size);
-    templateIndexCache.forEach((entry, k) => {
-        console.log(` - ${k} vars=${entry.index.vars.length}`);
-    });
+    templateIndexCache.forEach((entry, k) => { console.log(` - ${k} vars=${entry.index.vars.length}`); });
 }
 
 export function clearTemplateIndexCache() { templateIndexCache.clear(); }

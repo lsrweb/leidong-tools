@@ -49,7 +49,7 @@ const utils_1 = __webpack_require__(3);
 const codeCompressor_1 = __webpack_require__(181);
 const config_1 = __webpack_require__(6);
 const parseDocument_1 = __webpack_require__(183);
-const templateIndexer_1 = __webpack_require__(184);
+const templateIndexer_1 = __webpack_require__(185);
 /**
  * 注册所有命令
  */
@@ -137,7 +137,7 @@ function registerCommands(context) {
     // 清理索引缓存命令（内部）
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.clearIndexCache', () => {
         (0, parseDocument_1.clearVueIndexCache)();
-        (0, templateIndexer_1.clearTemplateIndexCache)();
+        (0, templateIndexer_1.pruneTemplateIndex)(0); // 清理全部
         vscode.window.showInformationMessage('索引缓存已清理');
     }));
     // 展示索引摘要
@@ -196,7 +196,7 @@ __exportStar(__webpack_require__(180), exports);
 // scriptFinder 已被新索引方案替代
 __exportStar(__webpack_require__(182), exports);
 __exportStar(__webpack_require__(183), exports);
-__exportStar(__webpack_require__(184), exports);
+__exportStar(__webpack_require__(185), exports);
 
 
 /***/ }),
@@ -47507,7 +47507,7 @@ exports.DefinitionLogic = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const performanceMonitor_1 = __webpack_require__(180);
 const parseDocument_1 = __webpack_require__(183);
-const templateIndexer_1 = __webpack_require__(184);
+const templateIndexer_1 = __webpack_require__(185);
 const jsDocIndexCache = new Map();
 const HTML_ATTR_BLACKLIST = new Set([
     'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'type', 'value', 'name', 'placeholder', 'rel', 'for', 'aria-label'
@@ -47678,11 +47678,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getOrCreateVueIndexFromContent = getOrCreateVueIndexFromContent;
+exports.getCachedVueIndex = getCachedVueIndex;
+exports.removeVueIndexForUri = removeVueIndexForUri;
 exports.parseDocument = parseDocument;
 exports.resolveVueIndexForHtml = resolveVueIndexForHtml;
 exports.findDefinitionInIndex = findDefinitionInIndex;
 exports.findChainedRootDefinition = findChainedRootDefinition;
 exports.clearVueIndexCache = clearVueIndexCache;
+exports.pruneVueIndexCache = pruneVueIndexCache;
+exports.recreateVueIndexCache = recreateVueIndexCache;
 exports.logVueIndexCacheSummary = logVueIndexCacheSummary;
 const vscode = __importStar(__webpack_require__(2));
 const parser = __importStar(__webpack_require__(10));
@@ -47690,9 +47694,17 @@ const traverse_1 = __importDefault(__webpack_require__(11));
 const t = __importStar(__webpack_require__(30));
 const fs = __importStar(__webpack_require__(8));
 const path = __importStar(__webpack_require__(5));
-// 内存缓存
-const indexCache = new Map();
-const MAX_INDEX_CACHE_ENTRIES = 60; // 简单上限，避免无限增长
+const lruCache_1 = __webpack_require__(184);
+// 使用 LRU 缓存
+function getMaxIndexEntries() {
+    try {
+        return Math.max(10, vscode.workspace.getConfiguration('leidong-tools').get('maxIndexEntries', 60));
+    }
+    catch {
+        return 60;
+    }
+}
+let indexCache = new lruCache_1.LRUCache(getMaxIndexEntries());
 function loggingEnabled() {
     try {
         const cfg = vscode.workspace.getConfiguration('leidong-tools');
@@ -47954,30 +47966,35 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
 /**
  * 获取（或构建）某个 JS 源的 VueIndex，带缓存
  */
-function getOrCreateVueIndexFromContent(content, uri, baseLine = 0) {
+/**
+ * 获取或创建 VueIndex。默认只在没有缓存时构建。
+ * 如果需要强制重建（例如文件首次打开或显示时），传入 force=true。
+ */
+function getOrCreateVueIndexFromContent(content, uri, baseLine = 0, force = false) {
     const key = uri.toString();
     const hash = fastHash(content);
     const cached = indexCache.get(key);
-    if (cached && cached.index.hash === hash) {
+    if (!force && cached && cached.index.hash === hash) {
         if (loggingEnabled()) {
             console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`);
         }
         return cached.index;
     }
+    // 构建新索引并缓存
     const index = buildVueIndex(content, uri, baseLine);
     indexCache.set(key, { index });
-    // LRU 简化：超过上限移除最早插入
-    if (indexCache.size > MAX_INDEX_CACHE_ENTRIES) {
-        const firstKey = indexCache.keys().next().value;
-        if (firstKey) {
-            indexCache.delete(firstKey);
-        }
-    }
     if (loggingEnabled()) {
         console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`);
     }
     return index;
 }
+/** 返回当前缓存（不触发解析） */
+function getCachedVueIndex(uri) {
+    const entry = indexCache.get(uri.toString());
+    return entry ? entry.index : null;
+}
+/** 删除指定 uri 的缓存 */
+function removeVueIndexForUri(uri) { indexCache.delete(uri.toString()); }
 /**
  * 针对当前激活文档（JS/TS）生成补全所需的 ParseResult
  */
@@ -48154,17 +48171,76 @@ function findChainedRootDefinition(chainText, index) {
  * 清空缓存（可在需要时暴露命令）
  */
 function clearVueIndexCache() { indexCache.clear(); }
+function pruneVueIndexCache(maxAgeMs = 1000 * 60 * 60) { indexCache.pruneByAge(maxAgeMs); }
+function recreateVueIndexCache() { indexCache = new lruCache_1.LRUCache(getMaxIndexEntries()); }
 // 供调试：打印当前缓存概览
 function logVueIndexCacheSummary() {
     console.log(`[vue-index][summary] entries=${indexCache.size} (logging=${loggingEnabled()})`);
-    for (const [k, v] of indexCache.entries()) {
-        console.log(`  - ${k} data=${v.index.data.size} computed=${v.index.computed.size} methods=${v.index.methods.size} mixinData=${v.index.mixinData.size} mixinComputed=${v.index.mixinComputed.size} mixinMethods=${v.index.mixinMethods.size}`);
-    }
+    indexCache.forEach((entry, k) => {
+        console.log(`  - ${k} data=${entry.index.data.size} computed=${entry.index.computed.size} methods=${entry.index.methods.size} mixinData=${entry.index.mixinData.size} mixinComputed=${entry.index.mixinComputed.size} mixinMethods=${entry.index.mixinMethods.size}`);
+    });
 }
 
 
 /***/ }),
 /* 184 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LRUCache = void 0;
+class LRUCache {
+    constructor(max = 60) {
+        this.map = new Map();
+        this.max = Math.max(1, Math.floor(max));
+    }
+    get size() { return this.map.size; }
+    get(key) {
+        const entry = this.map.get(key);
+        if (!entry) {
+            return undefined;
+        }
+        entry.lastAccess = Date.now();
+        // move to end
+        this.map.delete(key);
+        this.map.set(key, entry);
+        return entry.value;
+    }
+    set(key, value) {
+        if (this.map.has(key)) {
+            this.map.delete(key);
+        }
+        this.map.set(key, { value, lastAccess: Date.now() });
+        if (this.map.size > this.max) {
+            const firstKey = this.map.keys().next().value;
+            if (firstKey !== undefined) {
+                this.map.delete(firstKey);
+            }
+        }
+    }
+    delete(key) { return this.map.delete(key); }
+    has(key) { return this.map.has(key); }
+    clear() { this.map.clear(); }
+    forEach(cb) { for (const [k, v] of this.map.entries()) {
+        cb(v.value, k);
+    } }
+    // prune entries not accessed within maxAgeMs
+    pruneByAge(maxAgeMs) {
+        const now = Date.now();
+        for (const [k, v] of Array.from(this.map.entries())) {
+            if (now - v.lastAccess > maxAgeMs) {
+                this.map.delete(k);
+            }
+        }
+    }
+    keys() { return Array.from(this.map.keys()); }
+}
+exports.LRUCache = LRUCache;
+
+
+/***/ }),
+/* 185 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48204,12 +48280,23 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getTemplateIndex = getTemplateIndex;
+exports.buildAndCacheTemplateIndex = buildAndCacheTemplateIndex;
+exports.getCachedTemplateIndex = getCachedTemplateIndex;
+exports.removeTemplateIndex = removeTemplateIndex;
+exports.pruneTemplateIndex = pruneTemplateIndex;
+exports.recreateTemplateIndexCache = recreateTemplateIndexCache;
 exports.findTemplateVar = findTemplateVar;
 exports.showTemplateIndexSummary = showTemplateIndexSummary;
 exports.clearTemplateIndexCache = clearTemplateIndexCache;
 const vscode = __importStar(__webpack_require__(2));
-const templateIndexCache = new Map();
-const MAX_TEMPLATE_INDEX = 50;
+const lruCache_1 = __webpack_require__(184);
+function getMaxTemplateEntries() { try {
+    return Math.max(10, vscode.workspace.getConfiguration('leidong-tools').get('maxTemplateIndexEntries', 50));
+}
+catch {
+    return 50;
+} }
+let templateIndexCache = new lruCache_1.LRUCache(getMaxTemplateEntries());
 function fastHash(str) {
     let h = 0;
     for (let i = 0; i < str.length; i++) {
@@ -48318,24 +48405,32 @@ function getTemplateIndex(doc) {
         }
         return cached.index;
     }
-    const idx = buildTemplateIndex(doc);
-    templateIndexCache.set(key, { index: idx, lastAccess: Date.now() });
-    // LRU 修剪
-    if (templateIndexCache.size > MAX_TEMPLATE_INDEX) {
-        let oldestKey = null;
-        let oldestTime = Number.MAX_SAFE_INTEGER;
-        for (const [k, v] of templateIndexCache.entries()) {
-            if (v.lastAccess < oldestTime) {
-                oldestTime = v.lastAccess;
-                oldestKey = k;
-            }
-        }
-        if (oldestKey) {
-            templateIndexCache.delete(oldestKey);
-        }
+    // 不在这里自动构建，避免频繁编辑触发重建。返回 null 表示需要显式构建。
+    return null;
+}
+function buildAndCacheTemplateIndex(doc) {
+    if (doc.languageId !== 'html') {
+        return null;
     }
+    const idx = buildTemplateIndex(doc);
+    const key = doc.uri.toString();
+    templateIndexCache.set(key, { index: idx, lastAccess: Date.now() });
     return idx;
 }
+function getCachedTemplateIndex(doc) {
+    const key = doc.uri.toString();
+    const cached = templateIndexCache.get(key);
+    if (cached) {
+        cached.lastAccess = Date.now();
+        return cached.index;
+    }
+    return null;
+}
+function removeTemplateIndex(doc) { templateIndexCache.delete(doc.uri.toString()); }
+function pruneTemplateIndex(maxAgeMs = 1000 * 60 * 60) {
+    templateIndexCache.pruneByAge(maxAgeMs);
+}
+function recreateTemplateIndexCache() { templateIndexCache = new lruCache_1.LRUCache(getMaxTemplateEntries()); }
 function findTemplateVar(document, position, name) {
     const idx = getTemplateIndex(document);
     if (!idx) {
@@ -48352,15 +48447,13 @@ function findTemplateVar(document, position, name) {
 }
 function showTemplateIndexSummary() {
     console.log('[template-index][summary] entries=' + templateIndexCache.size);
-    templateIndexCache.forEach((entry, k) => {
-        console.log(` - ${k} vars=${entry.index.vars.length}`);
-    });
+    templateIndexCache.forEach((entry, k) => { console.log(` - ${k} vars=${entry.index.vars.length}`); });
 }
 function clearTemplateIndexCache() { templateIndexCache.clear(); }
 
 
 /***/ }),
-/* 185 */
+/* 186 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48404,8 +48497,8 @@ exports.registerProviders = registerProviders;
  * Provider 注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
-const definitionProvider_1 = __webpack_require__(186);
-const completionProvider_1 = __webpack_require__(187);
+const definitionProvider_1 = __webpack_require__(187);
+const completionProvider_1 = __webpack_require__(188);
 const config_1 = __webpack_require__(6);
 /**
  * 注册所有 Language Providers
@@ -48438,7 +48531,7 @@ function registerProviders(context) {
 
 
 /***/ }),
-/* 186 */
+/* 187 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -48458,7 +48551,7 @@ exports.VueHtmlDefinitionProvider = VueHtmlDefinitionProvider;
 
 
 /***/ }),
-/* 187 */
+/* 188 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48801,6 +48894,117 @@ class VonCompletionProvider {
 exports.VonCompletionProvider = VonCompletionProvider;
 
 
+/***/ }),
+/* 189 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerIndexLifecycle = registerIndexLifecycle;
+const templateIndexer_1 = __webpack_require__(185);
+const parseDocument_1 = __webpack_require__(183);
+const vscode = __importStar(__webpack_require__(2));
+/** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */
+function registerIndexLifecycle(context) {
+    const disposables = [];
+    let rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get('rebuildOnSave', true);
+    // watch for config change
+    disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('leidong-tools.maxIndexEntries')) {
+            (0, parseDocument_1.recreateVueIndexCache)();
+        }
+        if (e.affectsConfiguration('leidong-tools.maxTemplateIndexEntries')) {
+            (0, templateIndexer_1.recreateTemplateIndexCache)();
+        }
+        if (e.affectsConfiguration('leidong-tools.rebuildOnSave')) {
+            rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get('rebuildOnSave', true);
+        }
+    }));
+    // 在编辑器打开或切换到可见时构建索引（force rebuild）
+    const ensureIndexForEditor = (editor) => {
+        if (!editor) {
+            return;
+        }
+        const doc = editor.document;
+        if (doc.languageId === 'html') {
+            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
+        }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
+            // 强制重建 JS index for current file
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+        }
+    };
+    disposables.push(vscode.window.onDidChangeVisibleTextEditors((editors) => {
+        // 可见编辑器改变：为所有可见的editor确保索引
+        editors.forEach(e => ensureIndexForEditor(e));
+    }));
+    disposables.push(vscode.workspace.onDidOpenTextDocument((doc) => {
+        // 打开文件时建立索引
+        if (doc.languageId === 'html') {
+            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
+        }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+        }
+    }));
+    // 在保存时（可配置）触发重建索引
+    disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (!rebuildOnSave) {
+            return;
+        }
+        if (doc.languageId === 'html') {
+            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
+        }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+        }
+    }));
+    disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {
+        // 关闭文件时清理缓存
+        (0, templateIndexer_1.removeTemplateIndex)(doc);
+        (0, parseDocument_1.removeVueIndexForUri)(doc.uri);
+    }));
+    // 定期修剪长时间未访问的模板索引
+    const pruneInterval = setInterval(() => { (0, templateIndexer_1.pruneTemplateIndex)(); (0, parseDocument_1.pruneVueIndexCache)(); }, 1000 * 60 * 10);
+    context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
+    disposables.forEach(d => context.subscriptions.push(d));
+}
+
+
 /***/ })
 /******/ 	]);
 /************************************************************************/
@@ -48869,7 +49073,8 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
-const providers_1 = __webpack_require__(185);
+const providers_1 = __webpack_require__(186);
+const indexManager_1 = __webpack_require__(189);
 /**
  * Extension activation function
  */
@@ -48879,6 +49084,8 @@ function activate(context) {
     (0, commands_1.registerCommands)(context);
     // Register all language providers
     (0, providers_1.registerProviders)(context);
+    // Register index lifecycle manager (build on open/visible, clear on close)
+    (0, indexManager_1.registerIndexLifecycle)(context);
     console.log('✅ All commands and providers registered successfully!');
 }
 /**
