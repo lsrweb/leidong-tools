@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "雷动三千开发的VS Code效率工具集：Vue.js智能跳转、JavaScript补全、多行压缩、注释压缩、快速日志等功能",
-  "version": "1.1.2",
+  "version": "1.1.5",
   "publisher": "KuCai",
   "icon": "logo.jpg",
   "repository": {
@@ -136,6 +136,11 @@
           "type": "number",
           "default": 300,
           "description": "模板索引缓存的最大条目数（LRU）。过高会占用更多内存。"
+        },
+        "leidong-tools.hoverDelay": {
+          "type": "number",
+          "default": 300,
+          "description": "鼠标悬停在变量上后延迟多少毫秒开始检测（默认300ms）。"
         }
       }
     },

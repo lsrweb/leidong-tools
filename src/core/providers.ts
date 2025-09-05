@@ -3,6 +3,7 @@
  */
 import * as vscode from 'vscode';
 import { VueHtmlDefinitionProvider } from '../providers/definitionProvider';
+import { VueHoverProvider } from '../providers/hoverProvider';
 import { 
     JavaScriptCompletionProvider, 
     QuickLogCompletionProvider, 
@@ -24,7 +25,19 @@ export function registerProviders(context: vscode.ExtensionContext) {
                 new VueHtmlDefinitionProvider()
             )
         );
-    }    // 注册 JavaScript 补全提供器
+    }
+
+    // 注册悬停提供器
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider(
+            [
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'javascript' },
+                { scheme: 'file', language: 'typescript' }
+            ],
+            new VueHoverProvider()
+        )
+    );    // 注册 JavaScript 补全提供器
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             FILE_SELECTORS.JAVASCRIPT_ONLY,
