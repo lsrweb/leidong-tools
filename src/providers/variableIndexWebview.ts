@@ -42,13 +42,16 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
     constructor(private readonly extensionUri: vscode.Uri) {
         this._extensionUri = extensionUri;
 
-        // 监听文档变化
-        vscode.window.onDidChangeActiveTextEditor(() => {
-            this.refresh();
+        // ✅ 只在切换文件时刷新（打开新文件）
+        vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor) {
+                this.refresh();
+            }
         });
 
-        vscode.workspace.onDidSaveTextDocument(() => {
-            this.refresh();
+        // ✅ 保存时清除缓存，但不立即刷新（避免编辑时频繁重建）
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            this.invalidateCacheForDocument(document);
         });
     }
 
@@ -77,6 +80,28 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
 
         // 初始加载
         this.refresh();
+    }
+
+    /**
+     * 清除文档的缓存
+     */
+    private invalidateCacheForDocument(document: vscode.TextDocument): void {
+        console.log('[VariableIndexWebview] 文件保存，清除缓存:', document.uri.toString());
+        
+        // 清除 jsSymbolParser 缓存
+        jsSymbolParser.invalidateCache(document.uri);
+        
+        // 如果是外部 JS 文件，查找对应的 HTML
+        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            jsSymbolParser.invalidateCache(document.uri);
+        }
+        
+        // 如果保存的文件就是当前显示的文件，刷新索引
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document.uri.toString() === document.uri.toString()) {
+            console.log('[VariableIndexWebview] 当前文件已保存，刷新索引');
+            this.refresh();
+        }
     }
 
     /**

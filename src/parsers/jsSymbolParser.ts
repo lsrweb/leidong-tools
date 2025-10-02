@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import * as parser from '@babel/parser';
 import traverse, { NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
-import { LRUCache } from '../cache/lruCache';
+import { DocumentParseCacheManager } from '../cache/cacheManager';
 import { monitor } from '../monitoring/performanceMonitor';
 
 /**
@@ -47,24 +47,23 @@ export interface ParseResult {
 }
 
 /**
- * 缓存条目
- */
-interface CacheEntry {
-    result: ParseResult;
-    timestamp: number;
-    hash: string;
-}
-
-/**
  * JavaScript 符号解析器
  * 参考 outline-map 的 DocumentSymbolProvider 实现
  */
 export class JSSymbolParser {
-    private cache: LRUCache<string, CacheEntry>;
-    private readonly CACHE_TTL = 30000; // 30秒缓存
+    private cacheManager: DocumentParseCacheManager;
 
-    constructor(maxCacheSize: number = 200) {
-        this.cache = new LRUCache(maxCacheSize);
+    constructor() {
+        this.cacheManager = DocumentParseCacheManager.getInstance();
+    }
+
+    /**
+     * 清除指定文件的缓存
+     */
+    public invalidateCache(uri: vscode.Uri, baseLine: number = 0): void {
+        const cacheKey = `${uri.toString()}:${baseLine}`;
+        this.cacheManager.delete(cacheKey);
+        console.log('[jsSymbolParser] 缓存已失效:', cacheKey);
     }
 
     /**
@@ -78,26 +77,31 @@ export class JSSymbolParser {
         const content = typeof document === 'string' ? document : document.getText();
         const docUri = uri || (typeof document !== 'string' ? document.uri : vscode.Uri.parse('untitled'));
 
-        // 检查缓存（包含 baseLine 在 key 中）
+        // ✅ 使用 DocumentParseCacheManager 检查缓存
         const cacheKey = `${docUri.toString()}:${baseLine}`;
-        const hash = this.fastHash(content);
-        const cached = this.cache.get(cacheKey);
+        const cached = this.cacheManager.getParseResult(cacheKey);
         
-        if (cached && cached.hash === hash && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
-            console.log('[jsSymbolParser] 缓存命中:', cacheKey);
-            return cached.result;
+        if (cached) {
+            const hash = this.fastHash(content);
+            if (cached.hash === hash) {
+                console.log(`[jsSymbolParser] ✅ 缓存命中: ${cacheKey}`);
+                return cached.result;
+            } else {
+                console.log(`[jsSymbolParser] ❌ 内容变化，缓存失效: ${cacheKey}`);
+            }
         }
         
-        console.log('[jsSymbolParser] 缓存未命中，开始解析:', cacheKey);
+        console.log('[jsSymbolParser] 🔄 开始解析:', cacheKey);
 
         // 解析代码
         const result = await this.parseContent(content, docUri, baseLine);
         
-        // 缓存结果
-        this.cache.set(cacheKey, {
+        // ✅ 使用 DocumentParseCacheManager 缓存结果
+        const hash = this.fastHash(content);
+        this.cacheManager.setParseResult(cacheKey, {
             result,
-            timestamp: Date.now(),
-            hash
+            hash,
+            timestamp: Date.now()
         });
 
         return result;
@@ -490,21 +494,17 @@ export class JSSymbolParser {
     }
 
     /**
-     * 清除缓存
+     * 清空所有缓存
      */
     public clearCache(): void {
-        this.cache.clear();
+        this.cacheManager.clear();
     }
 
     /**
      * 获取缓存统计
      */
-    public getCacheStats(): { size: number; maxSize: number } {
-        // LRUCache 使用私有属性，这里返回估算值
-        return {
-            size: 0, // 缓存项数量
-            maxSize: 200 // 最大容量
-        };
+    public getCacheStats() {
+        return this.cacheManager.getStats();
     }
 }
 

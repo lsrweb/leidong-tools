@@ -342,6 +342,13 @@ export class DocumentParseCacheManager {
     }
 
     /**
+     * 删除指定文档的缓存
+     */
+    public delete(uri: string): boolean {
+        return this.cache.delete(uri);
+    }
+
+    /**
      * 清理文档解析缓存
      */
     public clear(): void {
