@@ -48,11 +48,11 @@ const vscode = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const consoleLogger_1 = __webpack_require__(4);
 const performanceMonitor_1 = __webpack_require__(6);
-const codeCompressor_1 = __webpack_require__(179);
+const codeCompressor_1 = __webpack_require__(7);
 const config_1 = __webpack_require__(5);
 const parseDocument_1 = __webpack_require__(8);
 const templateIndexer_1 = __webpack_require__(178);
-const fileWatchManager_1 = __webpack_require__(180);
+const fileWatchManager_1 = __webpack_require__(179);
 /**
  * 注册所有命令
  */
@@ -844,12 +844,6 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
-    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
-    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-    return c > 3 && r && Object.defineProperty(target, key, r), r;
-};
 var __importStar = (this && this.__importStar) || (function () {
     var ownKeys = function(o) {
         ownKeys = Object.getOwnPropertyNames || function (o) {
@@ -868,291 +862,263 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VariableIndexWebviewProvider = void 0;
-const vscode = __importStar(__webpack_require__(2));
-const jsSymbolParser_1 = __webpack_require__(188);
-const performanceMonitor_1 = __webpack_require__(6);
-const path = __importStar(__webpack_require__(3));
-const fs = __importStar(__webpack_require__(176));
+exports.compressMultipleLines = compressMultipleLines;
 /**
- * 变量索引 WebView 提供器
- * 支持虚拟滚动，轻松处理万级变量
+ * 代码压缩工具
  */
-class VariableIndexWebviewProvider {
-    static { this.viewType = 'leidong-tools.variableIndexWebview'; }
-    constructor(extensionUri) {
-        this.extensionUri = extensionUri;
-        this._lastParsedUri = '';
-        this._lastVariables = [];
-        this._extensionUri = extensionUri;
-        // ✅ 只在切换文件时刷新（打开新文件）
-        vscode.window.onDidChangeActiveTextEditor((editor) => {
-            if (editor) {
-                this.refresh();
+const vscode = __importStar(__webpack_require__(2));
+/**
+ * 压缩多行代码的主函数
+ */
+function compressMultipleLines() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showErrorMessage('没有打开的编辑器');
+        return;
+    }
+    const selection = editor.selection;
+    if (selection.isEmpty) {
+        vscode.window.showInformationMessage('请先选择要压缩的多行文本');
+        return;
+    }
+    const selectedText = editor.document.getText(selection);
+    const document = editor.document;
+    // 首先检查是否是注释内容
+    if (isCommentContent(selectedText)) {
+        const compressedText = compressComments(selectedText);
+        // 替换选中的文本
+        editor.edit(editBuilder => {
+            editBuilder.replace(selection, compressedText);
+        }).then(success => {
+            if (success) {
+                vscode.window.showInformationMessage('成功压缩注释内容');
+            }
+            else {
+                vscode.window.showErrorMessage('压缩失败');
             }
         });
-        // ✅ 保存时清除缓存，但不立即刷新（避免编辑时频繁重建）
-        vscode.workspace.onDidSaveTextDocument((document) => {
-            this.invalidateCacheForDocument(document);
-        });
+        return;
     }
-    resolveWebviewView(webviewView, context, _token) {
-        this._view = webviewView;
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this._extensionUri]
-        };
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-        // 处理来自 webview 的消息
-        webviewView.webview.onDidReceiveMessage((message) => {
-            if (message.type === 'jump') {
-                this.jumpToDefinition(message.data.uri, message.data.line);
+    // 根据文件类型决定压缩策略
+    const languageId = document.languageId;
+    let compressedText = '';
+    try {
+        switch (languageId) {
+            case 'html':
+            case 'xml':
+                compressedText = compressHtml(selectedText);
+                break;
+            case 'javascript':
+            case 'typescript':
+            case 'vue':
+                compressedText = compressJavaScript(selectedText);
+                break;
+            case 'json':
+            case 'jsonc':
+                compressedText = compressJson(selectedText);
+                break;
+            case 'css':
+            case 'scss':
+            case 'sass':
+            case 'less':
+                compressedText = compressCss(selectedText);
+                break;
+            default:
+                // 默认压缩策略：移除多余空白和换行
+                compressedText = compressGeneric(selectedText);
+                break;
+        }
+        // 替换选中的文本
+        editor.edit(editBuilder => {
+            editBuilder.replace(selection, compressedText);
+        }).then(success => {
+            if (success) {
+                vscode.window.showInformationMessage(`成功压缩 ${languageId} 代码`);
             }
-            else if (message.type === 'refresh') {
-                this.refresh();
-            }
-        });
-        // 初始加载
-        this.refresh();
-    }
-    /**
-     * 清除文档的缓存
-     */
-    invalidateCacheForDocument(document) {
-        console.log('[VariableIndexWebview] 文件保存，清除缓存:', document.uri.toString());
-        // 清除 jsSymbolParser 缓存
-        jsSymbolParser_1.jsSymbolParser.invalidateCache(document.uri);
-        // 如果是外部 JS 文件，查找对应的 HTML
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-            jsSymbolParser_1.jsSymbolParser.invalidateCache(document.uri);
-        }
-        // 如果保存的文件就是当前显示的文件，刷新索引
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document.uri.toString() === document.uri.toString()) {
-            console.log('[VariableIndexWebview] 当前文件已保存，刷新索引');
-            this.refresh();
-        }
-    }
-    /**
-     * 刷新变量索引
-     */
-    async refresh() {
-        if (!this._view) {
-            return;
-        }
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            this.postMessage({
-                type: 'update',
-                data: {
-                    variables: [],
-                    fileName: '未打开文件'
-                }
-            });
-            return;
-        }
-        const document = editor.document;
-        const variables = await this.collectVariables(document);
-        const fileName = path.basename(document.uri.fsPath);
-        this.postMessage({
-            type: 'update',
-            data: {
-                variables,
-                fileName
+            else {
+                vscode.window.showErrorMessage('压缩失败');
             }
         });
     }
-    /**
-     * 收集变量（支持 HTML 内联脚本和外部 JS）
-     */
-    async collectVariables(document) {
-        let parseResult;
-        let targetUri = document.uri;
-        let targetUriString = targetUri.toString();
-        try {
-            // HTML 文件处理
-            if (document.languageId === 'html') {
-                const scriptPath = this.findExternalScript(document.uri.fsPath);
-                if (scriptPath && fs.existsSync(scriptPath)) {
-                    // 外部 JS 文件
-                    targetUri = vscode.Uri.file(scriptPath);
-                    targetUriString = targetUri.toString();
-                    // ✅ 检查缓存：避免重复解析同一文件
-                    if (this._lastParsedUri === targetUriString) {
-                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
-                        return this._lastVariables;
-                    }
-                    const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
-                    parseResult = await jsSymbolParser_1.jsSymbolParser.parse(scriptContent, targetUri);
-                }
-                else {
-                    // 内联脚本
-                    const inlineScript = this.extractInlineScript(document.getText());
-                    if (inlineScript) {
-                        parseResult = await jsSymbolParser_1.jsSymbolParser.parse(inlineScript.content, document.uri, inlineScript.startLine);
-                        targetUri = document.uri;
-                    }
-                }
-            }
-            // JS/TS 文件
-            else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                parseResult = await jsSymbolParser_1.jsSymbolParser.parse(document, document.uri);
-            }
-        }
-        catch (e) {
-            console.error('[VariableIndexWebview] Parse error:', e);
-        }
-        if (!parseResult || parseResult.thisReferences.size === 0) {
-            return [];
-        }
-        // 转换为 VariableItem 数组
-        const variables = [];
-        parseResult.thisReferences.forEach((symbol, name) => {
-            let type = 'data';
-            if (symbol.kind === jsSymbolParser_1.SymbolType.Method) {
-                type = 'method';
-            }
-            else if (symbol.kind === jsSymbolParser_1.SymbolType.Property) {
-                type = 'data';
-            }
-            variables.push({
-                name,
-                type,
-                line: symbol.range.start.line + 1,
-                uri: targetUri.toString()
-            });
-        });
-        // ✅ 按行号排序，保持代码顺序
-        variables.sort((a, b) => a.line - b.line);
-        // ✅ 缓存结果
-        this._lastParsedUri = targetUriString;
-        this._lastVariables = variables;
-        return variables;
-    }
-    /**
-     * 查找外部脚本文件
-     */
-    findExternalScript(htmlPath) {
-        const dir = path.dirname(htmlPath);
-        const basename = path.basename(htmlPath, path.extname(htmlPath));
-        const patterns = [
-            path.join(dir, 'js', `${basename}.dev.js`),
-            path.join(dir, 'js', basename, `${basename}.dev.js`)
-        ];
-        for (const p of patterns) {
-            if (fs.existsSync(p)) {
-                return p;
-            }
-        }
-        return null;
-    }
-    /**
-     * 提取内联脚本
-     */
-    extractInlineScript(htmlContent) {
-        const lines = htmlContent.split('\n');
-        let scriptStartLine = -1;
-        let inScript = false;
-        let scriptContent = [];
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (/<script[^>]*>/i.test(line) && !line.includes('src=')) {
-                inScript = true;
-                scriptStartLine = i;
-                const singleLineMatch = /<script[^>]*>([\s\S]*?)<\/script>/i.exec(line);
-                if (singleLineMatch) {
-                    return { content: singleLineMatch[1], startLine: i };
-                }
-                continue;
-            }
-            if (inScript && /<\/script>/i.test(line)) {
-                if (scriptContent.length > 0) {
-                    return {
-                        content: scriptContent.join('\n'),
-                        startLine: scriptStartLine + 1
-                    };
-                }
-            }
-            if (inScript && scriptStartLine !== i) {
-                scriptContent.push(line);
-            }
-        }
-        return null;
-    }
-    /**
-     * 跳转到定义
-     */
-    jumpToDefinition(uriString, line) {
-        const uri = vscode.Uri.parse(uriString);
-        const position = new vscode.Position(line - 1, 0);
-        vscode.workspace.openTextDocument(uri).then(doc => {
-            vscode.window.showTextDocument(doc, {
-                selection: new vscode.Range(position, position),
-                preserveFocus: false
-            }).then(editor => {
-                editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-            });
-        });
-    }
-    /**
-     * 发送消息到 webview
-     */
-    postMessage(message) {
-        if (this._view) {
-            this._view.webview.postMessage(message);
-        }
-    }
-    /**
-     * 生成 WebView HTML
-     */
-    _getHtmlForWebview(webview) {
-        const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'variableIndex.css'));
-        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'variableIndex.js'));
-        return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline';">
-    <link href="${styleUri}" rel="stylesheet">
-    <title>变量索引</title>
-</head>
-<body>
-    <div class="header">
-        <div class="search-box">
-            <input type="text" id="searchInput" placeholder="🔍 搜索变量..." />
-            <button id="refreshBtn" title="刷新">🔄</button>
-        </div>
-        <div class="stats" id="stats">加载中...</div>
-    </div>
-    
-    <div class="categories">
-        <button class="category-btn active" data-type="all">全部</button>
-        <button class="category-btn" data-type="data">Data</button>
-        <button class="category-btn" data-type="method">Methods</button>
-    </div>
-    
-    <div class="variable-list" id="variableList">
-        <!-- 虚拟滚动容器 -->
-        <div class="scroll-container" id="scrollContainer">
-            <div class="scroll-content" id="scrollContent"></div>
-        </div>
-    </div>
-    
-    <div class="empty-state" id="emptyState" style="display: none;">
-        <p>📂 未找到 Vue 变量定义</p>
-        <p class="hint">打开包含 Vue 实例的文件</p>
-    </div>
-    
-    <script src="${scriptUri}"></script>
-</body>
-</html>`;
+    catch (error) {
+        console.error('[Compress Lines] Error:', error);
+        vscode.window.showErrorMessage('压缩过程中发生错误');
     }
 }
-exports.VariableIndexWebviewProvider = VariableIndexWebviewProvider;
-__decorate([
-    (0, performanceMonitor_1.monitor)('variableIndexWebview.collectVariables')
-], VariableIndexWebviewProvider.prototype, "collectVariables", null);
+/**
+ * 检查是否是注释内容
+ */
+function isCommentContent(text) {
+    const trimmedText = text.trim();
+    // JavaScript/TypeScript/CSS 多行注释
+    if (trimmedText.startsWith('/*') && trimmedText.endsWith('*/')) {
+        return true;
+    }
+    // HTML 注释
+    if (trimmedText.startsWith('<!--') && trimmedText.endsWith('-->')) {
+        return true;
+    }
+    // 检查是否所有行都是单行注释
+    const lines = text.split('\n');
+    const nonEmptyLines = lines.filter(line => line.trim() !== '');
+    if (nonEmptyLines.length === 0) {
+        return false;
+    }
+    // JavaScript/TypeScript 单行注释
+    if (nonEmptyLines.every(line => line.trim().startsWith('//'))) {
+        return true;
+    }
+    // Python/Shell 单行注释
+    if (nonEmptyLines.every(line => line.trim().startsWith('#'))) {
+        return true;
+    }
+    // SQL 单行注释
+    if (nonEmptyLines.every(line => line.trim().startsWith('--'))) {
+        return true;
+    }
+    return false;
+}
+/**
+ * 压缩注释内容
+ */
+function compressComments(text) {
+    const trimmedText = text.trim();
+    // 处理 JavaScript/TypeScript/CSS 多行注释
+    if (trimmedText.startsWith('/*') && trimmedText.endsWith('*/')) {
+        const content = trimmedText.slice(2, -2).trim();
+        const compressedContent = content
+            .replace(/^\s*\*/gm, '') // 移除行首的 *
+            .replace(/\s+/g, ' ') // 合并空白
+            .trim();
+        return `/* ${compressedContent} */`;
+    }
+    // 处理 HTML 注释
+    if (trimmedText.startsWith('<!--') && trimmedText.endsWith('-->')) {
+        const content = trimmedText.slice(4, -3).trim();
+        const compressedContent = content
+            .replace(/\s+/g, ' ') // 合并空白
+            .trim();
+        return `<!-- ${compressedContent} -->`;
+    }
+    // 处理单行注释
+    const lines = text.split('\n');
+    const nonEmptyLines = lines.filter(line => line.trim() !== '');
+    if (nonEmptyLines.length === 0) {
+        return text;
+    }
+    // JavaScript/TypeScript 单行注释
+    if (nonEmptyLines.every(line => line.trim().startsWith('//'))) {
+        const content = nonEmptyLines
+            .map(line => line.trim().replace(/^\/\/\s*/, ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return `// ${content}`;
+    }
+    // Python/Shell 单行注释
+    if (nonEmptyLines.every(line => line.trim().startsWith('#'))) {
+        const content = nonEmptyLines
+            .map(line => line.trim().replace(/^#\s*/, ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return `# ${content}`;
+    }
+    // SQL 单行注释
+    if (nonEmptyLines.every(line => line.trim().startsWith('--'))) {
+        const content = nonEmptyLines
+            .map(line => line.trim().replace(/^--\s*/, ''))
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return `-- ${content}`;
+    }
+    // 如果不是标准注释格式，使用通用压缩
+    return compressGeneric(text);
+}
+/**
+ * HTML 压缩策略
+ */
+function compressHtml(text) {
+    return text
+        // 移除标签间的换行和多余空白
+        .replace(/>\s+</g, '><')
+        // 移除行首行尾空白
+        .replace(/^\s+|\s+$/gm, '')
+        // 合并多个空白为单个空格
+        .replace(/\s+/g, ' ')
+        // 移除注释（可选）
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .trim();
+}
+/**
+ * JavaScript/TypeScript 压缩策略
+ */
+function compressJavaScript(text) {
+    return text
+        // 移除单行注释
+        .replace(/\/\/.*$/gm, '')
+        // 移除多行注释
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        // 移除行首行尾空白
+        .replace(/^\s+|\s+$/gm, '')
+        // 移除空行
+        .replace(/\n\s*\n/g, '\n')
+        // 在语句结束符后添加空格（如果后面不是换行）
+        .replace(/([;{}])\s*(?=\S)/g, '$1 ')
+        // 合并连续的空白为单个空格
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+/**
+ * JSON 压缩策略
+ */
+function compressJson(text) {
+    try {
+        // 尝试解析并重新格式化 JSON
+        const parsed = JSON.parse(text);
+        return JSON.stringify(parsed);
+    }
+    catch (error) {
+        // 如果不是有效的 JSON，使用通用策略
+        return compressGeneric(text);
+    }
+}
+/**
+ * CSS 压缩策略
+ */
+function compressCss(text) {
+    return text
+        // 移除注释
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        // 移除行首行尾空白
+        .replace(/^\s+|\s+$/gm, '')
+        // 移除空行
+        .replace(/\n\s*\n/g, '\n')
+        // 在选择器和大括号之间移除空白
+        .replace(/\s*{\s*/g, '{')
+        .replace(/\s*}\s*/g, '}')
+        // 在属性冒号前后规范空白
+        .replace(/\s*:\s*/g, ':')
+        // 在分号后规范空白
+        .replace(/;\s*/g, ';')
+        // 合并连续空白为单个空格
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+/**
+ * 通用压缩策略
+ */
+function compressGeneric(text) {
+    return text
+        // 移除行首行尾空白
+        .replace(/^\s+|\s+$/gm, '')
+        // 移除空行
+        .replace(/\n\s*\n/g, '\n')
+        // 合并连续空白为单个空格
+        .replace(/\s+/g, ' ')
+        .trim();
+}
 
 
 /***/ }),
@@ -46740,305 +46706,6 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.compressMultipleLines = compressMultipleLines;
-/**
- * 代码压缩工具
- */
-const vscode = __importStar(__webpack_require__(2));
-/**
- * 压缩多行代码的主函数
- */
-function compressMultipleLines() {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-        vscode.window.showErrorMessage('没有打开的编辑器');
-        return;
-    }
-    const selection = editor.selection;
-    if (selection.isEmpty) {
-        vscode.window.showInformationMessage('请先选择要压缩的多行文本');
-        return;
-    }
-    const selectedText = editor.document.getText(selection);
-    const document = editor.document;
-    // 首先检查是否是注释内容
-    if (isCommentContent(selectedText)) {
-        const compressedText = compressComments(selectedText);
-        // 替换选中的文本
-        editor.edit(editBuilder => {
-            editBuilder.replace(selection, compressedText);
-        }).then(success => {
-            if (success) {
-                vscode.window.showInformationMessage('成功压缩注释内容');
-            }
-            else {
-                vscode.window.showErrorMessage('压缩失败');
-            }
-        });
-        return;
-    }
-    // 根据文件类型决定压缩策略
-    const languageId = document.languageId;
-    let compressedText = '';
-    try {
-        switch (languageId) {
-            case 'html':
-            case 'xml':
-                compressedText = compressHtml(selectedText);
-                break;
-            case 'javascript':
-            case 'typescript':
-            case 'vue':
-                compressedText = compressJavaScript(selectedText);
-                break;
-            case 'json':
-            case 'jsonc':
-                compressedText = compressJson(selectedText);
-                break;
-            case 'css':
-            case 'scss':
-            case 'sass':
-            case 'less':
-                compressedText = compressCss(selectedText);
-                break;
-            default:
-                // 默认压缩策略：移除多余空白和换行
-                compressedText = compressGeneric(selectedText);
-                break;
-        }
-        // 替换选中的文本
-        editor.edit(editBuilder => {
-            editBuilder.replace(selection, compressedText);
-        }).then(success => {
-            if (success) {
-                vscode.window.showInformationMessage(`成功压缩 ${languageId} 代码`);
-            }
-            else {
-                vscode.window.showErrorMessage('压缩失败');
-            }
-        });
-    }
-    catch (error) {
-        console.error('[Compress Lines] Error:', error);
-        vscode.window.showErrorMessage('压缩过程中发生错误');
-    }
-}
-/**
- * 检查是否是注释内容
- */
-function isCommentContent(text) {
-    const trimmedText = text.trim();
-    // JavaScript/TypeScript/CSS 多行注释
-    if (trimmedText.startsWith('/*') && trimmedText.endsWith('*/')) {
-        return true;
-    }
-    // HTML 注释
-    if (trimmedText.startsWith('<!--') && trimmedText.endsWith('-->')) {
-        return true;
-    }
-    // 检查是否所有行都是单行注释
-    const lines = text.split('\n');
-    const nonEmptyLines = lines.filter(line => line.trim() !== '');
-    if (nonEmptyLines.length === 0) {
-        return false;
-    }
-    // JavaScript/TypeScript 单行注释
-    if (nonEmptyLines.every(line => line.trim().startsWith('//'))) {
-        return true;
-    }
-    // Python/Shell 单行注释
-    if (nonEmptyLines.every(line => line.trim().startsWith('#'))) {
-        return true;
-    }
-    // SQL 单行注释
-    if (nonEmptyLines.every(line => line.trim().startsWith('--'))) {
-        return true;
-    }
-    return false;
-}
-/**
- * 压缩注释内容
- */
-function compressComments(text) {
-    const trimmedText = text.trim();
-    // 处理 JavaScript/TypeScript/CSS 多行注释
-    if (trimmedText.startsWith('/*') && trimmedText.endsWith('*/')) {
-        const content = trimmedText.slice(2, -2).trim();
-        const compressedContent = content
-            .replace(/^\s*\*/gm, '') // 移除行首的 *
-            .replace(/\s+/g, ' ') // 合并空白
-            .trim();
-        return `/* ${compressedContent} */`;
-    }
-    // 处理 HTML 注释
-    if (trimmedText.startsWith('<!--') && trimmedText.endsWith('-->')) {
-        const content = trimmedText.slice(4, -3).trim();
-        const compressedContent = content
-            .replace(/\s+/g, ' ') // 合并空白
-            .trim();
-        return `<!-- ${compressedContent} -->`;
-    }
-    // 处理单行注释
-    const lines = text.split('\n');
-    const nonEmptyLines = lines.filter(line => line.trim() !== '');
-    if (nonEmptyLines.length === 0) {
-        return text;
-    }
-    // JavaScript/TypeScript 单行注释
-    if (nonEmptyLines.every(line => line.trim().startsWith('//'))) {
-        const content = nonEmptyLines
-            .map(line => line.trim().replace(/^\/\/\s*/, ''))
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return `// ${content}`;
-    }
-    // Python/Shell 单行注释
-    if (nonEmptyLines.every(line => line.trim().startsWith('#'))) {
-        const content = nonEmptyLines
-            .map(line => line.trim().replace(/^#\s*/, ''))
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return `# ${content}`;
-    }
-    // SQL 单行注释
-    if (nonEmptyLines.every(line => line.trim().startsWith('--'))) {
-        const content = nonEmptyLines
-            .map(line => line.trim().replace(/^--\s*/, ''))
-            .join(' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-        return `-- ${content}`;
-    }
-    // 如果不是标准注释格式，使用通用压缩
-    return compressGeneric(text);
-}
-/**
- * HTML 压缩策略
- */
-function compressHtml(text) {
-    return text
-        // 移除标签间的换行和多余空白
-        .replace(/>\s+</g, '><')
-        // 移除行首行尾空白
-        .replace(/^\s+|\s+$/gm, '')
-        // 合并多个空白为单个空格
-        .replace(/\s+/g, ' ')
-        // 移除注释（可选）
-        .replace(/<!--[\s\S]*?-->/g, '')
-        .trim();
-}
-/**
- * JavaScript/TypeScript 压缩策略
- */
-function compressJavaScript(text) {
-    return text
-        // 移除单行注释
-        .replace(/\/\/.*$/gm, '')
-        // 移除多行注释
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        // 移除行首行尾空白
-        .replace(/^\s+|\s+$/gm, '')
-        // 移除空行
-        .replace(/\n\s*\n/g, '\n')
-        // 在语句结束符后添加空格（如果后面不是换行）
-        .replace(/([;{}])\s*(?=\S)/g, '$1 ')
-        // 合并连续的空白为单个空格
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-/**
- * JSON 压缩策略
- */
-function compressJson(text) {
-    try {
-        // 尝试解析并重新格式化 JSON
-        const parsed = JSON.parse(text);
-        return JSON.stringify(parsed);
-    }
-    catch (error) {
-        // 如果不是有效的 JSON，使用通用策略
-        return compressGeneric(text);
-    }
-}
-/**
- * CSS 压缩策略
- */
-function compressCss(text) {
-    return text
-        // 移除注释
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        // 移除行首行尾空白
-        .replace(/^\s+|\s+$/gm, '')
-        // 移除空行
-        .replace(/\n\s*\n/g, '\n')
-        // 在选择器和大括号之间移除空白
-        .replace(/\s*{\s*/g, '{')
-        .replace(/\s*}\s*/g, '}')
-        // 在属性冒号前后规范空白
-        .replace(/\s*:\s*/g, ':')
-        // 在分号后规范空白
-        .replace(/;\s*/g, ';')
-        // 合并连续空白为单个空格
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-/**
- * 通用压缩策略
- */
-function compressGeneric(text) {
-    return text
-        // 移除行首行尾空白
-        .replace(/^\s+|\s+$/gm, '')
-        // 移除空行
-        .replace(/\n\s*\n/g, '\n')
-        // 合并连续空白为单个空格
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-
-/***/ }),
-/* 180 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.FileWatchManager = void 0;
 /**
  * 文件监听管理器
@@ -47442,7 +47109,7 @@ exports.FileWatchManager = FileWatchManager;
 
 
 /***/ }),
-/* 181 */
+/* 180 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47486,11 +47153,11 @@ exports.registerProviders = registerProviders;
  * Provider 注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
-const definitionProvider_1 = __webpack_require__(182);
-const hoverProvider_1 = __webpack_require__(183);
-const completionProvider_1 = __webpack_require__(184);
-const variableIndexWebview_1 = __webpack_require__(7);
-const watchServiceTreeView_1 = __webpack_require__(186);
+const definitionProvider_1 = __webpack_require__(181);
+const hoverProvider_1 = __webpack_require__(186);
+const completionProvider_1 = __webpack_require__(187);
+const variableIndexWebview_1 = __webpack_require__(188);
+const watchServiceTreeView_1 = __webpack_require__(189);
 const config_1 = __webpack_require__(5);
 /**
  * 注册所有 Language Providers
@@ -47538,14 +47205,14 @@ function registerProviders(context, fileWatchManager) {
 
 
 /***/ }),
-/* 182 */
+/* 181 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueHtmlDefinitionProvider = void 0;
-const enhancedDefinitionLogic_1 = __webpack_require__(187);
+const enhancedDefinitionLogic_1 = __webpack_require__(182);
 class VueHtmlDefinitionProvider {
     constructor() {
         this.definitionLogic = new enhancedDefinitionLogic_1.EnhancedDefinitionLogic();
@@ -47558,603 +47225,7 @@ exports.VueHtmlDefinitionProvider = VueHtmlDefinitionProvider;
 
 
 /***/ }),
-/* 183 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VueHoverProvider = void 0;
-const vscode = __importStar(__webpack_require__(2));
-const parseDocument_1 = __webpack_require__(8);
-const templateIndexer_1 = __webpack_require__(178);
-class VueHoverProvider {
-    constructor() {
-        this.hoverTimeout = null;
-    }
-    provideHover(document, position, token) {
-        return new Promise((resolve) => {
-            // 清除之前的定时器
-            if (this.hoverTimeout) {
-                clearTimeout(this.hoverTimeout);
-            }
-            // 读取配置的延迟时间
-            const config = vscode.workspace.getConfiguration('leidong-tools');
-            const delay = config.get('hoverDelay', 300);
-            // 设置延迟
-            this.hoverTimeout = setTimeout(() => {
-                if (token.isCancellationRequested) {
-                    resolve(null);
-                    return;
-                }
-                const hover = this.getHoverContent(document, position);
-                resolve(hover);
-            }, delay);
-        });
-    }
-    getHoverContent(document, position) {
-        // 检查功能是否启用
-        const config = vscode.workspace.getConfiguration('leidong-tools');
-        const isEnabled = config.get('enableDefinitionJump', true);
-        if (!isEnabled) {
-            return null;
-        }
-        const wordRange = document.getWordRangeAtPosition(position);
-        if (!wordRange) {
-            return null;
-        }
-        const word = document.getText(wordRange);
-        const line = document.lineAt(position.line).text;
-        // 检查是否在模板中
-        if (document.languageId === 'html') {
-            const templateVar = (0, templateIndexer_1.findTemplateVar)(document, position, word);
-            if (templateVar) {
-                return new vscode.Hover(`**Template Variable**: ${word}\n\nDefined at line ${templateVar.range.start.line + 1}`, wordRange);
-            }
-            // 检查Vue索引
-            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
-            if (vueIndex) {
-                const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
-                if (def) {
-                    return new vscode.Hover(`**Vue Variable**: ${word}\n\nDefined at ${def.uri.fsPath}:${def.range.start.line + 1}`, wordRange);
-                }
-            }
-        }
-        // 检查JavaScript/TypeScript
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
-            if (vueIndex) {
-                const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
-                if (def) {
-                    return new vscode.Hover(`**Vue Variable**: ${word}\n\nDefined at ${def.uri.fsPath}:${def.range.start.line + 1}`, wordRange);
-                }
-            }
-        }
-        return null;
-    }
-}
-exports.VueHoverProvider = VueHoverProvider;
-
-
-/***/ }),
-/* 184 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.QuickLogCompletionProvider = void 0;
-/**
- * 自动补全提供器
- *
- * 参考实现: https://github.com/jaluik/dot-log
- * 使用 resolveCompletionItem + command 模式实现变量.log补全
- */
-const vscode = __importStar(__webpack_require__(2));
-const parseDocument_1 = __webpack_require__(8);
-/**
- * 快速日志补全提供器 (重写版)
- * 参考 jaluik/dot-log 实现，使用命令替换文本
- */
-class QuickLogCompletionProvider {
-    constructor() {
-        this.configs = [
-            {
-                trigger: 'log',
-                description: '🔥 Quick console.log with file info',
-                format: 'console.log',
-                icon: '🔥'
-            },
-            {
-                trigger: 'err',
-                description: '❌ Quick console.error with file info',
-                format: 'console.error',
-                icon: '❌'
-            },
-            {
-                trigger: 'info',
-                description: 'ℹ️ Quick console.info with file info',
-                format: 'console.info',
-                icon: 'ℹ️'
-            },
-            {
-                trigger: 'dbg',
-                description: '🐛 Quick console.debug with file info',
-                format: 'console.debug',
-                icon: '🐛'
-            },
-            {
-                trigger: 'warn',
-                description: '⚠️ Quick console.warn with file info',
-                format: 'console.warn',
-                icon: '⚠️'
-            }
-        ];
-    }
-    provideCompletionItems(document, position, token, context) {
-        this.position = position;
-        const completions = this.configs.map((config) => {
-            const item = new vscode.CompletionItem(config.trigger, vscode.CompletionItemKind.Method);
-            item.detail = config.description;
-            item.documentation = new vscode.MarkdownString(config.description);
-            item.sortText = '0000'; // 最高优先级
-            item.preselect = true;
-            return item;
-        });
-        return completions;
-    }
-    resolveCompletionItem(item, token) {
-        const label = item.label;
-        if (this.position && typeof label === 'string') {
-            const config = this.configs.find((c) => c.trigger === label);
-            if (config) {
-                // 设置命令，触发文本替换
-                item.command = {
-                    command: 'leidong-tools.dotLogReplace',
-                    title: 'Replace with log statement',
-                    arguments: [this.position.translate(0, label.length + 1), config]
-                };
-            }
-        }
-        return item;
-    }
-}
-exports.QuickLogCompletionProvider = QuickLogCompletionProvider;
-/**
- * JavaScript 变量与函数补全提供器
- */
-class JavaScriptCompletionProvider {
-    constructor() {
-        // 存储解析结果的缓存
-        this.parseCache = new Map();
-        // 缓存有效期 (30秒)
-        this.cacheValidityPeriod = 30 * 1000;
-    }
-    // 提供自动完成项目
-    async provideCompletionItems(document, position, token, context) {
-        try {
-            // 检查触发自动完成的字符
-            const linePrefix = document.lineAt(position).text.substring(0, position.character);
-            // 判断当前作用域
-            const isThisContext = this.isInThisContext(linePrefix);
-            const isThatContext = this.isInThatContext(linePrefix);
-            // 获取当前文件的解析缓存或重新解析
-            let parseResult = this.getCachedParseResult(document);
-            if (!parseResult) {
-                parseResult = await (0, parseDocument_1.parseDocument)(document);
-                if (parseResult) {
-                    this.cacheParseResult(document, parseResult);
-                }
-            }
-            // 确保 parseResult 不为 null
-            if (!parseResult) {
-                return [];
-            }
-            let completionItems;
-            // 根据当前上下文返回不同的补全项
-            if (isThisContext) {
-                // 返回 this. 相关的补全项
-                completionItems = Array.from(parseResult.thisReferences.values());
-            }
-            else if (isThatContext) {
-                // that 通常是 this 的别名，也返回 this 相关的补全项
-                completionItems = Array.from(parseResult.thisReferences.values());
-            }
-            else {
-                // 返回所有变量和方法
-                completionItems = [...parseResult.variables, ...parseResult.methods];
-            }
-            // 提高所有补全项的优先级以与内置单词记录竞争
-            completionItems.forEach((item, index) => {
-                item.sortText = `0000${index.toString().padStart(4, '0')}`; // 确保高优先级排序
-                item.preselect = false; // 避免过度预选
-                // 添加标识符表明这是来自我们的扩展
-                if (!item.detail?.includes('(雷动三千)')) {
-                    item.detail = `${item.detail || ''} (雷动三千)`;
-                }
-            });
-            // 返回 CompletionList 以获得更好的控制
-            return new vscode.CompletionList(completionItems, false);
-        }
-        catch (error) {
-            console.error('[JS Completion] Error providing completions:', error);
-            return [];
-        }
-    }
-    // 判断是否在 this 上下文中
-    isInThisContext(linePrefix) {
-        return linePrefix.endsWith('this.');
-    }
-    // 判断是否在 that 上下文中 (that 通常是 this 的别名)
-    isInThatContext(linePrefix) {
-        return linePrefix.endsWith('that.');
-    }
-    // 获取缓存的解析结果
-    getCachedParseResult(document) {
-        const uri = document.uri.toString();
-        const cachedResult = this.parseCache.get(uri);
-        // 检查缓存是否存在且有效
-        if (cachedResult && Date.now() - cachedResult.timestamp < this.cacheValidityPeriod) {
-            return cachedResult;
-        }
-        return null;
-    }
-    // 缓存解析结果
-    cacheParseResult(document, result) {
-        const uri = document.uri.toString();
-        this.parseCache.set(uri, result);
-    }
-}
-exports.JavaScriptCompletionProvider = JavaScriptCompletionProvider;
-/**
- * Von 代码片段补全提供器
- */
-class VonCompletionProvider {
-    provideCompletionItems(document, position, token, context) {
-        const lineText = document.lineAt(position).text;
-        const textBeforeCursor = lineText.substring(0, position.character);
-        // 检查是否输入了 "von"
-        if (!textBeforeCursor.endsWith('von')) {
-            return [];
-        }
-        const completionItems = [];
-        // 1. 当前时间 YYYYMMDDHHMMSS
-        const currentTimeItem = new vscode.CompletionItem('🕐 Current Time (YYYYMMDDHHMMSS)', vscode.CompletionItemKind.Snippet);
-        const now = new Date();
-        const timeString = this.formatDateTime(now);
-        currentTimeItem.insertText = new vscode.SnippetString(timeString);
-        currentTimeItem.detail = '⚡ Insert current time in YYYYMMDDHHMMSS format';
-        currentTimeItem.documentation = `插入当前时间: ${timeString}`;
-        currentTimeItem.sortText = '0001';
-        currentTimeItem.preselect = true;
-        currentTimeItem.filterText = 'von';
-        currentTimeItem.commitCharacters = ['\t', '\n'];
-        currentTimeItem.range = new vscode.Range(position.translate(0, -3), // -3 for "von"
-        position);
-        completionItems.push(currentTimeItem);
-        // 2. 随机 UUID
-        const uuidItem = new vscode.CompletionItem('🆔 Random UUID', vscode.CompletionItemKind.Snippet);
-        const uuid = this.generateUUID();
-        uuidItem.insertText = new vscode.SnippetString(uuid);
-        uuidItem.detail = '⚡ Insert random UUID';
-        uuidItem.documentation = `插入随机UUID: ${uuid}`;
-        uuidItem.sortText = '0002';
-        uuidItem.filterText = 'von';
-        uuidItem.commitCharacters = ['\t', '\n'];
-        uuidItem.range = new vscode.Range(position.translate(0, -3), // -3 for "von"
-        position);
-        completionItems.push(uuidItem);
-        return completionItems;
-    }
-    /**
-     * 格式化时间为 YYYYMMDDHHMMSS 格式
-     */
-    formatDateTime(date) {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
-        return `${year}${month}${day}${hours}${minutes}${seconds}`;
-    }
-    /**
-     * 生成随机 UUID (v4)
-     */
-    generateUUID() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-            const r = Math.random() * 16 | 0;
-            const v = c === 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        });
-    }
-}
-exports.VonCompletionProvider = VonCompletionProvider;
-
-
-/***/ }),
-/* 185 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.registerIndexLifecycle = registerIndexLifecycle;
-const templateIndexer_1 = __webpack_require__(178);
-const parseDocument_1 = __webpack_require__(8);
-const vscode = __importStar(__webpack_require__(2));
-/** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */
-function registerIndexLifecycle(context) {
-    const disposables = [];
-    let rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get('rebuildOnSave', true);
-    // watch for config change
-    disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('leidong-tools.maxIndexEntries')) {
-            (0, parseDocument_1.recreateVueIndexCache)();
-        }
-        if (e.affectsConfiguration('leidong-tools.maxTemplateIndexEntries')) {
-            (0, templateIndexer_1.recreateTemplateIndexCache)();
-        }
-        if (e.affectsConfiguration('leidong-tools.rebuildOnSave')) {
-            rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get('rebuildOnSave', true);
-        }
-    }));
-    // 在编辑器打开或切换到可见时构建索引（force rebuild）
-    const ensureIndexForEditor = (editor) => {
-        if (!editor) {
-            return;
-        }
-        const doc = editor.document;
-        if (doc.languageId === 'html') {
-            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
-        }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            // 强制重建 JS index for current file
-            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
-        }
-    };
-    disposables.push(vscode.window.onDidChangeVisibleTextEditors((editors) => {
-        // 可见编辑器改变：为所有可见的editor确保索引
-        editors.forEach(e => ensureIndexForEditor(e));
-    }));
-    disposables.push(vscode.workspace.onDidOpenTextDocument((doc) => {
-        // 打开文件时建立索引
-        if (doc.languageId === 'html') {
-            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
-        }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
-        }
-    }));
-    // 在保存时（可配置）触发重建索引
-    disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
-        if (!rebuildOnSave) {
-            return;
-        }
-        if (doc.languageId === 'html') {
-            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
-        }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
-        }
-    }));
-    disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {
-        // 关闭文件时清理缓存
-        (0, templateIndexer_1.removeTemplateIndex)(doc);
-        (0, parseDocument_1.removeVueIndexForUri)(doc.uri);
-    }));
-    // 定期修剪长时间未访问的模板索引
-    const pruneInterval = setInterval(() => { (0, templateIndexer_1.pruneTemplateIndex)(); (0, parseDocument_1.pruneVueIndexCache)(); }, 1000 * 60 * 10);
-    context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
-    disposables.forEach(d => context.subscriptions.push(d));
-}
-
-
-/***/ }),
-/* 186 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.WatchServiceTreeDataProvider = exports.WatchServiceTreeItem = void 0;
-const vscode = __importStar(__webpack_require__(2));
-/**
- * 监听服务 TreeView 节点
- */
-class WatchServiceTreeItem extends vscode.TreeItem {
-    constructor(label, collapsibleState, type, data) {
-        super(label, collapsibleState);
-        this.label = label;
-        this.collapsibleState = collapsibleState;
-        this.type = type;
-        this.data = data;
-        if (type === 'watch') {
-            this.iconPath = new vscode.ThemeIcon('eye');
-        }
-        else if (type === 'empty') {
-            this.iconPath = new vscode.ThemeIcon('info');
-            this.description = '(空)';
-        }
-        this.contextValue = type;
-    }
-}
-exports.WatchServiceTreeItem = WatchServiceTreeItem;
-/**
- * 监听服务 TreeDataProvider
- * 只负责显示文件监听列表
- */
-class WatchServiceTreeDataProvider {
-    constructor(fileWatchManager) {
-        this.fileWatchManager = fileWatchManager;
-        this._onDidChangeTreeData = new vscode.EventEmitter();
-        this.onDidChangeTreeData = this._onDidChangeTreeData.event;
-    }
-    refresh() {
-        this._onDidChangeTreeData.fire();
-    }
-    getTreeItem(element) {
-        return element;
-    }
-    getChildren(element) {
-        if (element) {
-            return [];
-        }
-        const watchItems = this.fileWatchManager.getAllWatchItems();
-        if (watchItems.length === 0) {
-            return [new WatchServiceTreeItem('暂无运行的监听服务', vscode.TreeItemCollapsibleState.None, 'empty')];
-        }
-        return watchItems.map((item) => {
-            const label = item.projectName || '未命名项目';
-            const description = item.directory;
-            const treeItem = new WatchServiceTreeItem(label, vscode.TreeItemCollapsibleState.None, 'watch', { watchId: item.id });
-            treeItem.description = description;
-            treeItem.command = {
-                command: 'revealInExplorer',
-                title: 'Reveal in Explorer',
-                arguments: [vscode.Uri.file(item.directory)]
-            };
-            return treeItem;
-        });
-    }
-}
-exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
-
-
-/***/ }),
-/* 187 */
+/* 182 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48207,7 +47278,7 @@ exports.enhancedDefinitionLogic = exports.EnhancedDefinitionLogic = void 0;
  */
 const vscode = __importStar(__webpack_require__(2));
 const performanceMonitor_1 = __webpack_require__(6);
-const jsSymbolParser_1 = __webpack_require__(188);
+const jsSymbolParser_1 = __webpack_require__(183);
 const parseDocument_1 = __webpack_require__(8);
 const templateIndexer_1 = __webpack_require__(178);
 const HTML_ATTR_BLACKLIST = new Set([
@@ -48451,7 +47522,7 @@ exports.enhancedDefinitionLogic = new EnhancedDefinitionLogic();
 
 
 /***/ }),
-/* 188 */
+/* 183 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48510,7 +47581,7 @@ const vscode = __importStar(__webpack_require__(2));
 const parser = __importStar(__webpack_require__(9));
 const traverse_1 = __importDefault(__webpack_require__(10));
 const t = __importStar(__webpack_require__(29));
-const cacheManager_1 = __webpack_require__(189);
+const cacheManager_1 = __webpack_require__(184);
 const performanceMonitor_1 = __webpack_require__(6);
 /**
  * 符号类型枚举
@@ -48882,14 +47953,14 @@ exports.jsSymbolParser = new JSSymbolParser();
 
 
 /***/ }),
-/* 189 */
+/* 184 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.documentParseCache = exports.astIndexCache = exports.DocumentParseCacheManager = exports.ASTIndexCacheManager = exports.CacheManager = void 0;
-const errorHandler_1 = __webpack_require__(191);
+const errorHandler_1 = __webpack_require__(185);
 // 默认缓存配置
 const DEFAULT_CACHE_CONFIG = {
     maxSize: 1000,
@@ -49194,8 +48265,7 @@ exports.documentParseCache = DocumentParseCacheManager.getInstance();
 
 
 /***/ }),
-/* 190 */,
-/* 191 */
+/* 185 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -49446,6 +48516,935 @@ function handleCacheError(error, operation) {
 }
 
 
+/***/ }),
+/* 186 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VueHoverProvider = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const parseDocument_1 = __webpack_require__(8);
+const templateIndexer_1 = __webpack_require__(178);
+class VueHoverProvider {
+    constructor() {
+        this.hoverTimeout = null;
+    }
+    provideHover(document, position, token) {
+        return new Promise((resolve) => {
+            // 清除之前的定时器
+            if (this.hoverTimeout) {
+                clearTimeout(this.hoverTimeout);
+            }
+            // 读取配置的延迟时间
+            const config = vscode.workspace.getConfiguration('leidong-tools');
+            const delay = config.get('hoverDelay', 300);
+            // 设置延迟
+            this.hoverTimeout = setTimeout(() => {
+                if (token.isCancellationRequested) {
+                    resolve(null);
+                    return;
+                }
+                const hover = this.getHoverContent(document, position);
+                resolve(hover);
+            }, delay);
+        });
+    }
+    getHoverContent(document, position) {
+        // 检查功能是否启用
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        const isEnabled = config.get('enableDefinitionJump', true);
+        if (!isEnabled) {
+            return null;
+        }
+        const wordRange = document.getWordRangeAtPosition(position);
+        if (!wordRange) {
+            return null;
+        }
+        const word = document.getText(wordRange);
+        const line = document.lineAt(position.line).text;
+        // 检查是否在模板中
+        if (document.languageId === 'html') {
+            const templateVar = (0, templateIndexer_1.findTemplateVar)(document, position, word);
+            if (templateVar) {
+                return new vscode.Hover(`**Template Variable**: ${word}\n\nDefined at line ${templateVar.range.start.line + 1}`, wordRange);
+            }
+            // 检查Vue索引
+            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            if (vueIndex) {
+                const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
+                if (def) {
+                    return new vscode.Hover(`**Vue Variable**: ${word}\n\nDefined at ${def.uri.fsPath}:${def.range.start.line + 1}`, wordRange);
+                }
+            }
+        }
+        // 检查JavaScript/TypeScript
+        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            if (vueIndex) {
+                const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
+                if (def) {
+                    return new vscode.Hover(`**Vue Variable**: ${word}\n\nDefined at ${def.uri.fsPath}:${def.range.start.line + 1}`, wordRange);
+                }
+            }
+        }
+        return null;
+    }
+}
+exports.VueHoverProvider = VueHoverProvider;
+
+
+/***/ }),
+/* 187 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.QuickLogCompletionProvider = void 0;
+/**
+ * 自动补全提供器
+ *
+ * 参考实现: https://github.com/jaluik/dot-log
+ * 使用 resolveCompletionItem + command 模式实现变量.log补全
+ */
+const vscode = __importStar(__webpack_require__(2));
+const parseDocument_1 = __webpack_require__(8);
+/**
+ * 快速日志补全提供器 (重写版)
+ * 参考 jaluik/dot-log 实现，使用命令替换文本
+ */
+class QuickLogCompletionProvider {
+    constructor() {
+        this.configs = [
+            {
+                trigger: 'log',
+                description: '🔥 Quick console.log with file info',
+                format: 'console.log',
+                icon: '🔥'
+            },
+            {
+                trigger: 'err',
+                description: '❌ Quick console.error with file info',
+                format: 'console.error',
+                icon: '❌'
+            },
+            {
+                trigger: 'info',
+                description: 'ℹ️ Quick console.info with file info',
+                format: 'console.info',
+                icon: 'ℹ️'
+            },
+            {
+                trigger: 'dbg',
+                description: '🐛 Quick console.debug with file info',
+                format: 'console.debug',
+                icon: '🐛'
+            },
+            {
+                trigger: 'warn',
+                description: '⚠️ Quick console.warn with file info',
+                format: 'console.warn',
+                icon: '⚠️'
+            }
+        ];
+    }
+    provideCompletionItems(document, position, token, context) {
+        this.position = position;
+        const completions = this.configs.map((config) => {
+            const item = new vscode.CompletionItem(config.trigger, vscode.CompletionItemKind.Method);
+            item.detail = config.description;
+            item.documentation = new vscode.MarkdownString(config.description);
+            item.sortText = '0000'; // 最高优先级
+            item.preselect = true;
+            return item;
+        });
+        return completions;
+    }
+    resolveCompletionItem(item, token) {
+        const label = item.label;
+        if (this.position && typeof label === 'string') {
+            const config = this.configs.find((c) => c.trigger === label);
+            if (config) {
+                // 设置命令，触发文本替换
+                item.command = {
+                    command: 'leidong-tools.dotLogReplace',
+                    title: 'Replace with log statement',
+                    arguments: [this.position.translate(0, label.length + 1), config]
+                };
+            }
+        }
+        return item;
+    }
+}
+exports.QuickLogCompletionProvider = QuickLogCompletionProvider;
+/**
+ * JavaScript 变量与函数补全提供器
+ */
+class JavaScriptCompletionProvider {
+    constructor() {
+        // 存储解析结果的缓存
+        this.parseCache = new Map();
+        // 缓存有效期 (30秒)
+        this.cacheValidityPeriod = 30 * 1000;
+    }
+    // 提供自动完成项目
+    async provideCompletionItems(document, position, token, context) {
+        try {
+            // 检查触发自动完成的字符
+            const linePrefix = document.lineAt(position).text.substring(0, position.character);
+            // 判断当前作用域
+            const isThisContext = this.isInThisContext(linePrefix);
+            const isThatContext = this.isInThatContext(linePrefix);
+            // 获取当前文件的解析缓存或重新解析
+            let parseResult = this.getCachedParseResult(document);
+            if (!parseResult) {
+                parseResult = await (0, parseDocument_1.parseDocument)(document);
+                if (parseResult) {
+                    this.cacheParseResult(document, parseResult);
+                }
+            }
+            // 确保 parseResult 不为 null
+            if (!parseResult) {
+                return [];
+            }
+            let completionItems;
+            // 根据当前上下文返回不同的补全项
+            if (isThisContext) {
+                // 返回 this. 相关的补全项
+                completionItems = Array.from(parseResult.thisReferences.values());
+            }
+            else if (isThatContext) {
+                // that 通常是 this 的别名，也返回 this 相关的补全项
+                completionItems = Array.from(parseResult.thisReferences.values());
+            }
+            else {
+                // 返回所有变量和方法
+                completionItems = [...parseResult.variables, ...parseResult.methods];
+            }
+            // 提高所有补全项的优先级以与内置单词记录竞争
+            completionItems.forEach((item, index) => {
+                item.sortText = `0000${index.toString().padStart(4, '0')}`; // 确保高优先级排序
+                item.preselect = false; // 避免过度预选
+                // 添加标识符表明这是来自我们的扩展
+                if (!item.detail?.includes('(雷动三千)')) {
+                    item.detail = `${item.detail || ''} (雷动三千)`;
+                }
+            });
+            // 返回 CompletionList 以获得更好的控制
+            return new vscode.CompletionList(completionItems, false);
+        }
+        catch (error) {
+            console.error('[JS Completion] Error providing completions:', error);
+            return [];
+        }
+    }
+    // 判断是否在 this 上下文中
+    isInThisContext(linePrefix) {
+        return linePrefix.endsWith('this.');
+    }
+    // 判断是否在 that 上下文中 (that 通常是 this 的别名)
+    isInThatContext(linePrefix) {
+        return linePrefix.endsWith('that.');
+    }
+    // 获取缓存的解析结果
+    getCachedParseResult(document) {
+        const uri = document.uri.toString();
+        const cachedResult = this.parseCache.get(uri);
+        // 检查缓存是否存在且有效
+        if (cachedResult && Date.now() - cachedResult.timestamp < this.cacheValidityPeriod) {
+            return cachedResult;
+        }
+        return null;
+    }
+    // 缓存解析结果
+    cacheParseResult(document, result) {
+        const uri = document.uri.toString();
+        this.parseCache.set(uri, result);
+    }
+}
+exports.JavaScriptCompletionProvider = JavaScriptCompletionProvider;
+/**
+ * Von 代码片段补全提供器
+ */
+class VonCompletionProvider {
+    provideCompletionItems(document, position, token, context) {
+        const lineText = document.lineAt(position).text;
+        const textBeforeCursor = lineText.substring(0, position.character);
+        // 检查是否输入了 "von"
+        if (!textBeforeCursor.endsWith('von')) {
+            return [];
+        }
+        const completionItems = [];
+        // 1. 当前时间 YYYYMMDDHHMMSS
+        const currentTimeItem = new vscode.CompletionItem('🕐 Current Time (YYYYMMDDHHMMSS)', vscode.CompletionItemKind.Snippet);
+        const now = new Date();
+        const timeString = this.formatDateTime(now);
+        currentTimeItem.insertText = new vscode.SnippetString(timeString);
+        currentTimeItem.detail = '⚡ Insert current time in YYYYMMDDHHMMSS format';
+        currentTimeItem.documentation = `插入当前时间: ${timeString}`;
+        currentTimeItem.sortText = '0001';
+        currentTimeItem.preselect = true;
+        currentTimeItem.filterText = 'von';
+        currentTimeItem.commitCharacters = ['\t', '\n'];
+        currentTimeItem.range = new vscode.Range(position.translate(0, -3), // -3 for "von"
+        position);
+        completionItems.push(currentTimeItem);
+        // 2. 随机 UUID
+        const uuidItem = new vscode.CompletionItem('🆔 Random UUID', vscode.CompletionItemKind.Snippet);
+        const uuid = this.generateUUID();
+        uuidItem.insertText = new vscode.SnippetString(uuid);
+        uuidItem.detail = '⚡ Insert random UUID';
+        uuidItem.documentation = `插入随机UUID: ${uuid}`;
+        uuidItem.sortText = '0002';
+        uuidItem.filterText = 'von';
+        uuidItem.commitCharacters = ['\t', '\n'];
+        uuidItem.range = new vscode.Range(position.translate(0, -3), // -3 for "von"
+        position);
+        completionItems.push(uuidItem);
+        return completionItems;
+    }
+    /**
+     * 格式化时间为 YYYYMMDDHHMMSS 格式
+     */
+    formatDateTime(date) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return `${year}${month}${day}${hours}${minutes}${seconds}`;
+    }
+    /**
+     * 生成随机 UUID (v4)
+     */
+    generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+}
+exports.VonCompletionProvider = VonCompletionProvider;
+
+
+/***/ }),
+/* 188 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VariableIndexWebviewProvider = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const jsSymbolParser_1 = __webpack_require__(183);
+const performanceMonitor_1 = __webpack_require__(6);
+const path = __importStar(__webpack_require__(3));
+const fs = __importStar(__webpack_require__(176));
+/**
+ * 变量索引 WebView 提供器
+ * 支持虚拟滚动，轻松处理万级变量
+ */
+class VariableIndexWebviewProvider {
+    static { this.viewType = 'leidong-tools.variableIndexWebview'; }
+    constructor(extensionUri) {
+        this.extensionUri = extensionUri;
+        this._lastParsedUri = '';
+        this._lastVariables = [];
+        this._extensionUri = extensionUri;
+        // ✅ 只在切换文件时刷新（打开新文件）
+        vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor) {
+                this.refresh();
+            }
+        });
+        // ✅ 保存时清除缓存，但不立即刷新（避免编辑时频繁重建）
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            this.invalidateCacheForDocument(document);
+        });
+    }
+    resolveWebviewView(webviewView, context, _token) {
+        this._view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri]
+        };
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        // 处理来自 webview 的消息
+        webviewView.webview.onDidReceiveMessage((message) => {
+            if (message.type === 'jump') {
+                this.jumpToDefinition(message.data.uri, message.data.line);
+            }
+            else if (message.type === 'refresh') {
+                this.refresh();
+            }
+        });
+        // 初始加载
+        this.refresh();
+    }
+    /**
+     * 清除文档的缓存
+     */
+    invalidateCacheForDocument(document) {
+        console.log('[VariableIndexWebview] 文件保存，清除缓存:', document.uri.toString());
+        // 清除 jsSymbolParser 缓存
+        jsSymbolParser_1.jsSymbolParser.invalidateCache(document.uri);
+        // 如果是外部 JS 文件，查找对应的 HTML
+        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            jsSymbolParser_1.jsSymbolParser.invalidateCache(document.uri);
+        }
+        // 如果保存的文件就是当前显示的文件，刷新索引
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editor.document.uri.toString() === document.uri.toString()) {
+            console.log('[VariableIndexWebview] 当前文件已保存，刷新索引');
+            this.refresh();
+        }
+    }
+    /**
+     * 刷新变量索引
+     */
+    async refresh() {
+        if (!this._view) {
+            return;
+        }
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            this.postMessage({
+                type: 'update',
+                data: {
+                    variables: [],
+                    fileName: '未打开文件'
+                }
+            });
+            return;
+        }
+        const document = editor.document;
+        const variables = await this.collectVariables(document);
+        const fileName = path.basename(document.uri.fsPath);
+        this.postMessage({
+            type: 'update',
+            data: {
+                variables,
+                fileName
+            }
+        });
+    }
+    /**
+     * 收集变量（支持 HTML 内联脚本和外部 JS）
+     */
+    async collectVariables(document) {
+        let parseResult;
+        let targetUri = document.uri;
+        let targetUriString = targetUri.toString();
+        try {
+            // HTML 文件处理
+            if (document.languageId === 'html') {
+                const scriptPath = this.findExternalScript(document.uri.fsPath);
+                if (scriptPath && fs.existsSync(scriptPath)) {
+                    // 外部 JS 文件
+                    targetUri = vscode.Uri.file(scriptPath);
+                    targetUriString = targetUri.toString();
+                    // ✅ 检查缓存：避免重复解析同一文件
+                    if (this._lastParsedUri === targetUriString) {
+                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
+                        return this._lastVariables;
+                    }
+                    const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
+                    parseResult = await jsSymbolParser_1.jsSymbolParser.parse(scriptContent, targetUri);
+                }
+                else {
+                    // 内联脚本
+                    const inlineScript = this.extractInlineScript(document.getText());
+                    if (inlineScript) {
+                        parseResult = await jsSymbolParser_1.jsSymbolParser.parse(inlineScript.content, document.uri, inlineScript.startLine);
+                        targetUri = document.uri;
+                    }
+                }
+            }
+            // JS/TS 文件
+            else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+                parseResult = await jsSymbolParser_1.jsSymbolParser.parse(document, document.uri);
+            }
+        }
+        catch (e) {
+            console.error('[VariableIndexWebview] Parse error:', e);
+        }
+        if (!parseResult || parseResult.thisReferences.size === 0) {
+            return [];
+        }
+        // 转换为 VariableItem 数组
+        const variables = [];
+        parseResult.thisReferences.forEach((symbol, name) => {
+            let type = 'data';
+            if (symbol.kind === jsSymbolParser_1.SymbolType.Method) {
+                type = 'method';
+            }
+            else if (symbol.kind === jsSymbolParser_1.SymbolType.Property) {
+                type = 'data';
+            }
+            variables.push({
+                name,
+                type,
+                line: symbol.range.start.line + 1,
+                uri: targetUri.toString()
+            });
+        });
+        // ✅ 按行号排序，保持代码顺序
+        variables.sort((a, b) => a.line - b.line);
+        // ✅ 缓存结果
+        this._lastParsedUri = targetUriString;
+        this._lastVariables = variables;
+        return variables;
+    }
+    /**
+     * 查找外部脚本文件
+     */
+    findExternalScript(htmlPath) {
+        const dir = path.dirname(htmlPath);
+        const basename = path.basename(htmlPath, path.extname(htmlPath));
+        const patterns = [
+            path.join(dir, 'js', `${basename}.dev.js`),
+            path.join(dir, 'js', basename, `${basename}.dev.js`)
+        ];
+        for (const p of patterns) {
+            if (fs.existsSync(p)) {
+                return p;
+            }
+        }
+        return null;
+    }
+    /**
+     * 提取内联脚本
+     */
+    extractInlineScript(htmlContent) {
+        const lines = htmlContent.split('\n');
+        let scriptStartLine = -1;
+        let inScript = false;
+        let scriptContent = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (/<script[^>]*>/i.test(line) && !line.includes('src=')) {
+                inScript = true;
+                scriptStartLine = i;
+                const singleLineMatch = /<script[^>]*>([\s\S]*?)<\/script>/i.exec(line);
+                if (singleLineMatch) {
+                    return { content: singleLineMatch[1], startLine: i };
+                }
+                continue;
+            }
+            if (inScript && /<\/script>/i.test(line)) {
+                if (scriptContent.length > 0) {
+                    return {
+                        content: scriptContent.join('\n'),
+                        startLine: scriptStartLine + 1
+                    };
+                }
+            }
+            if (inScript && scriptStartLine !== i) {
+                scriptContent.push(line);
+            }
+        }
+        return null;
+    }
+    /**
+     * 跳转到定义
+     */
+    jumpToDefinition(uriString, line) {
+        const uri = vscode.Uri.parse(uriString);
+        const position = new vscode.Position(line - 1, 0);
+        vscode.workspace.openTextDocument(uri).then(doc => {
+            vscode.window.showTextDocument(doc, {
+                selection: new vscode.Range(position, position),
+                preserveFocus: false
+            }).then(editor => {
+                editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+            });
+        });
+    }
+    /**
+     * 发送消息到 webview
+     */
+    postMessage(message) {
+        if (this._view) {
+            this._view.webview.postMessage(message);
+        }
+    }
+    /**
+     * 生成 WebView HTML
+     */
+    _getHtmlForWebview(webview) {
+        const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'variableIndex.css'));
+        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'src', 'webview', 'variableIndex.js'));
+        return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline';">
+    <link href="${styleUri}" rel="stylesheet">
+    <title>变量索引</title>
+</head>
+<body>
+    <div class="header">
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="🔍 搜索变量..." />
+            <button id="refreshBtn" title="刷新">🔄</button>
+        </div>
+        <div class="stats" id="stats">加载中...</div>
+    </div>
+    
+    <div class="categories">
+        <button class="category-btn active" data-type="all">全部</button>
+        <button class="category-btn" data-type="data">Data</button>
+        <button class="category-btn" data-type="method">Methods</button>
+    </div>
+    
+    <div class="variable-list" id="variableList">
+        <!-- 虚拟滚动容器 -->
+        <div class="scroll-container" id="scrollContainer">
+            <div class="scroll-content" id="scrollContent"></div>
+        </div>
+    </div>
+    
+    <div class="empty-state" id="emptyState" style="display: none;">
+        <p>📂 未找到 Vue 变量定义</p>
+        <p class="hint">打开包含 Vue 实例的文件</p>
+    </div>
+    
+    <script src="${scriptUri}"></script>
+</body>
+</html>`;
+    }
+}
+exports.VariableIndexWebviewProvider = VariableIndexWebviewProvider;
+__decorate([
+    (0, performanceMonitor_1.monitor)('variableIndexWebview.collectVariables')
+], VariableIndexWebviewProvider.prototype, "collectVariables", null);
+
+
+/***/ }),
+/* 189 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.WatchServiceTreeDataProvider = exports.WatchServiceTreeItem = void 0;
+const vscode = __importStar(__webpack_require__(2));
+/**
+ * 监听服务 TreeView 节点
+ */
+class WatchServiceTreeItem extends vscode.TreeItem {
+    constructor(label, collapsibleState, type, data) {
+        super(label, collapsibleState);
+        this.label = label;
+        this.collapsibleState = collapsibleState;
+        this.type = type;
+        this.data = data;
+        if (type === 'watch') {
+            this.iconPath = new vscode.ThemeIcon('eye');
+        }
+        else if (type === 'empty') {
+            this.iconPath = new vscode.ThemeIcon('info');
+            this.description = '(空)';
+        }
+        this.contextValue = type;
+    }
+}
+exports.WatchServiceTreeItem = WatchServiceTreeItem;
+/**
+ * 监听服务 TreeDataProvider
+ * 只负责显示文件监听列表
+ */
+class WatchServiceTreeDataProvider {
+    constructor(fileWatchManager) {
+        this.fileWatchManager = fileWatchManager;
+        this._onDidChangeTreeData = new vscode.EventEmitter();
+        this.onDidChangeTreeData = this._onDidChangeTreeData.event;
+    }
+    refresh() {
+        this._onDidChangeTreeData.fire();
+    }
+    getTreeItem(element) {
+        return element;
+    }
+    getChildren(element) {
+        if (element) {
+            return [];
+        }
+        const watchItems = this.fileWatchManager.getAllWatchItems();
+        if (watchItems.length === 0) {
+            return [new WatchServiceTreeItem('暂无运行的监听服务', vscode.TreeItemCollapsibleState.None, 'empty')];
+        }
+        return watchItems.map((item) => {
+            const label = item.projectName || '未命名项目';
+            const description = item.directory;
+            const treeItem = new WatchServiceTreeItem(label, vscode.TreeItemCollapsibleState.None, 'watch', { watchId: item.id });
+            treeItem.description = description;
+            treeItem.command = {
+                command: 'revealInExplorer',
+                title: 'Reveal in Explorer',
+                arguments: [vscode.Uri.file(item.directory)]
+            };
+            return treeItem;
+        });
+    }
+}
+exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
+
+
+/***/ }),
+/* 190 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.registerIndexLifecycle = registerIndexLifecycle;
+const templateIndexer_1 = __webpack_require__(178);
+const parseDocument_1 = __webpack_require__(8);
+const vscode = __importStar(__webpack_require__(2));
+/** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */
+function registerIndexLifecycle(context) {
+    const disposables = [];
+    let rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get('rebuildOnSave', true);
+    // watch for config change
+    disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('leidong-tools.maxIndexEntries')) {
+            (0, parseDocument_1.recreateVueIndexCache)();
+        }
+        if (e.affectsConfiguration('leidong-tools.maxTemplateIndexEntries')) {
+            (0, templateIndexer_1.recreateTemplateIndexCache)();
+        }
+        if (e.affectsConfiguration('leidong-tools.rebuildOnSave')) {
+            rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get('rebuildOnSave', true);
+        }
+    }));
+    // 在编辑器打开或切换到可见时构建索引（force rebuild）
+    const ensureIndexForEditor = (editor) => {
+        if (!editor) {
+            return;
+        }
+        const doc = editor.document;
+        if (doc.languageId === 'html') {
+            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
+        }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
+            // 强制重建 JS index for current file
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+        }
+    };
+    disposables.push(vscode.window.onDidChangeVisibleTextEditors((editors) => {
+        // 可见编辑器改变：为所有可见的editor确保索引
+        editors.forEach(e => ensureIndexForEditor(e));
+    }));
+    disposables.push(vscode.workspace.onDidOpenTextDocument((doc) => {
+        // 打开文件时建立索引
+        if (doc.languageId === 'html') {
+            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
+        }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+        }
+    }));
+    // 在保存时（可配置）触发重建索引
+    disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
+        if (!rebuildOnSave) {
+            return;
+        }
+        if (doc.languageId === 'html') {
+            (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
+        }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+        }
+    }));
+    disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {
+        // 关闭文件时清理缓存
+        (0, templateIndexer_1.removeTemplateIndex)(doc);
+        (0, parseDocument_1.removeVueIndexForUri)(doc.uri);
+    }));
+    // 定期修剪长时间未访问的模板索引
+    const pruneInterval = setInterval(() => { (0, templateIndexer_1.pruneTemplateIndex)(); (0, parseDocument_1.pruneVueIndexCache)(); }, 1000 * 60 * 10);
+    context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
+    disposables.forEach(d => context.subscriptions.push(d));
+}
+
+
 /***/ })
 /******/ 	]);
 /************************************************************************/
@@ -49526,8 +49525,8 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
-const providers_1 = __webpack_require__(181);
-const indexManager_1 = __webpack_require__(185);
+const providers_1 = __webpack_require__(180);
+const indexManager_1 = __webpack_require__(190);
 /**
  * Extension activation function
  */
