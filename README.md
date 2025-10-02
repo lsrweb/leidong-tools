@@ -20,12 +20,12 @@
 *   **支持 .dev.js 文件**: 特别优化对 `.dev.js` 文件的补全支持
 
 ### ⚡ 快速日志补全
-*   **高优先级 .log 补全**: 输入 `.log` 时优先显示 console.log 补全，优于 VS Code 内置词汇建议
-*   **多种日志类型**: 支持 `.log`、`.er`、`.info`、`.dbg` 等快速补全
-*   **表情符号标识**: 🔥 log、❌ error、ℹ️ info、🐛 debug，便于快速识别
-*   **智能文件信息**: 自动包含文件名和行号信息
-*   **多变量支持**: 支持 `var1,var2,var3.lg` 多变量一次性日志输出
-*   **代码片段增强**: 提供 `clog`、`varlog`、`vlog` 等多种触发前缀
+*   **智能 .log 补全**: 输入 `variableName.log` 自动展开为 `console.log('fileName:line variableName:', variableName)`
+*   **多种日志类型**: 支持 `.log`、`.err`、`.info`、`.dbg`、`.warn` 等快速补全
+*   **图标标识**: 🔥 log、❌ error、ℹ️ info、🐛 debug、⚠️ warn，便于快速识别
+*   **自动文件信息**: 自动包含文件名和行号信息
+*   **字符串支持**: 支持 `'string'.log` 直接输出字符串
+*   **高优先级**: 使用优化的排序算法，确保 .log 补全优先显示
 
 ### ⌨️ 键盘快捷键
 *   **快速选中变量日志**: `Ctrl+Shift+L` - 选中变量后快速在下一行生成 console.log
@@ -58,9 +58,15 @@
 3. 支持普通变量和函数的补全
 
 ### 快速日志补全
-1. **变量.log 补全**: 在任意变量后输入 `.log` 自动补全 console.log
-2. **多变量日志**: 输入 `var1,var2,var3.lg` 一次性输出多个变量
-3. **代码片段**: 输入 `clog`、`varlog` 或 `vlog` 触发日志代码片段
+1. **变量.log 补全**: 在任意变量后输入 `.log` 自动展开为完整的 console.log 语句
+   - 示例: `userName.log` → `console.log('file.js:10 userName:', userName)`
+2. **支持多种日志级别**: 
+   - `.log` - console.log (🔥)
+   - `.err` - console.error (❌)
+   - `.info` - console.info (ℹ️)
+   - `.dbg` - console.debug (🐛)
+   - `.warn` - console.warn (⚠️)
+3. **字符串日志**: 输入 `'message'.log` 或 `"message".log` 快速输出字符串
 
 ### 键盘快捷键使用
 1. **选中变量快速日志**: 选中任意变量，按 `Ctrl+Shift+L` 在下一行自动生成 console.log
@@ -81,7 +87,7 @@
 
 - **Vue 跳转**: HTML 文件
 - **JavaScript 补全**: JavaScript、TypeScript、Vue 文件，特别是 `.dev.js` 文件
-- **快速日志补全**: JavaScript、TypeScript、Vue 文件
+- **快速日志补全**: JavaScript、TypeScript、JSX、TSX、Vue、HTML 文件（所有支持 console.log 的前端文件）
 - **代码压缩**: HTML、XML、JavaScript、TypeScript、JSON、CSS、SCSS、SASS、Less 等
 - **注释压缩**: 所有支持的编程语言注释格式
 
@@ -109,6 +115,14 @@
 *   假设 Vue 实例使用 `new Vue({...})` 创建
 
 ## 更新日志
+
+### 1.1.6 🎉 重写日志补全
+- 🚀 **完全重写 .log 补全逻辑**: 参考 jaluik/dot-log 实现，使用 command 模式替代 snippet
+- ⚡ **更智能的触发**: 支持 variableName.log、obj.prop.log、'string'.log 等多种模式
+- 🎯 **更高优先级**: 改进补全排序，确保 .log 始终优先显示
+- ✨ **新增日志类型**: 支持 .warn (console.warn)
+- 🗑️ **移除 snippets**: 删除旧的 snippet 补全方式，统一使用 provider + command 模式
+- 🐛 **修复补全冲突**: 解决与 VS Code 内置词汇建议的冲突问题
 
 ### 1.0.0 🎉 正式版
 - 🚀 **优化补全优先级**: .log 补全现在优先于 VS Code 内置词汇建议显示

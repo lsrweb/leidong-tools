@@ -2,6 +2,7 @@
  * 命令注册模块
  */
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { 
     insertConsoleLog,
     quickInsertConsoleLog,
@@ -15,10 +16,105 @@ import { clearVueIndexCache } from '../parsers/parseDocument';
 import { pruneTemplateIndex, showTemplateIndexSummary } from '../finders/templateIndexer';
 
 /**
+ * 日志配置项接口 (用于 dotLogReplace 命令)
+ */
+interface LogConfigItem {
+    trigger: string;
+    description: string;
+    format: string;
+    icon: string;
+    hideName?: boolean;
+}
+
+/**
  * 注册所有命令
  */
 export function registerCommands(context: vscode.ExtensionContext) {
     const definitionLogic = new DefinitionLogic();
+    
+    // 注册 .log 补全替换命令 (参考 jaluik/dot-log 实现)
+    const dotLogReplaceHandler = (
+        editor: vscode.TextEditor,
+        edit: vscode.TextEditorEdit,
+        position: vscode.Position,
+        config: LogConfigItem
+    ) => {
+        const lineText = editor.document.lineAt(position.line).text;
+        const fileName = path.basename(editor.document.fileName);
+        const lineNumber = position.line + 1;
+        
+        // 匹配变量名.trigger 模式，例如 variableName.log
+        // 改进的正则：匹配任何非空白字符（包括点号），但排除引号
+        const matchVarReg = new RegExp(
+            `([^\\s'"\`]+)\\.${config.trigger}$`
+        );
+        
+        // 匹配字符串.trigger 模式，例如 'string'.log, "string".log
+        const matchStrReg = new RegExp(
+            `(['"\`])([^'"\`]*?)\\1\\.${config.trigger}$`
+        );
+        
+        let matchFlag: 'var' | 'str' = 'var';
+        let text: string | undefined, key: string | undefined, quote = "'", insertVal = '';
+        
+        // 先尝试匹配变量
+        const varMatch = lineText.match(matchVarReg);
+        if (varMatch) {
+            [text, key] = varMatch;
+        } else {
+            // 再尝试匹配字符串
+            const strMatch = lineText.match(matchStrReg);
+            if (strMatch) {
+                [text, quote, key] = strMatch;
+                matchFlag = 'str';
+            }
+        }
+        
+        // 如果匹配成功
+        if (key && text) {
+            const index = lineText.indexOf(text);
+            
+            // 删除原来的文本 (variableName.log 或 'string'.log)
+            edit.delete(
+                new vscode.Range(
+                    position.with(undefined, index),
+                    position.with(undefined, index + text.length)
+                )
+            );
+            
+            // 根据匹配类型生成插入文本
+            if (matchFlag === 'var') {
+                // 变量模式: console.log('fileName:line variableName:', variableName)
+                // 如果变量名包含单引号，使用双引号
+                if (key.includes("'")) {
+                    quote = '"';
+                }
+                
+                if (config.hideName) {
+                    // 仅输出值
+                    insertVal = `${config.format}(${key})`;
+                } else {
+                    // 输出变量名和值，包含文件信息
+                    insertVal = `${config.format}(${quote}${fileName}:${lineNumber} ${key}:${quote}, ${key})`;
+                }
+            } else if (matchFlag === 'str') {
+                // 字符串模式: console.log('string')
+                insertVal = `${config.format}(${quote}${key}${quote})`;
+            }
+            
+            // 在相同位置插入新文本
+            edit.insert(position.with(undefined, index), insertVal);
+        }
+        
+        return Promise.resolve([]);
+    };
+    
+    context.subscriptions.push(
+        vscode.commands.registerTextEditorCommand(
+            'leidong-tools.dotLogReplace',
+            dotLogReplaceHandler
+        )
+    );
     
     // Register the new command to open definition in a new tab
     context.subscriptions.push(

@@ -45,6 +45,7 @@ exports.registerCommands = registerCommands;
  * 命令注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(4));
 const consoleLogger_1 = __webpack_require__(3);
 const performanceMonitor_1 = __webpack_require__(6);
 const definitionLogic_1 = __webpack_require__(7);
@@ -57,6 +58,62 @@ const templateIndexer_1 = __webpack_require__(179);
  */
 function registerCommands(context) {
     const definitionLogic = new definitionLogic_1.DefinitionLogic();
+    // 注册 .log 补全替换命令 (参考 jaluik/dot-log 实现)
+    const dotLogReplaceHandler = (editor, edit, position, config) => {
+        const lineText = editor.document.lineAt(position.line).text;
+        const fileName = path.basename(editor.document.fileName);
+        const lineNumber = position.line + 1;
+        // 匹配变量名.trigger 模式，例如 variableName.log
+        // 改进的正则：匹配任何非空白字符（包括点号），但排除引号
+        const matchVarReg = new RegExp(`([^\\s'"\`]+)\\.${config.trigger}$`);
+        // 匹配字符串.trigger 模式，例如 'string'.log, "string".log
+        const matchStrReg = new RegExp(`(['"\`])([^'"\`]*?)\\1\\.${config.trigger}$`);
+        let matchFlag = 'var';
+        let text, key, quote = "'", insertVal = '';
+        // 先尝试匹配变量
+        const varMatch = lineText.match(matchVarReg);
+        if (varMatch) {
+            [text, key] = varMatch;
+        }
+        else {
+            // 再尝试匹配字符串
+            const strMatch = lineText.match(matchStrReg);
+            if (strMatch) {
+                [text, quote, key] = strMatch;
+                matchFlag = 'str';
+            }
+        }
+        // 如果匹配成功
+        if (key && text) {
+            const index = lineText.indexOf(text);
+            // 删除原来的文本 (variableName.log 或 'string'.log)
+            edit.delete(new vscode.Range(position.with(undefined, index), position.with(undefined, index + text.length)));
+            // 根据匹配类型生成插入文本
+            if (matchFlag === 'var') {
+                // 变量模式: console.log('fileName:line variableName:', variableName)
+                // 如果变量名包含单引号，使用双引号
+                if (key.includes("'")) {
+                    quote = '"';
+                }
+                if (config.hideName) {
+                    // 仅输出值
+                    insertVal = `${config.format}(${key})`;
+                }
+                else {
+                    // 输出变量名和值，包含文件信息
+                    insertVal = `${config.format}(${quote}${fileName}:${lineNumber} ${key}:${quote}, ${key})`;
+                }
+            }
+            else if (matchFlag === 'str') {
+                // 字符串模式: console.log('string')
+                insertVal = `${config.format}(${quote}${key}${quote})`;
+            }
+            // 在相同位置插入新文本
+            edit.insert(position.with(undefined, index), insertVal);
+        }
+        return Promise.resolve([]);
+    };
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand('leidong-tools.dotLogReplace', dotLogReplaceHandler));
     // Register the new command to open definition in a new tab
     context.subscriptions.push(vscode.commands.registerCommand(config_1.COMMANDS.GO_TO_DEFINITION_NEW_TAB, async () => {
         console.log('[HTML Vue Jump] goToDefinitionInNewTab command triggered.');
@@ -429,9 +486,9 @@ exports.EXTENSION_CONFIG = {
     },
     // 支持的文件类型
     SUPPORTED_LANGUAGES: {
-        JAVASCRIPT: ['javascript', 'typescript', 'vue'],
+        JAVASCRIPT: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue', 'html'],
         COMPLETION_PATTERNS: ['**/*.dev.js'],
-        ALL_FILES: ['javascript', 'typescript', 'vue', 'html', 'css', 'json', 'markdown', 'plaintext']
+        ALL_FILES: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue', 'html', 'css', 'json', 'markdown', 'plaintext']
     },
     // Von 功能配置
     VON: {
@@ -457,10 +514,14 @@ exports.COMMANDS = {
 };
 // 文件选择器配置
 exports.FILE_SELECTORS = {
+    // 支持所有前端开发文件类型的日志补全
     JAVASCRIPT: [
         { scheme: 'file', language: 'javascript' },
         { scheme: 'file', language: 'typescript' },
+        { scheme: 'file', language: 'javascriptreact' },
+        { scheme: 'file', language: 'typescriptreact' },
         { scheme: 'file', language: 'vue' },
+        { scheme: 'file', language: 'html' },
         { scheme: 'file', pattern: '**/*.dev.js' }
     ],
     JAVASCRIPT_ONLY: [
@@ -47572,10 +47633,8 @@ function registerProviders(context) {
         { scheme: 'file', language: 'typescript' }
     ], new hoverProvider_1.VueHoverProvider())); // 注册 JavaScript 补全提供器
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT_ONLY, new completionProvider_1.JavaScriptCompletionProvider(), '.'));
-    // 注册快速日志补全提供器
+    // 注册快速日志补全提供器 (重写版，使用 command 模式)
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT, new completionProvider_1.QuickLogCompletionProvider(), '.'));
-    // 注册多变量日志补全提供器
-    context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT, new completionProvider_1.MultiVariableLogCompletionProvider(), '.'));
     // 注册 Von 代码片段补全提供器 - 支持所有文件类型
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider([
         { scheme: 'file', language: 'javascript' },
@@ -47764,158 +47823,83 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.MultiVariableLogCompletionProvider = exports.QuickLogCompletionProvider = void 0;
+exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.QuickLogCompletionProvider = void 0;
 /**
  * 自动补全提供器
+ *
+ * 参考实现: https://github.com/jaluik/dot-log
+ * 使用 resolveCompletionItem + command 模式实现变量.log补全
  */
 const vscode = __importStar(__webpack_require__(2));
-const path = __importStar(__webpack_require__(4));
 const parseDocument_1 = __webpack_require__(8);
 /**
- * 快速日志补全提供器
+ * 快速日志补全提供器 (重写版)
+ * 参考 jaluik/dot-log 实现，使用命令替换文本
  */
 class QuickLogCompletionProvider {
+    constructor() {
+        this.configs = [
+            {
+                trigger: 'log',
+                description: '🔥 Quick console.log with file info',
+                format: 'console.log',
+                icon: '🔥'
+            },
+            {
+                trigger: 'err',
+                description: '❌ Quick console.error with file info',
+                format: 'console.error',
+                icon: '❌'
+            },
+            {
+                trigger: 'info',
+                description: 'ℹ️ Quick console.info with file info',
+                format: 'console.info',
+                icon: 'ℹ️'
+            },
+            {
+                trigger: 'dbg',
+                description: '🐛 Quick console.debug with file info',
+                format: 'console.debug',
+                icon: '🐛'
+            },
+            {
+                trigger: 'warn',
+                description: '⚠️ Quick console.warn with file info',
+                format: 'console.warn',
+                icon: '⚠️'
+            }
+        ];
+    }
     provideCompletionItems(document, position, token, context) {
-        const lineText = document.lineAt(position).text;
-        const textBeforeCursor = lineText.substring(0, position.character);
-        // 检查是否匹配快速日志模式，例如: variableName.lg, this.prop.lg, obj.method.lg
-        const quickLogMatch = textBeforeCursor.match(/([\w\.]+)\.(lg|er|info|dbg)$/);
-        if (!quickLogMatch) {
-            return [];
+        this.position = position;
+        const completions = this.configs.map((config) => {
+            const item = new vscode.CompletionItem(config.trigger, vscode.CompletionItemKind.Method);
+            item.detail = config.description;
+            item.documentation = new vscode.MarkdownString(config.description);
+            item.sortText = '0000'; // 最高优先级
+            item.preselect = true;
+            return item;
+        });
+        return completions;
+    }
+    resolveCompletionItem(item, token) {
+        const label = item.label;
+        if (this.position && typeof label === 'string') {
+            const config = this.configs.find((c) => c.trigger === label);
+            if (config) {
+                // 设置命令，触发文本替换
+                item.command = {
+                    command: 'leidong-tools.dotLogReplace',
+                    title: 'Replace with log statement',
+                    arguments: [this.position.translate(0, label.length + 1), config]
+                };
+            }
         }
-        const [fullMatch, variableName, logType] = quickLogMatch;
-        const fileName = path.basename(document.fileName);
-        const lineNumber = position.line + 1;
-        // 根据不同的日志类型创建补全项
-        const completionItems = [];
-        if (logType === 'lg') {
-            const item = new vscode.CompletionItem('🔥 console.log', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.log(\`${fileName}:${lineNumber} ${variableName}:\`, ${variableName});`);
-            item.detail = '⚡ Quick console.log with file info';
-            item.documentation = `插入 console.log(${variableName}) 并包含文件名和行号`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variableName}.lg`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        else if (logType === 'er') {
-            const item = new vscode.CompletionItem('❌ console.error', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.error(\`${fileName}:${lineNumber} ${variableName}:\`, ${variableName});`);
-            item.detail = '⚡ Quick console.error with file info';
-            item.documentation = `插入 console.error(${variableName}) 并包含文件名和行号`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variableName}.er`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        else if (logType === 'info') {
-            const item = new vscode.CompletionItem('ℹ️ console.info', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.info(\`${fileName}:${lineNumber} ${variableName}:\`, ${variableName});`);
-            item.detail = '⚡ Quick console.info with file info';
-            item.documentation = `插入 console.info(${variableName}) 并包含文件名和行号`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variableName}.info`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        else if (logType === 'dbg') {
-            const item = new vscode.CompletionItem('🐛 console.debug', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.debug(\`${fileName}:${lineNumber} ${variableName}:\`, ${variableName});`);
-            item.detail = '⚡ Quick console.debug with file info';
-            item.documentation = `插入 console.debug(${variableName}) 并包含文件名和行号`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variableName}.dbg`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        return completionItems;
+        return item;
     }
 }
 exports.QuickLogCompletionProvider = QuickLogCompletionProvider;
-/**
- * 多变量日志补全提供器
- */
-class MultiVariableLogCompletionProvider {
-    provideCompletionItems(document, position, token, context) {
-        const lineText = document.lineAt(position).text;
-        const textBeforeCursor = lineText.substring(0, position.character);
-        // 检查多变量日志模式，例如: var1,var2,var3.lg, this.a,that.b.lg
-        const multiVarMatch = textBeforeCursor.match(/([\w\.,\s]+)\.(lg|er|info|dbg)$/);
-        if (!multiVarMatch) {
-            return [];
-        }
-        const [fullMatch, variablesText, logType] = multiVarMatch;
-        // 只有包含逗号才是多变量，否则跳过
-        if (!variablesText.includes(',')) {
-            return [];
-        }
-        const variables = variablesText.split(',').map(v => v.trim());
-        const fileName = path.basename(document.fileName);
-        const lineNumber = position.line + 1;
-        const completionItems = [];
-        // 创建变量列表字符串
-        const varList = variables.join(', ');
-        const varArgs = variables.join(', ');
-        if (logType === 'lg') {
-            const item = new vscode.CompletionItem('🔥 console.log (multi)', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.log(\`${fileName}:${lineNumber} [${varList}]:\`, ${varArgs});`);
-            item.detail = '⚡ Quick console.log for multiple variables';
-            item.documentation = `插入 console.log 输出多个变量: ${varList}`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variablesText}.lg`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        else if (logType === 'er') {
-            const item = new vscode.CompletionItem('❌ console.error (multi)', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.error(\`${fileName}:${lineNumber} [${varList}]:\`, ${varArgs});`);
-            item.detail = '⚡ Quick console.error for multiple variables';
-            item.documentation = `插入 console.error 输出多个变量: ${varList}`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variablesText}.er`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        else if (logType === 'info') {
-            const item = new vscode.CompletionItem('ℹ️ console.info (multi)', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.info(\`${fileName}:${lineNumber} [${varList}]:\`, ${varArgs});`);
-            item.detail = '⚡ Quick console.info for multiple variables';
-            item.documentation = `插入 console.info 输出多个变量: ${varList}`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variablesText}.info`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        else if (logType === 'dbg') {
-            const item = new vscode.CompletionItem('🐛 console.debug (multi)', vscode.CompletionItemKind.Snippet);
-            item.insertText = new vscode.SnippetString(`console.debug(\`${fileName}:${lineNumber} [${varList}]:\`, ${varArgs});`);
-            item.detail = '⚡ Quick console.debug for multiple variables';
-            item.documentation = `插入 console.debug 输出多个变量: ${varList}`;
-            item.sortText = '0000'; // 使用更强的排序前缀确保最高优先级
-            item.preselect = true; // 预选中
-            item.filterText = `${variablesText}.dbg`; // 明确的过滤文本
-            item.commitCharacters = ['\t', '\n']; // 支持 Tab 和 Enter 提交
-            item.range = new vscode.Range(position.translate(0, -fullMatch.length), position);
-            completionItems.push(item);
-        }
-        return completionItems;
-    }
-}
-exports.MultiVariableLogCompletionProvider = MultiVariableLogCompletionProvider;
 /**
  * JavaScript 变量与函数补全提供器
  */

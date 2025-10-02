@@ -9,7 +9,7 @@
 - No README updates
 - No CHANGELOG entries  
 - No feature documentation (*.md files)
-- No code comments beyond inline explanations
+- No Code comments beyond inline explanations
 - No summary documents
 - No tutorial files
 
@@ -37,7 +37,7 @@ You MAY update documentation without asking ONLY when:
 ---
 
 ## Project Overview
-A VSCode extension for Vue.js development productivity, providing intelligent code navigation, completion, and utility commands. Core features: Vue definition jumping (HTML→JS), quick console.log insertion, and code compression.
+A VSCode extension for Vue.js development productivity, providing intelligent code navigation, completion, and utility commands. Core features: Vue definition jumping (HTML→JS), quick console.log insertion with **command-based .log completion** (v1.1.6+), and code compression.
 
 ## Architecture Patterns
 
@@ -148,12 +148,28 @@ content
 ```
 
 ### Completion Provider Priority
-**High priority override** for `.log` suffix completions:
+**High priority override** for `.log` suffix completions (v1.1.6+ uses command pattern):
 ```typescript
+// CompletionItem setup
 item.sortText = '0000';        // Beat built-in suggestions
 item.preselect = true;
-item.detail = '(雷动三千)';    // Brand identifier
+item.detail = '🔥 Quick console.log with file info';
+
+// resolveCompletionItem triggers command
+item.command = {
+    command: 'leidong-tools.dotLogReplace',
+    title: 'Replace with log statement',
+    arguments: [position, config]
+};
 ```
+
+**Command handler** (registerTextEditorCommand in commands.ts):
+- Matches `variableName.trigger` with regex
+- Deletes matched text via `edit.delete()`
+- Inserts replacement: `console.log('file.js:10 variableName:', variableName)`
+- Supports string literals: `'text'.log` → `console.log('text')`
+
+**No snippets**: Removed `snippets/javascript.json` in v1.1.6. All .log completion uses provider + command pattern (inspired by jaluik/dot-log).
 
 ### Command Registration Pattern
 All commands use `leidong-tools.*` prefix. Registration in `core/commands.ts`:
@@ -161,7 +177,21 @@ All commands use `leidong-tools.*` prefix. Registration in `core/commands.ts`:
 context.subscriptions.push(
     vscode.commands.registerCommand('leidong-tools.commandName', () => { ... })
 );
+
+// For text editor commands (e.g., dotLogReplace):
+context.subscriptions.push(
+    vscode.commands.registerTextEditorCommand(
+        'leidong-tools.dotLogReplace',
+        (editor, edit, position, config) => { ... }
+    )
+);
 ```
+
+**dotLogReplace command** (v1.1.6+): Core of .log completion
+- Triggered by `resolveCompletionItem` in QuickLogCompletionProvider
+- Uses regex to match `variableName.trigger` or `'string'.trigger`
+- Performs `edit.delete()` + `edit.insert()` in single transaction
+- Includes file name and line number in output
 
 ### Index Lifecycle Management
 Indexes built on:
@@ -197,7 +227,9 @@ getOrCreateVueIndexFromContent(content, uri, 0, true); // force=true
 ❌ Forgetting `errorRecovery: true` in Babel parser config  
 ❌ Missing `isFeatureEnabled()` check in provider entry points  
 ❌ Hardcoded file paths (use `vscode.Uri` and `path` module)  
-❌ Synchronous file I/O in hot paths (use cached results)
+❌ Synchronous file I/O in hot paths (use cached results)  
+❌ Using snippets for .log completion (removed in v1.1.6, use command pattern)  
+❌ Registering completion without implementing resolveCompletionItem for dynamic behavior
 
 ## File Patterns & Conventions
 
@@ -224,3 +256,12 @@ Toggle Index Logging             # Debug output control
 Clear Vue Index Cache            # Force cache clear
 Show Performance Report          # Timing analysis
 ```
+
+## Recent Changes (v1.1.6)
+
+- **Rewrote .log completion**: Now uses command pattern (`leidong-tools.dotLogReplace`) instead of snippets
+- **Removed snippets/**: All snippet-based completion deleted from package.json and file system
+- **Improved regex matching**: Supports `variableName.log`, `obj.prop.log`, `'string'.log`
+- **Added .warn trigger**: New console.warn support
+- **Reference implementation**: Based on jaluik/dot-log architecture (MIT license)
+- **Provider simplification**: Removed MultiVariableLogCompletionProvider, unified in QuickLogCompletionProvider

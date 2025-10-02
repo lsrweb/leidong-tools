@@ -6,8 +6,7 @@ import { VueHtmlDefinitionProvider } from '../providers/definitionProvider';
 import { VueHoverProvider } from '../providers/hoverProvider';
 import { 
     JavaScriptCompletionProvider, 
-    QuickLogCompletionProvider, 
-    MultiVariableLogCompletionProvider,
+    QuickLogCompletionProvider,
     VonCompletionProvider
 } from '../providers/completionProvider';
 import { EXTENSION_CONFIG, FILE_SELECTORS } from './config';
@@ -46,20 +45,11 @@ export function registerProviders(context: vscode.ExtensionContext) {
         )
     );
 
-    // 注册快速日志补全提供器
+    // 注册快速日志补全提供器 (重写版，使用 command 模式)
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             FILE_SELECTORS.JAVASCRIPT,
             new QuickLogCompletionProvider(),
-            '.', // 触发补全的字符
-        )
-    );
-
-    // 注册多变量日志补全提供器
-    context.subscriptions.push(
-        vscode.languages.registerCompletionItemProvider(
-            FILE_SELECTORS.JAVASCRIPT,
-            new MultiVariableLogCompletionProvider(),
             '.', // 触发补全的字符
         )
     );

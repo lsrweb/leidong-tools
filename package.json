@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "雷动三千开发的VS Code效率工具集：Vue.js智能跳转、JavaScript补全、多行压缩、注释压缩、快速日志等功能",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "publisher": "KuCai",
   "icon": "logo.jpg",
   "repository": {
@@ -227,20 +227,6 @@
         "id": "readonly",
         "description": "Placeholder modifier."
       }
-    ],
-    "snippets": [
-      {
-        "language": "javascript",
-        "path": "./snippets/javascript.json"
-      },
-      {
-        "language": "typescript",
-        "path": "./snippets/javascript.json"
-      },
-      {
-        "language": "vue",
-        "path": "./snippets/javascript.json"
-      }
     ]
   },
   "scripts": {
@@ -248,7 +234,7 @@
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
-  "vsix": "vsce package",
+    "vsix": "vsce package",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -279,7 +265,7 @@
     "ts-loader": "^9.5.2",
     "typescript": "^5.8.2",
     "webpack": "^5.98.0",
-    "webpack-cli": "^6.0.1"
-  ,"@vscode/vsce": "^3.0.0"
+    "webpack-cli": "^6.0.1",
+    "@vscode/vsce": "^3.0.0"
   }
 }
