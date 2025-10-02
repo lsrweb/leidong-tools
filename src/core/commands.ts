@@ -162,4 +162,15 @@ export function registerCommands(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(`Index Logging 已切换为 ${!current}`);
         })
     );
+
+    // 切换定义跳转功能
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.toggleDefinitionJump', async () => {
+            const cfg = vscode.workspace.getConfiguration('leidong-tools');
+            const current = cfg.get<boolean>('enableDefinitionJump', true) === true;
+            await cfg.update('enableDefinitionJump', !current, vscode.ConfigurationTarget.Workspace);
+            const status = !current ? '✅ 已启用' : '❌ 已禁用';
+            vscode.window.showInformationMessage(`Vue 变量跳转功能 ${status}`);
+        })
+    );
 }

@@ -30,6 +30,13 @@ export class VueHoverProvider implements vscode.HoverProvider {
     }
 
     private getHoverContent(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
+        // 检查功能是否启用
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        const isEnabled = config.get<boolean>('enableDefinitionJump', true);
+        if (!isEnabled) {
+            return null;
+        }
+
         const wordRange = document.getWordRangeAtPosition(position);
         if (!wordRange) {
             return null;

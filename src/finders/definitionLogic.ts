@@ -24,6 +24,11 @@ export class DefinitionLogic {
     @monitor('provideDefinition')
     public async provideDefinition(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Location | null> {
         try {
+            // 检查功能是否启用
+            if (!this.isFeatureEnabled()) {
+                return null;
+            }
+
             const rawWordInfo = this.extractWord(document, position);
             if (!rawWordInfo) { return null; }
             const { word, contextType, fullChain } = rawWordInfo;
@@ -33,11 +38,14 @@ export class DefinitionLogic {
             if (document.languageId === 'javascript' || document.languageId === 'typescript') {
                 const content = document.getText();
                 const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
-                console.log(`[jump][js] word=${word} chain=${fullChain || ''}`);
+                if (this.shouldLog()) { console.log(`[jump][js] word=${word} chain=${fullChain || ''}`); }
                 let target = findDefinitionInIndex(word, index);
                 if (!target && fullChain) { target = findChainedRootDefinition(fullChain, index); }
-                if (target) { console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`); return target; }
-                console.log(`[jump][js][miss] ${word}`);
+                if (target) { 
+                    if (this.shouldLog()) { console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`); }
+                    return target; 
+                }
+                if (this.shouldLog()) { console.log(`[jump][js][miss] ${word}`); }
                 return null;
             }
 
@@ -48,11 +56,14 @@ export class DefinitionLogic {
                 // 先尝试模板局部变量 (包括 v-for / slot-scope) root token
                 const templateHit = findTemplateVar(document, position, word);
                 if (templateHit) { if (this.shouldLog()) { console.log(`[jump][html][template-hit] ${word} -> ${templateHit.uri.fsPath}:${templateHit.range.start.line + 1}`); } return templateHit; }
-                console.log(`[jump][html] word=${word} chain=${fullChain || ''}`);
+                if (this.shouldLog()) { console.log(`[jump][html] word=${word} chain=${fullChain || ''}`); }
                 let target = findDefinitionInIndex(word, index);
                 if (!target && fullChain) { target = findChainedRootDefinition(fullChain, index); }
-                if (target) { console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`); return target; }
-                console.log(`[jump][html][miss] ${word}`);
+                if (target) { 
+                    if (this.shouldLog()) { console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`); }
+                    return target; 
+                }
+                if (this.shouldLog()) { console.log(`[jump][html][miss] ${word}`); }
             }
             return null;
         } catch (e) {
@@ -108,6 +119,15 @@ export class DefinitionLogic {
             if (aliasPattern.test(text)) { return true; }
         }
         return false;
+    }
+
+    private isFeatureEnabled(): boolean {
+        try { 
+            return vscode.workspace.getConfiguration('leidong-tools')
+                .get<boolean>('enableDefinitionJump', true) === true; 
+        } catch { 
+            return true; 
+        }
     }
 
     private shouldLog(): boolean {

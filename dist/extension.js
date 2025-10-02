@@ -154,6 +154,14 @@ function registerCommands(context) {
         await cfg.update('indexLogging', !current, vscode.ConfigurationTarget.Workspace);
         vscode.window.showInformationMessage(`Index Logging 已切换为 ${!current}`);
     }));
+    // 切换定义跳转功能
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.toggleDefinitionJump', async () => {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        const current = cfg.get('enableDefinitionJump', true) === true;
+        await cfg.update('enableDefinitionJump', !current, vscode.ConfigurationTarget.Workspace);
+        const status = !current ? '✅ 已启用' : '❌ 已禁用';
+        vscode.window.showInformationMessage(`Vue 变量跳转功能 ${status}`);
+    }));
 }
 
 
@@ -826,6 +834,10 @@ const HTML_ATTR_BLACKLIST = new Set([
 class DefinitionLogic {
     async provideDefinition(document, position) {
         try {
+            // 检查功能是否启用
+            if (!this.isFeatureEnabled()) {
+                return null;
+            }
             const rawWordInfo = this.extractWord(document, position);
             if (!rawWordInfo) {
                 return null;
@@ -838,16 +850,22 @@ class DefinitionLogic {
             if (document.languageId === 'javascript' || document.languageId === 'typescript') {
                 const content = document.getText();
                 const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
-                console.log(`[jump][js] word=${word} chain=${fullChain || ''}`);
+                if (this.shouldLog()) {
+                    console.log(`[jump][js] word=${word} chain=${fullChain || ''}`);
+                }
                 let target = (0, parseDocument_1.findDefinitionInIndex)(word, index);
                 if (!target && fullChain) {
                     target = (0, parseDocument_1.findChainedRootDefinition)(fullChain, index);
                 }
                 if (target) {
-                    console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                    if (this.shouldLog()) {
+                        console.log(`[jump][js][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                    }
                     return target;
                 }
-                console.log(`[jump][js][miss] ${word}`);
+                if (this.shouldLog()) {
+                    console.log(`[jump][js][miss] ${word}`);
+                }
                 return null;
             }
             // HTML 文件：尝试外部 js/***.dev.js 或内联脚本
@@ -864,16 +882,22 @@ class DefinitionLogic {
                     }
                     return templateHit;
                 }
-                console.log(`[jump][html] word=${word} chain=${fullChain || ''}`);
+                if (this.shouldLog()) {
+                    console.log(`[jump][html] word=${word} chain=${fullChain || ''}`);
+                }
                 let target = (0, parseDocument_1.findDefinitionInIndex)(word, index);
                 if (!target && fullChain) {
                     target = (0, parseDocument_1.findChainedRootDefinition)(fullChain, index);
                 }
                 if (target) {
-                    console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                    if (this.shouldLog()) {
+                        console.log(`[jump][html][hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                    }
                     return target;
                 }
-                console.log(`[jump][html][miss] ${word}`);
+                if (this.shouldLog()) {
+                    console.log(`[jump][html][miss] ${word}`);
+                }
             }
             return null;
         }
@@ -929,6 +953,15 @@ class DefinitionLogic {
             }
         }
         return false;
+    }
+    isFeatureEnabled() {
+        try {
+            return vscode.workspace.getConfiguration('leidong-tools')
+                .get('enableDefinitionJump', true) === true;
+        }
+        catch {
+            return true;
+        }
     }
     shouldLog() {
         try {
@@ -47648,6 +47681,12 @@ class VueHoverProvider {
         });
     }
     getHoverContent(document, position) {
+        // 检查功能是否启用
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        const isEnabled = config.get('enableDefinitionJump', true);
+        if (!isEnabled) {
+            return null;
+        }
         const wordRange = document.getWordRangeAtPosition(position);
         if (!wordRange) {
             return null;

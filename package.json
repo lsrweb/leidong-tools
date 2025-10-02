@@ -111,17 +111,26 @@
         "command": "leidong-tools.toggleIndexLogging",
         "title": "Toggle Index Logging",
         "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.toggleDefinitionJump",
+        "title": "Toggle Definition Jump Feature",
+        "category": "雷动三千工具集"
       }
     ],
     "configuration": {
       "title": "Leidong Tools",
       "properties": {
+        "leidong-tools.enableDefinitionJump": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用/关闭 Vue 变量和方法的定义跳转功能。关闭后将禁用所有跳转功能，包括 Go to Definition 和侧边栏跳转。"
+        },
         "leidong-tools.indexLogging": {
           "type": "boolean",
           "default": true,
-          "description": "启用/关闭索引与跳转调试日志"
-        }
-        ,
+          "description": "启用/关闭索引与跳转调试日志输出（不影响跳转功能本身）"
+        },
         "leidong-tools.rebuildOnSave": {
           "type": "boolean",
           "default": true,

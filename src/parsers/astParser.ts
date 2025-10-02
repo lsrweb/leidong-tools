@@ -20,6 +20,17 @@ interface DefinitionInfo {
     type: 'data' | 'method';
 }
 
+/**
+ * 检查是否启用日志
+ */
+function loggingEnabled(): boolean {
+    try {
+        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', true) === true;
+    } catch { 
+        return true; 
+    }
+}
+
 export class AstParser {
     /**
      * 查找定义的主函数
@@ -96,7 +107,9 @@ export class AstParser {
             });
 
             astIndexCache.setIndex(cacheKey, definitions);
-            console.log(`[parser] AST解析完成, 找到 ${definitions.length} 个定义。`);
+            if (loggingEnabled()) {
+                console.log(`[parser] AST解析完成, 找到 ${definitions.length} 个定义。`);
+            }
             return definitions;
 
         }, ErrorType.PARSE_ERROR, { file: scriptSource.uri.fsPath });
