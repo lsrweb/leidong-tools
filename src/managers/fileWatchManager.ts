@@ -18,6 +18,17 @@ interface WatchItem {
 }
 
 /**
+ * 监听项接口
+ */
+interface WatchItem {
+    id: string;                    // 唯一标识
+    directory: string;             // 监听的目录路径
+    projectName: string;           // 项目名称
+    watcher: vscode.FileSystemWatcher | null;  // VSCode 文件监听器
+    fileExtensions: string[];      // 监听的文件扩展名
+}
+
+/**
  * 文件监听管理器类
  */
 export class FileWatchManager {
@@ -455,6 +466,22 @@ export class FileWatchManager {
      */
     private generateWatchId(directory: string): string {
         return directory.replace(/[\\\/]/g, '_');
+    }
+
+    /**
+     * 获取所有监听项（供 TreeView 使用）
+     */
+    public getAllWatchItems(): Array<{id: string; directory: string; projectName: string; fileExtensions: string[]}> {
+        const items: Array<{id: string; directory: string; projectName: string; fileExtensions: string[]}> = [];
+        this.watchItems.forEach(item => {
+            items.push({
+                id: item.id,
+                directory: item.directory,
+                projectName: item.projectName,
+                fileExtensions: item.fileExtensions
+            });
+        });
+        return items;
     }
 
     /**

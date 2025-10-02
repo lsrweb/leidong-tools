@@ -15,11 +15,11 @@ import { registerIndexLifecycle } from './managers/indexManager';
 export function activate(context: vscode.ExtensionContext) {
     console.log('🚀 Extension "unitools" is now active!');
 
-    // Register all commands
-    registerCommands(context);
+    // Register all commands and get fileWatchManager
+    const fileWatchManager = registerCommands(context);
 
-    // Register all language providers
-    registerProviders(context);
+    // Register all language providers with fileWatchManager
+    registerProviders(context, fileWatchManager);
 
     // Register index lifecycle manager (build on open/visible, clear on close)
     registerIndexLifecycle(context);

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![VSCode](https://img.shields.io/badge/VSCode-%5E1.99.0-blue.svg)
 
@@ -15,6 +15,30 @@
 ---
 
 ## 🌟 功能特性
+
+### 0. 📊 智能侧边栏 **NEW**
+
+全新的侧边栏视图，集成变量索引和监听服务管理！
+
+**功能亮点**：
+- 📋 **变量索引面板**：
+  - 实时显示当前 HTML 文件的 Vue 实例结构
+  - Data、Methods、Computed 分类展示
+  - 点击任意项直接跳转到定义
+  - 自动监听文件切换和保存
+  
+- 👁️ **监听服务面板**：
+  - 查看所有运行中的 HTML→JS 文件监听
+  - 显示项目名称和监听目录
+  - 点击可在资源管理器中定位
+  - 无监听时友好提示
+
+**使用方式**：
+- 点击活动栏的 "雷动三千工具" 图标（🔧）
+- 打开 HTML 文件自动加载变量索引
+- 支持折叠/展开所有节点
+
+---
 
 ### 1. 🔍 Vue.js 智能代码跳转
 

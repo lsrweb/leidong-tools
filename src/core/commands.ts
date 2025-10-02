@@ -30,9 +30,31 @@ interface LogConfigItem {
 /**
  * 注册所有命令
  */
-export function registerCommands(context: vscode.ExtensionContext) {
+export function registerCommands(context: vscode.ExtensionContext): FileWatchManager {
     const definitionLogic = new DefinitionLogic();
     const fileWatchManager = new FileWatchManager(context);
+    
+    // 注册跳转到定义命令（供 TreeView 使用）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.jumpToDefinition', (uri: vscode.Uri, location: any) => {
+            // 如果 location 是 vscode.Location 对象
+            if (location && location.uri && location.range) {
+                vscode.window.showTextDocument(location.uri).then(editor => {
+                    editor.selection = new vscode.Selection(location.range.start, location.range.end);
+                    editor.revealRange(location.range, vscode.TextEditorRevealType.InCenter);
+                });
+            } else if (uri && location) {
+                // 如果是分开的 uri 和位置
+                vscode.workspace.openTextDocument(uri).then(doc => {
+                    vscode.window.showTextDocument(doc).then(editor => {
+                        const range = new vscode.Range(location.line || 0, location.character || 0, location.line || 0, location.character || 0);
+                        editor.selection = new vscode.Selection(range.start, range.end);
+                        editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+                    });
+                });
+            }
+        })
+    );
     
     // 注册文件监听相关命令
     context.subscriptions.push(
@@ -284,4 +306,6 @@ export function registerCommands(context: vscode.ExtensionContext) {
             vscode.window.showInformationMessage(`Vue 变量跳转功能 ${status}`);
         })
     );
+    
+    return fileWatchManager;
 }

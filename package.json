@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "KuCai",
   "icon": "logo.jpg",
   "repository": {
@@ -197,6 +197,25 @@
         "when": "editorHasSelection"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "leidong-sidebar",
+          "title": "雷动三千工具",
+          "icon": "$(tools)"
+        }
+      ]
+    },
+    "views": {
+      "leidong-sidebar": [
+        {
+          "id": "leidongSidebar",
+          "name": "功能面板",
+          "icon": "$(tools)",
+          "contextualTitle": "雷动三千工具"
+        }
+      ]
+    },
     "menus": {
       "explorer/context": [
         {

@@ -9,12 +9,14 @@ import {
     QuickLogCompletionProvider,
     VonCompletionProvider
 } from '../providers/completionProvider';
+import { LeidongTreeDataProvider } from '../providers/treeViewProvider';
+import { FileWatchManager } from '../managers/fileWatchManager';
 import { EXTENSION_CONFIG, FILE_SELECTORS } from './config';
 
 /**
  * 注册所有 Language Providers
  */
-export function registerProviders(context: vscode.ExtensionContext) {
+export function registerProviders(context: vscode.ExtensionContext, fileWatchManager: FileWatchManager) {
     // 注册 HTML Vue 定义提供器 
     // 确保只注册一次
     if (!context.subscriptions.some(sub => sub.constructor.name === 'DefinitionProviderRegistration')) {
@@ -72,4 +74,12 @@ export function registerProviders(context: vscode.ExtensionContext) {
             'v', 'o', 'n' // 触发补全的字符
         )
     );
+
+    // 注册侧边栏 TreeView
+    const treeDataProvider = new LeidongTreeDataProvider(fileWatchManager);
+    const treeView = vscode.window.createTreeView('leidongSidebar', {
+        treeDataProvider,
+        showCollapseAll: true
+    });
+    context.subscriptions.push(treeView);
 }
