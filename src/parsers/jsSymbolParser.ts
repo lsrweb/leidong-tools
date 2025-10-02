@@ -9,6 +9,7 @@ import * as parser from '@babel/parser';
 import traverse, { NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { LRUCache } from '../cache/lruCache';
+import { monitor } from '../monitoring/performanceMonitor';
 
 /**
  * 符号类型枚举
@@ -72,6 +73,7 @@ export class JSSymbolParser {
      * @param uri 文档 URI
      * @param baseLine 基础行号偏移（用于 HTML 内联脚本）
      */
+    @monitor('jsSymbolParser.parse')
     public async parse(document: vscode.TextDocument | string, uri?: vscode.Uri, baseLine: number = 0): Promise<ParseResult> {
         const content = typeof document === 'string' ? document : document.getText();
         const docUri = uri || (typeof document !== 'string' ? document.uri : vscode.Uri.parse('untitled'));
@@ -82,8 +84,11 @@ export class JSSymbolParser {
         const cached = this.cache.get(cacheKey);
         
         if (cached && cached.hash === hash && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
+            console.log('[jsSymbolParser] 缓存命中:', cacheKey);
             return cached.result;
         }
+        
+        console.log('[jsSymbolParser] 缓存未命中，开始解析:', cacheKey);
 
         // 解析代码
         const result = await this.parseContent(content, docUri, baseLine);
@@ -102,6 +107,7 @@ export class JSSymbolParser {
      * 解析内容并构建符号树
      * @param baseLine 基础行号偏移
      */
+    @monitor('jsSymbolParser.parseContent')
     private async parseContent(content: string, uri: vscode.Uri, baseLine: number = 0): Promise<ParseResult> {
         const result: ParseResult = {
             symbols: [],

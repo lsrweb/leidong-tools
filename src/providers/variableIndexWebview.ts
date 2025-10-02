@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { jsSymbolParser, SymbolType } from '../parsers/jsSymbolParser';
+import { monitor } from '../monitoring/performanceMonitor';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -35,6 +36,8 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
     
     private _view?: vscode.WebviewView;
     private _extensionUri: vscode.Uri;
+    private _lastParsedUri: string = '';
+    private _lastVariables: VariableItem[] = [];
 
     constructor(private readonly extensionUri: vscode.Uri) {
         this._extensionUri = extensionUri;
@@ -112,9 +115,11 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
     /**
      * 收集变量（支持 HTML 内联脚本和外部 JS）
      */
+    @monitor('variableIndexWebview.collectVariables')
     private async collectVariables(document: vscode.TextDocument): Promise<VariableItem[]> {
         let parseResult;
         let targetUri = document.uri;
+        let targetUriString = targetUri.toString();
 
         try {
             // HTML 文件处理
@@ -124,6 +129,14 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
                 if (scriptPath && fs.existsSync(scriptPath)) {
                     // 外部 JS 文件
                     targetUri = vscode.Uri.file(scriptPath);
+                    targetUriString = targetUri.toString();
+                    
+                    // ✅ 检查缓存：避免重复解析同一文件
+                    if (this._lastParsedUri === targetUriString) {
+                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
+                        return this._lastVariables;
+                    }
+                    
                     const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
                     parseResult = await jsSymbolParser.parse(scriptContent, targetUri);
                 } else {
@@ -172,6 +185,10 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
 
         // ✅ 按行号排序，保持代码顺序
         variables.sort((a, b) => a.line - b.line);
+
+        // ✅ 缓存结果
+        this._lastParsedUri = targetUriString;
+        this._lastVariables = variables;
 
         return variables;
     }

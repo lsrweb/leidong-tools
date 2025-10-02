@@ -1,109 +1,340 @@
 body {
-    font-family: system-ui, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     margin: 0;
     padding: 0;
     background: var(--vscode-sideBar-background);
     color: var(--vscode-sideBar-foreground);
+    overflow: hidden;
 }
+
+/* ========== 头部区域 ========== */
 .header {
-    display: flex;
-    flex-direction: column;
-    padding: 8px 12px 0 12px;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--vscode-sideBar-background);
+    padding: 12px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    backdrop-filter: blur(8px);
 }
+
 .search-box {
     display: flex;
     gap: 8px;
     align-items: center;
+    margin-bottom: 8px;
 }
+
 #searchInput {
     flex: 1;
-    padding: 4px 8px;
-    border-radius: 4px;
+    padding: 8px 12px;
+    border-radius: 6px;
     border: 1px solid var(--vscode-input-border);
     background: var(--vscode-input-background);
     color: var(--vscode-input-foreground);
+    font-size: 13px;
+    transition: all 0.2s ease;
+    outline: none;
 }
+
+#searchInput:focus {
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+#searchInput::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+    opacity: 0.6;
+}
+
 #refreshBtn {
-    background: none;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
     border: none;
-    font-size: 1.2em;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    font-size: 16px;
     cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
+
+#refreshBtn:hover {
+    background: var(--vscode-button-secondaryHoverBackground);
+    transform: scale(1.05);
+}
+
+#refreshBtn:active {
+    transform: scale(0.95);
+}
+
 .stats {
-    font-size: 0.9em;
+    font-size: 11px;
     color: var(--vscode-descriptionForeground);
-    margin-top: 2px;
+    opacity: 0.8;
+    padding: 4px 0;
+    font-weight: 500;
 }
+
+/* ========== 分类按钮 ========== */
 .categories {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     padding: 8px 12px;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-sideBar-background);
 }
+
 .category-btn {
-    background: none;
+    flex: 1;
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
     border: none;
-    padding: 4px 12px;
-    border-radius: 4px;
+    padding: 8px 12px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 1em;
-    color: var(--vscode-button-foreground);
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
 }
+
+.category-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    transition: left 0.5s ease;
+}
+
+.category-btn:hover::before {
+    left: 100%;
+}
+
+.category-btn:hover {
+    background: var(--vscode-button-secondaryHoverBackground);
+    transform: translateY(-1px);
+}
+
 .category-btn.active {
     background: var(--vscode-button-background);
     color: var(--vscode-button-foreground);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    transform: translateY(-1px);
 }
+
+.category-btn:active {
+    transform: translateY(0);
+}
+
+/* ========== 变量列表区域 ========== */
 .variable-list {
-    height: calc(100vh - 110px);
+    height: calc(100vh - 140px);
     overflow: hidden;
     position: relative;
 }
+
 .scroll-container {
     height: 100%;
     overflow-y: auto;
+    overflow-x: hidden;
     position: relative;
+    scroll-behavior: smooth;
 }
+
+/* 自定义滚动条 */
+.scroll-container::-webkit-scrollbar {
+    width: 10px;
+}
+
+.scroll-container::-webkit-scrollbar-track {
+    background: var(--vscode-scrollbarSlider-background);
+    border-radius: 10px;
+}
+
+.scroll-container::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-hoverBackground);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+.scroll-container::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-activeBackground);
+    background-clip: content-box;
+}
+
 .scroll-content {
     position: relative;
     min-height: 100%;
+    padding: 4px 0;
 }
+
+/* ========== 变量项 ========== */
 .variable-item {
     display: flex;
     align-items: center;
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border);
+    width: 100%;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--vscode-panel-border);
     cursor: pointer;
-    transition: background 0.15s;
+    position: relative;
+    background: var(--vscode-sideBar-background);
+    /* ✅ 移除 transition: all，避免每次渲染都触发动画 */
 }
+
+.variable-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 3px;
+    height: 100%;
+    background: var(--vscode-focusBorder);
+    transform: scaleY(0);
+    transition: transform 0.15s ease; /* 只保留必要的动画 */
+}
+
+.variable-item:hover::before {
+    transform: scaleY(1);
+}
+
 .variable-item:hover {
     background: var(--vscode-list-hoverBackground);
+    /* ✅ 移除 transform: translateX(2px)，减少重排 */
 }
+
+.variable-item:active {
+    background: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground);
+}
+
 .variable-name {
     flex: 1;
     font-weight: 500;
-    font-size: 1em;
+    font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: 0.2px;
 }
+
 .variable-type {
-    font-size: 0.9em;
+    font-size: 10px;
     color: var(--vscode-descriptionForeground);
-    margin-right: 12px;
+    background: var(--vscode-badge-background);
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-right: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    opacity: 0.9;
 }
+
 .variable-line {
-    font-size: 0.9em;
+    font-size: 11px;
     color: var(--vscode-descriptionForeground);
-    min-width: 40px;
+    min-width: 50px;
     text-align: right;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-weight: 500;
+    opacity: 0.7;
 }
+
+/* ========== 空状态 ========== */
 .empty-state {
     text-align: center;
-    margin-top: 48px;
+    padding: 60px 20px;
     color: var(--vscode-descriptionForeground);
+    animation: fadeIn 0.3s ease;
 }
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.empty-state p:first-child {
+    font-size: 48px;
+    margin: 0 0 16px 0;
+}
+
+.empty-state p:last-child {
+    font-size: 13px;
+    margin: 0;
+    opacity: 0.7;
+}
+
 .hint {
-    font-size: 0.9em;
+    font-size: 12px;
     color: var(--vscode-descriptionForeground);
+    opacity: 0.6;
+    margin-top: 8px;
+}
+
+/* ========== 响应式优化 ========== */
+@media (max-width: 300px) {
+    .category-btn {
+        font-size: 10px;
+        padding: 6px 8px;
+    }
+    
+    .variable-item {
+        padding: 8px 12px;
+    }
+    
+    .variable-name {
+        font-size: 12px;
+    }
+}
+
+/* ========== 动画效果 ========== */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.variable-item {
+    animation: slideIn 0.2s ease;
+}
+
+/* ========== 加载状态 ========== */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    color: var(--vscode-descriptionForeground);
+    opacity: 0.7;
+}
+
+.loading::after {
+    content: '...';
+    animation: dots 1.5s steps(4, end) infinite;
+}
+
+@keyframes dots {
+    0%, 20% { content: '.'; }
+    40% { content: '..'; }
+    60%, 100% { content: '...'; }
 }

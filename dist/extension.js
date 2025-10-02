@@ -47543,6 +47543,12 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
 var __importStar = (this && this.__importStar) || (function () {
     var ownKeys = function(o) {
         ownKeys = Object.getOwnPropertyNames || function (o) {
@@ -47576,6 +47582,7 @@ const parser = __importStar(__webpack_require__(9));
 const traverse_1 = __importDefault(__webpack_require__(10));
 const t = __importStar(__webpack_require__(29));
 const lruCache_1 = __webpack_require__(177);
+const performanceMonitor_1 = __webpack_require__(6);
 /**
  * 符号类型枚举
  */
@@ -47611,8 +47618,10 @@ class JSSymbolParser {
         const hash = this.fastHash(content);
         const cached = this.cache.get(cacheKey);
         if (cached && cached.hash === hash && (Date.now() - cached.timestamp < this.CACHE_TTL)) {
+            console.log('[jsSymbolParser] 缓存命中:', cacheKey);
             return cached.result;
         }
+        console.log('[jsSymbolParser] 缓存未命中，开始解析:', cacheKey);
         // 解析代码
         const result = await this.parseContent(content, docUri, baseLine);
         // 缓存结果
@@ -47922,6 +47931,12 @@ class JSSymbolParser {
     }
 }
 exports.JSSymbolParser = JSSymbolParser;
+__decorate([
+    (0, performanceMonitor_1.monitor)('jsSymbolParser.parse')
+], JSSymbolParser.prototype, "parse", null);
+__decorate([
+    (0, performanceMonitor_1.monitor)('jsSymbolParser.parseContent')
+], JSSymbolParser.prototype, "parseContent", null);
 /**
  * 全局单例
  */
@@ -48331,6 +48346,12 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
 var __importStar = (this && this.__importStar) || (function () {
     var ownKeys = function(o) {
         ownKeys = Object.getOwnPropertyNames || function (o) {
@@ -48352,6 +48373,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VariableIndexWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const jsSymbolParser_1 = __webpack_require__(183);
+const performanceMonitor_1 = __webpack_require__(6);
 const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(176));
 /**
@@ -48362,6 +48384,8 @@ class VariableIndexWebviewProvider {
     static { this.viewType = 'leidong-tools.variableIndexWebview'; }
     constructor(extensionUri) {
         this.extensionUri = extensionUri;
+        this._lastParsedUri = '';
+        this._lastVariables = [];
         this._extensionUri = extensionUri;
         // 监听文档变化
         vscode.window.onDidChangeActiveTextEditor(() => {
@@ -48425,6 +48449,7 @@ class VariableIndexWebviewProvider {
     async collectVariables(document) {
         let parseResult;
         let targetUri = document.uri;
+        let targetUriString = targetUri.toString();
         try {
             // HTML 文件处理
             if (document.languageId === 'html') {
@@ -48432,6 +48457,12 @@ class VariableIndexWebviewProvider {
                 if (scriptPath && fs.existsSync(scriptPath)) {
                     // 外部 JS 文件
                     targetUri = vscode.Uri.file(scriptPath);
+                    targetUriString = targetUri.toString();
+                    // ✅ 检查缓存：避免重复解析同一文件
+                    if (this._lastParsedUri === targetUriString) {
+                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
+                        return this._lastVariables;
+                    }
                     const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
                     parseResult = await jsSymbolParser_1.jsSymbolParser.parse(scriptContent, targetUri);
                 }
@@ -48474,6 +48505,9 @@ class VariableIndexWebviewProvider {
         });
         // ✅ 按行号排序，保持代码顺序
         variables.sort((a, b) => a.line - b.line);
+        // ✅ 缓存结果
+        this._lastParsedUri = targetUriString;
+        this._lastVariables = variables;
         return variables;
     }
     /**
@@ -48597,6 +48631,9 @@ class VariableIndexWebviewProvider {
     }
 }
 exports.VariableIndexWebviewProvider = VariableIndexWebviewProvider;
+__decorate([
+    (0, performanceMonitor_1.monitor)('variableIndexWebview.collectVariables')
+], VariableIndexWebviewProvider.prototype, "collectVariables", null);
 
 
 /***/ }),
