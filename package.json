@@ -209,10 +209,17 @@
     "views": {
       "leidong-sidebar": [
         {
-          "id": "leidongSidebar",
-          "name": "功能面板",
-          "icon": "$(tools)",
-          "contextualTitle": "雷动三千工具"
+          "id": "leidong-tools.variableIndexWebview",
+          "name": "变量索引",
+          "type": "webview",
+          "icon": "$(symbol-property)",
+          "contextualTitle": "Vue 变量索引"
+        },
+        {
+          "id": "leidong-tools.watchServiceView",
+          "name": "监听服务",
+          "icon": "$(eye)",
+          "contextualTitle": "文件监听服务"
         }
       ]
     },

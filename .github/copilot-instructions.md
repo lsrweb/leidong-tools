@@ -253,15 +253,40 @@ npm run vsix                      # Create installable .vsix
 # Extension Commands (Command Palette)
 Toggle Definition Jump Feature    # Enable/disable jumping
 Toggle Index Logging             # Debug output control
+Toggle Enhanced JS Parser        # Switch to new parser (experimental)
+Test JS Symbol Parser            # Run parser test suite
 Clear Vue Index Cache            # Force cache clear
 Show Performance Report          # Timing analysis
 ```
 
-## Recent Changes (v1.1.6)
+## Recent Changes
 
+### v2.0.1 (TreeView Sidebar)
+- **Added Sidebar**: New activity bar icon with tree view
+- **Variable Index Panel**: Shows Vue data/methods/computed with click-to-jump
+- **Watch Service Panel**: Displays active HTML→JS file watchers
+- **FileWatchManager**: Added `getAllWatchItems()` for tree provider
+- **Context Fix**: Changed command registration to return FileWatchManager
+
+### v1.1.6 (.log completion rewrite)
 - **Rewrote .log completion**: Now uses command pattern (`leidong-tools.dotLogReplace`) instead of snippets
 - **Removed snippets/**: All snippet-based completion deleted from package.json and file system
 - **Improved regex matching**: Supports `variableName.log`, `obj.prop.log`, `'string'.log`
 - **Added .warn trigger**: New console.warn support
 - **Reference implementation**: Based on jaluik/dot-log architecture (MIT license)
 - **Provider simplification**: Removed MultiVariableLogCompletionProvider, unified in QuickLogCompletionProvider
+
+### v2.1.0-dev (Enhanced Parser - In Progress)
+- **New JSSymbolParser**: Inspired by outline-map, provides better JS symbol recognition
+- **EnhancedDefinitionLogic**: Adapter layer with fallback to legacy parser
+- **Symbol Types**: Variable/Function/Class/Method/Property with hierarchy
+- **Configurable**: `useEnhancedParser` setting (default: false, experimental)
+- **Test Suite**: Added `testJSSymbolParser.ts` with 4 test scenarios
+- **Docs**: Created `docs/enhanced-parser.md` technical documentation
+- **Key Features**:
+  - Scope stack management for accurate parent-child relations
+  - `reconstructHierarchy()` method for tree building
+  - Vue-aware: Detects `new Vue({...})` and Options API structure
+  - LRU cache with 30s TTL
+  - Error recovery for mixed PHP/Layui templates
+  - Fast hash for cache invalidation

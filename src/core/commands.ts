@@ -9,7 +9,6 @@ import {
     logSelectedVariable
 } from '../tools/consoleLogger';
 import { performanceMonitor } from '../monitoring/performanceMonitor';
-import { DefinitionLogic } from '../finders/definitionLogic';
 import { compressMultipleLines } from '../tools/codeCompressor';
 import { COMMANDS } from './config';
 import { clearVueIndexCache } from '../parsers/parseDocument';
@@ -31,7 +30,6 @@ interface LogConfigItem {
  * 注册所有命令
  */
 export function registerCommands(context: vscode.ExtensionContext): FileWatchManager {
-    const definitionLogic = new DefinitionLogic();
     const fileWatchManager = new FileWatchManager(context);
     
     // 注册跳转到定义命令（供 TreeView 使用）
@@ -153,45 +151,7 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
         )
     );
     
-    // Register the new command to open definition in a new tab
-    context.subscriptions.push(
-        vscode.commands.registerCommand(COMMANDS.GO_TO_DEFINITION_NEW_TAB, async () => {
-            console.log('[HTML Vue Jump] goToDefinitionInNewTab command triggered.');
-
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                console.log('[HTML Vue Jump] No active editor.');
-                return;
-            }
-
-            const document = editor.document;
-            const position = editor.selection.active;
-
-            // Use the new definition logic to find the definition
-            console.log('[HTML Vue Jump] Calling definitionLogic.provideDefinition...');
-            const location = await definitionLogic.provideDefinition(document, position);
-            console.log('[HTML Vue Jump] definitionLogic.provideDefinition returned:', location);
-
-            if (location) {
-                try {
-                    console.log('[HTML Vue Jump] Location found. Opening in new tab...');
-                    // Open the document containing the definition
-                    // Show the document in a new editor column beside the current one
-                    await vscode.window.showTextDocument(location.uri, {
-                        viewColumn: vscode.ViewColumn.Beside, // Open beside
-                        selection: location.range // Select the definition range
-                    });
-                    console.log('[HTML Vue Jump] showTextDocument called successfully.');
-                } catch (error) {
-                    console.error("[HTML Vue Jump] Error opening definition:", error);
-                    vscode.window.showErrorMessage('Could not open definition.');
-                }
-            } else {
-                console.log('[HTML Vue Jump] Definition not found.');
-                vscode.window.showInformationMessage('Definition not found.');
-            }
-        })
-    );    // Register logging commands
+    // Register logging commands
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.LOG_VARIABLE, () => {
             insertConsoleLog('log');

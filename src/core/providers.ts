@@ -9,7 +9,8 @@ import {
     QuickLogCompletionProvider,
     VonCompletionProvider
 } from '../providers/completionProvider';
-import { LeidongTreeDataProvider } from '../providers/treeViewProvider';
+import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
+import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { EXTENSION_CONFIG, FILE_SELECTORS } from './config';
 
@@ -75,11 +76,21 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         )
     );
 
-    // 注册侧边栏 TreeView
-    const treeDataProvider = new LeidongTreeDataProvider(fileWatchManager);
-    const treeView = vscode.window.createTreeView('leidongSidebar', {
-        treeDataProvider,
-        showCollapseAll: true
+    // 注册侧边栏视图
+    // 1. 变量索引 WebView（虚拟滚动，支持万级变量）
+    const variableIndexProvider = new VariableIndexWebviewProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            VariableIndexWebviewProvider.viewType,
+            variableIndexProvider
+        )
+    );
+
+    // 2. 监听服务 TreeView
+    const watchServiceProvider = new WatchServiceTreeDataProvider(fileWatchManager);
+    const watchServiceTreeView = vscode.window.createTreeView('leidong-tools.watchServiceView', {
+        treeDataProvider: watchServiceProvider,
+        showCollapseAll: false
     });
-    context.subscriptions.push(treeView);
+    context.subscriptions.push(watchServiceTreeView);
 }

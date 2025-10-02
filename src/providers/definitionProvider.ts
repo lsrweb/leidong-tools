@@ -1,14 +1,15 @@
 /**
- * Vue HTML 定义提供器 - 重构版本
+ * Vue HTML 定义提供器
+ * 统一使用增强解析器
  */
 import * as vscode from 'vscode';
-import { DefinitionLogic } from '../finders/definitionLogic';
+import { EnhancedDefinitionLogic } from '../finders/enhancedDefinitionLogic';
 
 export class VueHtmlDefinitionProvider implements vscode.DefinitionProvider {
-    private definitionLogic: DefinitionLogic;
+    private definitionLogic: EnhancedDefinitionLogic;
 
     constructor() {
-        this.definitionLogic = new DefinitionLogic();
+        this.definitionLogic = new EnhancedDefinitionLogic();
     }
 
     async provideDefinition(
