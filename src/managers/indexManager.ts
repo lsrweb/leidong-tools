@@ -1,5 +1,5 @@
-import { buildAndCacheTemplateIndex, removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from './templateIndexer';
-import { getOrCreateVueIndexFromContent, removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache } from './parseDocument';
+import { buildAndCacheTemplateIndex, removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from '../finders/templateIndexer';
+import { getOrCreateVueIndexFromContent, removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache } from '../parsers/parseDocument';
 import * as vscode from 'vscode';
 
 /** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */

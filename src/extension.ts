@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 // Import modular components
 import { registerCommands } from './core/commands';
 import { registerProviders } from './core/providers';
-import { registerIndexLifecycle } from './utils/indexManager';
+import { registerIndexLifecycle } from './managers/indexManager';
 
 /**
  * Extension activation function

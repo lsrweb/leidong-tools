@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { LRUCache } from './lruCache';
+import { LRUCache } from '../cache/lruCache';
 
 interface TemplateVar {
     name: string;

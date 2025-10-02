@@ -3,7 +3,7 @@
  * @description 测试新的定义查找逻辑
  */
 import * as vscode from 'vscode';
-import { DefinitionLogic } from '../utils/definitionLogic';
+import { DefinitionLogic } from '../finders/definitionLogic';
 
 /**
  * 测试定义查找逻辑

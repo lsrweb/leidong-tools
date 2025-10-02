@@ -147,9 +147,36 @@
 初始版本，支持基本的内联脚本和关联 `.dev.js` 文件的 Go to Definition 功能。
 
 ## 开发团队
+LSR
 
 由 雷动三千(KuCai) 开发和维护。
+
+## 项目结构
+
+本项目采用模块化的目录结构，按功能职责组织代码：
+
+```
+src/
+├── cache/        # 缓存管理（CacheManager, LRUCache）
+├── core/         # 核心配置和命令注册
+├── errors/       # 统一错误处理
+├── finders/      # 查找器（定义查找、脚本查找、模板索引）
+├── helpers/      # Vue辅助函数
+├── managers/     # 索引生命周期管理
+├── monitoring/   # 性能监控和统计
+├── parsers/      # AST和文档解析器
+├── providers/    # VSCode Provider实现
+├── tools/        # 工具命令（代码压缩、日志插入）
+├── types/        # TypeScript类型定义
+└── utils/        # 向后兼容导出层
+```
+
+详细的项目结构说明请参考：
+- [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - 完整的项目结构文档
+- [IMPORT_GUIDE.md](IMPORT_GUIDE.md) - 模块导入快速参考
+- [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) - 重构说明
 
 ## 许可证
 
 MIT License
+

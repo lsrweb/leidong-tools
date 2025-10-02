@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheItem, LogType } from '../types';
-import { parseDocument } from '../utils';
+import { parseDocument } from '../parsers/parseDocument';
 
 /**
  * 快速日志补全提供器

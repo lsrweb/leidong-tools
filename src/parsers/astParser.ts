@@ -6,10 +6,10 @@ import * as vscode from 'vscode';
 import * as parser from '@babel/parser';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
-import { ScriptSource } from './scriptFinder';
-import { safeExecute, ErrorType } from './errorHandler';
-import { astIndexCache } from './cacheManager';
-import { performanceMonitor, monitor } from './performanceMonitor';
+import { ScriptSource } from '../finders/scriptFinder';
+import { safeExecute, ErrorType } from '../errors/errorHandler';
+import { astIndexCache } from '../cache/cacheManager';
+import { performanceMonitor, monitor } from '../monitoring/performanceMonitor';
 
 /**
  * 定义信息接口，包含名称、位置和类型

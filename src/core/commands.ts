@@ -5,14 +5,14 @@ import * as vscode from 'vscode';
 import { 
     insertConsoleLog,
     quickInsertConsoleLog,
-    logSelectedVariable,
-    performanceMonitor,
-    DefinitionLogic
-} from '../utils';
-import { compressMultipleLines } from '../utils/codeCompressor';
+    logSelectedVariable
+} from '../tools/consoleLogger';
+import { performanceMonitor } from '../monitoring/performanceMonitor';
+import { DefinitionLogic } from '../finders/definitionLogic';
+import { compressMultipleLines } from '../tools/codeCompressor';
 import { COMMANDS } from './config';
-import { clearVueIndexCache, removeVueIndexForUri } from '../utils/parseDocument';
-import { removeTemplateIndex, pruneTemplateIndex, showTemplateIndexSummary } from '../utils/templateIndexer';
+import { clearVueIndexCache } from '../parsers/parseDocument';
+import { pruneTemplateIndex, showTemplateIndexSummary } from '../finders/templateIndexer';
 
 /**
  * 注册所有命令

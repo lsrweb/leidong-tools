@@ -2,7 +2,7 @@
  * Vue HTML 定义提供器 - 重构版本
  */
 import * as vscode from 'vscode';
-import { DefinitionLogic } from '../utils';
+import { DefinitionLogic } from '../finders/definitionLogic';
 
 export class VueHtmlDefinitionProvider implements vscode.DefinitionProvider {
     private definitionLogic: DefinitionLogic;

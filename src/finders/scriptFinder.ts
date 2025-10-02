@@ -5,8 +5,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { safeExecute, ErrorType } from './errorHandler';
-import { monitor, performanceMonitor } from './performanceMonitor';
+import { safeExecute, ErrorType } from '../errors/errorHandler';
+import { monitor, performanceMonitor } from '../monitoring/performanceMonitor';
 
 /**
  * 代表一个脚本源

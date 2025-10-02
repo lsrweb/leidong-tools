@@ -3,7 +3,7 @@
  * 提供高效的缓存机制，支持多种缓存策略
  */
 import * as vscode from 'vscode';
-import { handleCacheError } from './errorHandler';
+import { handleCacheError } from '../errors/errorHandler';
 
 // 缓存项接口
 export interface CacheItem<T> {

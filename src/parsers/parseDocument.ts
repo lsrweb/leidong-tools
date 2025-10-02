@@ -4,7 +4,7 @@ import traverse from '@babel/traverse';
 import * as t from '@babel/types';
 import * as fs from 'fs';
 import * as path from 'path';
-import { LRUCache } from './lruCache';
+import { LRUCache } from '../cache/lruCache';
 import { ParseResult } from '../types';
 
 /**

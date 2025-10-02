@@ -4,8 +4,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { parseAST } from './astParser';
-import { safeExecute, handleFileNotFoundError, ErrorType } from './errorHandler';
+import { parseAST } from '../parsers/astParser';
+import { safeExecute, handleFileNotFoundError, ErrorType } from '../errors/errorHandler';
 
 /**
  * 查找 Vue 定义

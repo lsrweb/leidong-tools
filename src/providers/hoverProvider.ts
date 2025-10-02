@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, findDefinitionInIndex, findChainedRootDefinition } from '../utils/parseDocument';
-import { findTemplateVar } from '../utils/templateIndexer';
+import { resolveVueIndexForHtml, findDefinitionInIndex, findChainedRootDefinition } from '../parsers/parseDocument';
+import { findTemplateVar } from '../finders/templateIndexer';
 
 export class VueHoverProvider implements vscode.HoverProvider {
     private hoverTimeout: NodeJS.Timeout | null = null;

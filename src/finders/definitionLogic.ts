@@ -8,8 +8,8 @@
  * 5. 性能：内容 hash + 缓存；只在调用时解析
  */
 import * as vscode from 'vscode';
-import { monitor } from './performanceMonitor';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, findDefinitionInIndex, findChainedRootDefinition } from './parseDocument';
+import { monitor } from '../monitoring/performanceMonitor';
+import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, findDefinitionInIndex, findChainedRootDefinition } from '../parsers/parseDocument';
 import { findTemplateVar, getTemplateIndex } from './templateIndexer';
 import * as path from 'path';
 
