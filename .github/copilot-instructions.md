@@ -1,5 +1,41 @@
 # Copilot Instructions for Leidong Tools VSCode Extension
 
+## 🚨 AI Agent Guidelines - READ FIRST
+
+### Documentation Generation Policy
+**CRITICAL**: When working in agent/agentic mode:
+
+❌ **DO NOT** automatically generate any documentation files unless explicitly requested:
+- No README updates
+- No CHANGELOG entries  
+- No feature documentation (*.md files)
+- No code comments beyond inline explanations
+- No summary documents
+- No tutorial files
+
+✅ **ONLY generate documentation when user explicitly asks:**
+- "请生成文档" / "generate documentation"
+- "写一个 README" / "write a README"  
+- "更新 CHANGELOG" / "update CHANGELOG"
+- Direct requests for specific documentation types
+
+**Why**: Keep focus on code implementation. User will request documentation separately when needed.
+
+### Code-First Approach
+When implementing features or fixes:
+1. Write/modify code directly
+2. Add inline comments for complex logic only
+3. Update existing docs ONLY if they become incorrect
+4. Wait for explicit documentation requests
+
+### Exception Cases
+You MAY update documentation without asking ONLY when:
+- Fixing obvious typos/errors in existing docs
+- Code changes make existing docs factually incorrect
+- Adding JSDoc/TypeDoc comments to public APIs
+
+---
+
 ## Project Overview
 A VSCode extension for Vue.js development productivity, providing intelligent code navigation, completion, and utility commands. Core features: Vue definition jumping (HTML→JS), quick console.log insertion, and code compression.
 
