@@ -1,7 +1,7 @@
 {
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
-  "description": "雷动三千开发的VS Code效率工具集：Vue.js智能跳转、JavaScript补全、多行压缩、注释压缩、快速日志等功能",
+  "description": "内部使用",
   "version": "1.1.6",
   "publisher": "KuCai",
   "icon": "logo.jpg",
@@ -116,6 +116,18 @@
         "command": "leidong-tools.toggleDefinitionJump",
         "title": "Toggle Definition Jump Feature",
         "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.startWatch",
+        "title": "启动 HTML→JS 文件监听",
+        "category": "雷动三千工具集",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "leidong-tools.showWatchList",
+        "title": "查看/管理文件监听列表",
+        "category": "雷动三千工具集",
+        "icon": "$(list-unordered)"
       }
     ],
     "configuration": {
@@ -186,6 +198,13 @@
       }
     ],
     "menus": {
+      "explorer/context": [
+        {
+          "command": "leidong-tools.startWatch",
+          "when": "explorerResourceIsFolder",
+          "group": "2_workspace@1"
+        }
+      ],
       "editor/context": [
         {
           "command": "leidong-tools.compressLines",

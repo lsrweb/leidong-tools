@@ -14,6 +14,7 @@ import { compressMultipleLines } from '../tools/codeCompressor';
 import { COMMANDS } from './config';
 import { clearVueIndexCache } from '../parsers/parseDocument';
 import { pruneTemplateIndex, showTemplateIndexSummary } from '../finders/templateIndexer';
+import { FileWatchManager } from '../managers/fileWatchManager';
 
 /**
  * 日志配置项接口 (用于 dotLogReplace 命令)
@@ -31,6 +32,20 @@ interface LogConfigItem {
  */
 export function registerCommands(context: vscode.ExtensionContext) {
     const definitionLogic = new DefinitionLogic();
+    const fileWatchManager = new FileWatchManager(context);
+    
+    // 注册文件监听相关命令
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.startWatch', async (uri: vscode.Uri) => {
+            await fileWatchManager.startWatch(uri);
+        })
+    );
+    
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.showWatchList', async () => {
+            await fileWatchManager.showWatchList();
+        })
+    );
     
     // 注册 .log 补全替换命令 (参考 jaluik/dot-log 实现)
     const dotLogReplaceHandler = (
