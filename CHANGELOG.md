@@ -2,6 +2,38 @@
 
 所有重要的变更都将记录在此文件中。
 
+## [2.1.2] - 2025-10-09 🐛 紧急修复
+
+### 🔧 修复
+
+**WebView 资源加载失败**：
+- ✅ **修复 `.vscodeignore` 配置**：添加 `!src/webview/**` 白名单，确保 CSS/JS 文件打包
+- 🚫 **解决 404 错误**：之前 `src/**` 排除规则导致 WebView 样式/脚本文件丢失
+- 🎨 **恢复侧边栏样式**：修复发布版本中侧边栏样式崩溃问题
+
+**多 script 标签支持**：
+- ✅ **重写 `extractInlineScript()`**：收集所有 `<script>` 标签，不再只解析第一个
+- 🎯 **智能优先级**：优先返回包含 `new Vue` 的标签，次选最后一个（Vue 实例通常在最后）
+- 📊 **降级策略**：当 `thisReferences` 为空时，显示所有 `variables` 和 `functions`
+
+**样式布局优化**：
+- 🎨 **移除 JS 宽度干扰**：删除 `getItemNode()` 中的 `item.style.width` 设置
+- ✅ **CSS 完全控制**：让 `.variable-item { width: 100%; }` 正常生效，不被内联样式覆盖
+- 🚫 **消除横向滚动**：确保节点宽度由 CSS 统一管理
+
+### 📦 打包验证
+
+**VSIX 内容检查**：
+```
+extension/
+└─ src/
+   └─ webview/
+      ├─ variableIndex.css [7.44 KB] ✅ 已包含
+      └─ variableIndex.js [5.38 KB]  ✅ 已包含
+```
+
+---
+
 ## [2.1.1] - 2025-10-02 🐛 关键修复
 
 ### 🔧 修复
