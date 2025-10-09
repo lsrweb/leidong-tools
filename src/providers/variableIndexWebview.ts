@@ -179,6 +179,14 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
             } 
             // JS/TS 文件
             else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+                targetUriString = document.uri.toString();
+                
+                // ✅ 检查缓存：避免重复解析同一文件
+                if (this._lastParsedUri === targetUriString) {
+                    console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
+                    return this._lastVariables;
+                }
+                
                 parseResult = await jsSymbolParser.parse(document, document.uri);
             }
         } catch (e) {
