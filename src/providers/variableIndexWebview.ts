@@ -193,8 +193,55 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
             console.error('[VariableIndexWebview] Parse error:', e);
         }
 
-        if (!parseResult || parseResult.thisReferences.size === 0) {
+        if (!parseResult) {
+            console.log('[VariableIndexWebview] ❌ 解析失败，parseResult 为空');
             return [];
+        }
+
+        console.log('[VariableIndexWebview] 📊 解析结果:', {
+            symbols: parseResult.symbols.length,
+            variables: parseResult.variables.size,
+            functions: parseResult.functions.size,
+            classes: parseResult.classes.size,
+            thisReferences: parseResult.thisReferences.size
+        });
+
+        if (parseResult.thisReferences.size === 0) {
+            console.log('[VariableIndexWebview] ⚠️ 未找到 this 引用，尝试显示所有变量和函数');
+            
+            // ✅ 如果没有 this 引用，显示所有 variables 和 functions
+            const variables: VariableItem[] = [];
+            
+            // 添加所有变量
+            parseResult.variables.forEach((symbol, name) => {
+                variables.push({
+                    name,
+                    type: 'data',
+                    line: symbol.range.start.line + 1,
+                    uri: targetUri.toString()
+                });
+            });
+            
+            // 添加所有函数
+            parseResult.functions.forEach((symbol, name) => {
+                variables.push({
+                    name,
+                    type: 'method',
+                    line: symbol.range.start.line + 1,
+                    uri: targetUri.toString()
+                });
+            });
+            
+            if (variables.length === 0) {
+                console.log('[VariableIndexWebview] ❌ 完全没有找到变量或函数');
+            } else {
+                console.log(`[VariableIndexWebview] ✅ 找到 ${variables.length} 个变量/函数`);
+            }
+            
+            variables.sort((a, b) => a.line - b.line);
+            this._lastParsedUri = targetUriString;
+            this._lastVariables = variables;
+            return variables;
         }
 
         // 转换为 VariableItem 数组
@@ -248,10 +295,12 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
     }
 
     /**
-     * 提取内联脚本
+     * 提取内联脚本（支持多个 script 标签，合并所有内容）
      */
     private extractInlineScript(htmlContent: string): { content: string; startLine: number } | null {
         const lines = htmlContent.split('\n');
+        const allScripts: { content: string; startLine: number }[] = [];
+        
         let scriptStartLine = -1;
         let inScript = false;
         let scriptContent: string[] = [];
@@ -259,32 +308,56 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             
+            // 检测 script 开始标签（排除外部引用）
             if (/<script[^>]*>/i.test(line) && !line.includes('src=')) {
                 inScript = true;
                 scriptStartLine = i;
                 
+                // 单行 script
                 const singleLineMatch = /<script[^>]*>([\s\S]*?)<\/script>/i.exec(line);
                 if (singleLineMatch) {
-                    return { content: singleLineMatch[1], startLine: i };
+                    allScripts.push({ content: singleLineMatch[1], startLine: i });
+                    inScript = false;
+                    continue;
                 }
                 continue;
             }
             
+            // 检测 script 结束标签
             if (inScript && /<\/script>/i.test(line)) {
                 if (scriptContent.length > 0) {
-                    return { 
+                    allScripts.push({ 
                         content: scriptContent.join('\n'), 
                         startLine: scriptStartLine + 1
-                    };
+                    });
                 }
+                inScript = false;
+                scriptContent = [];
+                scriptStartLine = -1;
+                continue;
             }
             
+            // 收集 script 内容
             if (inScript && scriptStartLine !== i) {
                 scriptContent.push(line);
             }
         }
         
-        return null;
+        if (allScripts.length === 0) {
+            return null;
+        }
+        
+        // ✅ 策略1: 找到包含 'new Vue' 的 script
+        for (const script of allScripts) {
+            if (script.content.includes('new Vue')) {
+                console.log('[VariableIndexWebview] ✅ 找到包含 new Vue 的 script 标签');
+                return script;
+            }
+        }
+        
+        // ✅ 策略2: 返回最后一个 script（Vue 实例通常在最后）
+        console.log(`[VariableIndexWebview] ⚠️ 未找到 new Vue，返回最后一个 script（共 ${allScripts.length} 个）`);
+        return allScripts[allScripts.length - 1];
     }
 
     /**

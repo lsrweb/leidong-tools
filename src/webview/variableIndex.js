@@ -43,7 +43,7 @@
         const item = document.createElement('div');
         item.className = 'variable-item';
         item.style.position = 'absolute';
-        item.style.width = 'calc(100% - 20px)';
+        // ✅ 不设置 width，让 CSS 控制（避免覆盖导致样式崩溃）
         scrollContent.appendChild(item);
         itemPool.push(item);
         return item;
