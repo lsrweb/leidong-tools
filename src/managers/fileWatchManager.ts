@@ -52,9 +52,15 @@ export class FileWatchManager {
     }
 
     /**
-     * 启动监听
+     * 启动监听 - 简化版本（直接根据右键选择或手动输入的路径）
      */
-    public async startWatch(folderUri: vscode.Uri) {
+    public async startWatch(folderUri?: vscode.Uri) {
+        // 🔧 修复: 检查 folderUri 是否存在
+        if (!folderUri || !folderUri.fsPath) {
+            vscode.window.showErrorMessage('无效的文件夹路径');
+            return;
+        }
+
         const folderPath = folderUri.fsPath;
         
         // 检查路径是否存在
@@ -75,63 +81,203 @@ export class FileWatchManager {
             }
         }
 
-        // 询问文件扩展名
-        const fileExtInput = await vscode.window.showInputBox({
-            prompt: '请输入要监听的文件扩展名（逗号分隔）',
-            placeHolder: 'html,htm',
-            value: 'html'
+        // 自动识别目录结构并呈现给用户选择
+        const watchDirs = await this.identifyWatchDirectories(folderPath);
+        if (!watchDirs || watchDirs.length === 0) {
+            return;
+        }
+
+        // 让用户通过 Checkbox 选择要监听的项目（多项目时）
+        const selectedDirs = await this.selectProjectsToWatch(watchDirs);
+        if (!selectedDirs || selectedDirs.length === 0) {
+            return;
+        }
+
+        // 默认监听 html 文件（简化，不再询问）
+        const fileExtensions = ['html'];
+
+        // 开始监听所有选中的目录 (异步进行, 不阻塞主线程)
+        setImmediate(async () => {
+            for (const watchDir of selectedDirs) {
+                await this.createWatch(watchDir.path, watchDir.projectName, fileExtensions);
+            }
+        });
+    }
+
+    /**
+     * 让用户通过 QuickPick 的 checkbox 选择要监听的项目
+     */
+    private async selectProjectsToWatch(
+        watchDirs: Array<{ path: string; projectName: string }>
+    ): Promise<Array<{ path: string; projectName: string }> | null> {
+        // 如果只有一个，直接返回
+        if (watchDirs.length === 1) {
+            return watchDirs;
+        }
+
+        // 多个项目时，使用 QuickPick with canPickMany
+        const items = watchDirs.map(dir => ({
+            label: `$(folder) ${dir.projectName}`,
+            description: dir.path,
+            picked: true,  // 默认全选
+            dir
+        }));
+
+        // 添加特殊项：全选/全不选
+        items.unshift({
+            label: '$(check-all) 全选全部',
+            description: '选中所有项目',
+            picked: false,
+            dir: { path: '', projectName: '_select_all' }
         });
 
-        if (!fileExtInput) {
-            return;
+        items.push({
+            label: '$(close-all) 全部取消',
+            description: '取消选中所有项目',
+            picked: false,
+            dir: { path: '', projectName: '_select_none' }
+        });
+
+        const selected = await vscode.window.showQuickPick(items, {
+            title: `🔍 发现 ${watchDirs.length} 个项目，请选择要监听的项目（支持多选）`,
+            placeHolder: '使用空格或鼠标勾选，按 Enter 确认',
+            canPickMany: true,
+            matchOnDescription: true
+        });
+
+        if (!selected) {
+            return null;
         }
 
-        const fileExtensions = fileExtInput.split(',').map(ext => ext.trim().replace(/^\./, ''));
+        // 处理特殊项
+        const hasSelectAll = selected.some(item => item.dir.projectName === '_select_all');
+        const hasSelectNone = selected.some(item => item.dir.projectName === '_select_none');
 
-        // 确定监听目录
-        const watchDir = await this.determineWatchDirectory(folderPath);
-        if (!watchDir) {
-            return;
+        if (hasSelectAll) {
+            return watchDirs;
         }
 
-        const projectName = path.basename(path.dirname(watchDir.path));
-        const watchId = this.generateWatchId(watchDir.path);
+        if (hasSelectNone) {
+            return [];
+        }
+
+        // 返回选中的项目（过滤掉特殊项）
+        const result = selected
+            .filter(item => !item.dir.projectName.startsWith('_'))
+            .map(item => item.dir);
+
+        return result.length > 0 ? result : null;
+    }
+
+    /**
+     * 创建单个监听项 (异步执行, 不阻塞主线程)
+     */
+    private async createWatch(watchDirPath: string, projectName: string, fileExtensions: string[]): Promise<void> {
+        const watchId = this.generateWatchId(watchDirPath);
 
         // 检查是否已经在监听
         if (this.watchItems.has(watchId)) {
-            vscode.window.showInformationMessage(`已经在监听: ${projectName}/dev`);
             return;
         }
 
-        // 创建监听器
-        const pattern = new vscode.RelativePattern(
-            watchDir.path,
-            `**/*.{${fileExtensions.join(',')}}`
-        );
-        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        // 在后台异步创建监听器
+        return new Promise((resolve) => {
+            setImmediate(() => {
+                const pattern = new vscode.RelativePattern(
+                    watchDirPath,
+                    `**/*.{${fileExtensions.join(',')}}`
+                );
+                const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
-        // 监听文件变化
-        watcher.onDidChange(uri => this.handleFileChange(uri, projectName));
-        watcher.onDidCreate(uri => this.handleFileChange(uri, projectName));
+                // 监听文件变化 (异步处理)
+                watcher.onDidChange(uri => {
+                    setImmediate(() => this.handleFileChange(uri, projectName));
+                });
+                watcher.onDidCreate(uri => {
+                    setImmediate(() => this.handleFileChange(uri, projectName));
+                });
 
-        // 保存监听项
-        const watchItem: WatchItem = {
-            id: watchId,
-            directory: watchDir.path,
-            projectName,
-            watcher,
-            fileExtensions
-        };
+                // 保存监听项
+                const watchItem: WatchItem = {
+                    id: watchId,
+                    directory: watchDirPath,
+                    projectName,
+                    watcher,
+                    fileExtensions
+                };
 
-        this.watchItems.set(watchId, watchItem);
-        this.updateStatusBar();
+                this.watchItems.set(watchId, watchItem);
+                this.updateStatusBar();
 
-        vscode.window.showInformationMessage(
-            `✅ 已启动监听: ${projectName}/dev (${fileExtensions.join(', ')})`
-        );
+                vscode.window.showInformationMessage(
+                    `✅ 已启动监听: ${projectName}/dev (${fileExtensions.join(', ')})`
+                );
 
-        // 输出日志
-        console.log(`[FileWatch] 启动监听: ${watchDir.path}`);
+                console.log(`[FileWatch] 启动监听: ${watchDirPath}`);
+                resolve();
+            });
+        });
+    }
+
+    /**
+     * 手动搜索目录并启动监听 (开放式面板)
+     * 用户可以输入一个工作区目录，系统自动搜索 dev 目录
+     */
+    public async startWatchManual() {
+        // 第一步：让用户输入一个目录路径或选择工作区文件夹
+        const folderUri = await vscode.window.showOpenDialog({
+            title: '🔍 选择项目工作区目录（会自动搜索 dev 文件夹）',
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: '选择'
+        });
+
+        if (!folderUri || folderUri.length === 0) {
+            return;
+        }
+
+        const selectedPath = folderUri[0].fsPath;
+
+        // 检查路径是否存在
+        if (!fs.existsSync(selectedPath)) {
+            vscode.window.showErrorMessage(`目录不存在: ${selectedPath}`);
+            return;
+        }
+
+        // 检查是否已经监听了父目录或子目录
+        const conflict = this.checkConflict(selectedPath);
+        if (conflict) {
+            const action = await vscode.window.showWarningMessage(
+                `${conflict.message}，是否继续？`,
+                '继续', '取消'
+            );
+            if (action !== '继续') {
+                return;
+            }
+        }
+
+        // 自动识别目录结构
+        const watchDirs = await this.identifyWatchDirectories(selectedPath);
+        if (!watchDirs || watchDirs.length === 0) {
+            return;
+        }
+
+        // 让用户通过 Checkbox 选择要监听的项目
+        const selectedDirs = await this.selectProjectsToWatch(watchDirs);
+        if (!selectedDirs || selectedDirs.length === 0) {
+            return;
+        }
+
+        // 默认监听 html 文件
+        const fileExtensions = ['html'];
+
+        // 开始监听所有选中的目录
+        setImmediate(async () => {
+            for (const watchDir of selectedDirs) {
+                await this.createWatch(watchDir.path, watchDir.projectName, fileExtensions);
+            }
+        });
     }
 
     /**
@@ -222,39 +368,112 @@ export class FileWatchManager {
     }
 
     /**
-     * 处理文件变化
+     * 处理文件变化 (异步执行, 不阻塞主线程)
      */
     private async handleFileChange(uri: vscode.Uri, projectName: string) {
-        const filePath = uri.fsPath;
-        console.log(`[${projectName}] 检测到文件变化: ${filePath}`);
+        // 在后台异步处理文件变化
+        setImmediate(async () => {
+            const filePath = uri.fsPath;
+            console.log(`[${projectName}] 检测到文件变化: ${filePath}`);
 
-        try {
-            // 读取 HTML 文件内容
-            const html = fs.readFileSync(filePath, 'utf8');
-            console.log(`[${projectName}] 读取到HTML文件内容，长度: ${html.length} 字符`);
+            try {
+                // 使用异步读取 (避免阻塞)
+                const html = await this.readFileAsync(filePath);
+                console.log(`[${projectName}] 读取到HTML文件内容，长度: ${html.length} 字符`);
 
-            // 处理 HTML 内容
-            const processedHtml = this.processHtmlContent(html);
+                // 处理 HTML 内容
+                const processedHtml = this.processHtmlContent(html);
 
-            if (processedHtml === '') {
-                console.log(`[${projectName}] 警告: HTML内容处理后为空`);
-                return;
+                if (processedHtml === '') {
+                    console.log(`[${projectName}] 警告: HTML内容处理后为空`);
+                    return;
+                }
+
+                console.log(`[${projectName}] 成功处理HTML内容，长度: ${processedHtml.length} 字符`);
+
+                // 异步更新 JS 文件
+                const updateCount = await this.updateJsFilesAsync(filePath, processedHtml, projectName);
+
+                if (updateCount > 0) {
+                    vscode.window.showInformationMessage(
+                        `✅ ${projectName}: 已更新 ${updateCount} 个 JS 文件`
+                    );
+                }
+            } catch (err) {
+                console.error(`[${projectName}] 处理文件出错:`, err);
+                vscode.window.showErrorMessage(`处理文件失败: ${err}`);
             }
+        });
+    }
 
-            console.log(`[${projectName}] 成功处理HTML内容，长度: ${processedHtml.length} 字符`);
+    /**
+     * 异步读取文件
+     */
+    private readFileAsync(filePath: string): Promise<string> {
+        return new Promise((resolve, reject) => {
+            fs.readFile(filePath, 'utf8', (err, data) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(data);
+                }
+            });
+        });
+    }
 
-            // 更新相应的 JS 文件
-            const updateCount = this.updateJsFiles(filePath, processedHtml, projectName);
+    /**
+     * 异步更新 JS 文件
+     */
+    private async updateJsFilesAsync(
+        htmlFilePath: string,
+        processedHtml: string,
+        projectName: string
+    ): Promise<number> {
+        return new Promise((resolve) => {
+            setImmediate(() => {
+                const devDirPath = path.dirname(htmlFilePath);
+                let updateCount = 0;
 
-            if (updateCount > 0) {
-                vscode.window.showInformationMessage(
-                    `✅ ${projectName}: 已更新 ${updateCount} 个 JS 文件`
-                );
-            }
-        } catch (err) {
-            console.error(`[${projectName}] 处理文件出错:`, err);
-            vscode.window.showErrorMessage(`处理文件失败: ${err}`);
-        }
+                try {
+                    const jsFiles = fs.readdirSync(devDirPath)
+                        .filter(file => file.endsWith('.js'))
+                        .map(file => path.join(devDirPath, file));
+
+                    for (const jsFile of jsFiles) {
+                        try {
+                            let content = fs.readFileSync(jsFile, 'utf8');
+
+                            if (content.includes("var html =")) {
+                                const lines = content.split('\n');
+                                let foundHtmlLine = false;
+                                let updatedContent = '';
+
+                                for (const line of lines) {
+                                    if (!foundHtmlLine && line.trim().startsWith('var html =')) {
+                                        foundHtmlLine = true;
+                                        updatedContent += `var html = '${processedHtml}';\n`;
+                                    } else {
+                                        updatedContent += line + '\n';
+                                    }
+                                }
+
+                                if (foundHtmlLine) {
+                                    fs.writeFileSync(jsFile, updatedContent, 'utf8');
+                                    console.log(`[${projectName}] 已更新: ${path.basename(jsFile)}`);
+                                    updateCount++;
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`[${projectName}] 处理文件出错:`, err);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`[${projectName}] 读取目录出错:`, err);
+                }
+
+                resolve(updateCount);
+            });
+        });
     }
 
     /**
@@ -322,120 +541,100 @@ export class FileWatchManager {
     }
 
     /**
-     * 更新 JS 文件
+     * 识别监听目录 - 支持多层级结构
+     * 
+     * 简化逻辑 (项目结构都是约定好的):
+     * 1. 直接是 dev 目录 → 监听该目录
+     * 2. 包含 dev 子目录 → 监听 dev 目录
+     * 3. 多项目容器模式 (如 static/h5/项目/dev) → 递归扫描所有项目
      */
-    private updateJsFiles(htmlFilePath: string, processedHtml: string, projectName: string): number {
-        const devDirPath = path.dirname(htmlFilePath);
-        let updateCount = 0;
-
-        try {
-            const jsFiles = fs.readdirSync(devDirPath)
-                .filter(file => file.endsWith('.js'))
-                .map(file => path.join(devDirPath, file));
-
-            jsFiles.forEach(jsFile => {
-                try {
-                    let content = fs.readFileSync(jsFile, 'utf8');
-
-                    if (content.includes("var html =")) {
-                        const lines = content.split('\n');
-                        let foundHtmlLine = false;
-                        let updatedContent = '';
-
-                        for (const line of lines) {
-                            if (!foundHtmlLine && line.trim().startsWith('var html =')) {
-                                foundHtmlLine = true;
-                                updatedContent += `var html = '${processedHtml}';\n`;
-                            } else {
-                                updatedContent += line + '\n';
-                            }
-                        }
-
-                        if (foundHtmlLine) {
-                            fs.writeFileSync(jsFile, updatedContent, 'utf8');
-                            console.log(`[${projectName}] 已更新: ${path.basename(jsFile)}`);
-                            updateCount++;
-                        }
-                    }
-                } catch (err) {
-                    console.error(`[${projectName}] 处理文件出错:`, err);
-                }
-            });
-        } catch (err) {
-            console.error(`[${projectName}] 读取目录出错:`, err);
-        }
-
-        return updateCount;
-    }
-
-    /**
-     * 确定监听目录
-     */
-    private async determineWatchDirectory(folderPath: string): Promise<{ path: string; name: string } | null> {
+    private async identifyWatchDirectories(
+        folderPath: string
+    ): Promise<Array<{ path: string; projectName: string }> | null> {
         const folderName = path.basename(folderPath);
 
         // 情况1: 直接就是 dev 目录
         if (folderName.toLowerCase() === 'dev') {
-            return {
+            return [{
                 path: folderPath,
-                name: path.basename(path.dirname(folderPath))
-            };
+                projectName: path.basename(path.dirname(folderPath))
+            }];
         }
 
-        // 情况2: 包含 dev 子目录
+        // 情况2: 包含 dev 子目录的项目
         const devPath = path.join(folderPath, 'dev');
         if (fs.existsSync(devPath) && fs.statSync(devPath).isDirectory()) {
-            return {
+            return [{
                 path: devPath,
-                name: folderName
-            };
+                projectName: folderName
+            }];
         }
 
-        // 情况3: 多项目模式 - 扫描子目录
-        const subDirs = fs.readdirSync(folderPath)
-            .filter(file => {
-                const fullPath = path.join(folderPath, file);
-                return fs.statSync(fullPath).isDirectory();
-            })
-            .map(dir => ({
-                name: dir,
-                path: path.join(folderPath, dir),
-                hasDevDir: fs.existsSync(path.join(folderPath, dir, 'dev'))
-            }))
-            .filter(d => d.hasDevDir);
+        // 情况3: 多项目容器模式 - 递归扫描并找到所有 dev 目录
+        const watchDirs = this.scanProjectsRecursively(folderPath, 0);
 
-        if (subDirs.length === 0) {
+        if (watchDirs.length === 0) {
             vscode.window.showWarningMessage('未找到任何包含 dev 的子目录');
             return null;
         }
 
-        if (subDirs.length === 1) {
-            return {
-                path: path.join(subDirs[0].path, 'dev'),
-                name: subDirs[0].name
-            };
+        return watchDirs;
+    }
+
+    /**
+     * 递归扫描项目结构，找出所有符合条件的 dev 目录
+     * 只递归到第 3 层 (避免深度过深)
+     */
+    private scanProjectsRecursively(
+        dirPath: string,
+        depth: number,
+        maxDepth: number = 3
+    ): Array<{ path: string; projectName: string }> {
+        if (depth > maxDepth) {
+            return [];
         }
 
-        // 多个项目，让用户选择
-        const selected = await vscode.window.showQuickPick(
-            subDirs.map(d => ({
-                label: d.name,
-                description: d.path
-            })),
-            {
-                placeHolder: '选择要监听的项目',
-                canPickMany: false
+        const results: Array<{ path: string; projectName: string }> = [];
+
+        try {
+            const entries = fs.readdirSync(dirPath);
+
+            for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry);
+
+                try {
+                    const stat = fs.statSync(fullPath);
+                    
+                    if (!stat.isDirectory()) {
+                        continue;
+                    }
+
+                    // 如果是 dev 目录，记录项目名
+                    if (entry.toLowerCase() === 'dev') {
+                        const projectName = path.basename(dirPath);
+                        results.push({
+                            path: fullPath,
+                            projectName
+                        });
+                    } else {
+                        // 继续递归查找
+                        const subResults = this.scanProjectsRecursively(
+                            fullPath,
+                            depth + 1,
+                            maxDepth
+                        );
+                        results.push(...subResults);
+                    }
+                } catch (err) {
+                    // 忽略权限问题
+                    continue;
+                }
             }
-        );
-
-        if (!selected) {
-            return null;
+        } catch (err) {
+            // 忽略读取目录失败
         }
 
-        return {
-            path: path.join(selected.description!, 'dev'),
-            name: selected.label
-        };
+        return results;
     }
 
     /**

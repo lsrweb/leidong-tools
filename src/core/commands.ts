@@ -60,6 +60,13 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
             await fileWatchManager.startWatch(uri);
         })
     );
+
+    // 新增命令: 手动搜索和启动监听 (开放式面板)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.startWatchManual', async () => {
+            await fileWatchManager.startWatchManual();
+        })
+    );
     
     context.subscriptions.push(
         vscode.commands.registerCommand('leidong-tools.showWatchList', async () => {
