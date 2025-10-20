@@ -60,17 +60,29 @@ export class WatchServiceTreeDataProvider implements vscode.TreeDataProvider<Wat
         }
         
         return watchItems.map((item: any) => {
-            const label = item.projectName || '未命名项目';
+            // 显示项目名称，如果暂停则添加暂停标记
+            const statusIcon = item.isPaused ? '⏸️' : '▶️';
+            const label = `${statusIcon} ${item.projectName || '未命名项目'}`;
             const description = item.directory;
             
             const treeItem = new WatchServiceTreeItem(
                 label,
                 vscode.TreeItemCollapsibleState.None,
                 'watch',
-                { watchId: item.id }
+                { watchId: item.id, isPaused: item.isPaused }
             );
             
             treeItem.description = description;
+            
+            // 如果暂停了，灰显项目，否则正常显示
+            if (item.isPaused) {
+                treeItem.iconPath = new vscode.ThemeIcon('pause');
+                treeItem.contextValue = 'watch-paused';
+            } else {
+                treeItem.iconPath = new vscode.ThemeIcon('eye');
+                treeItem.contextValue = 'watch-running';
+            }
+            
             treeItem.command = {
                 command: 'revealInExplorer',
                 title: 'Reveal in Explorer',

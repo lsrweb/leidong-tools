@@ -73,6 +73,35 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
             await fileWatchManager.showWatchList();
         })
     );
+
+    // 暂停/恢复监听命令
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.pauseWatch', (item: any) => {
+            if (item && item.data && item.data.watchId) {
+                fileWatchManager.pauseWatch(item.data.watchId);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.resumeWatch', (item: any) => {
+            if (item && item.data && item.data.watchId) {
+                fileWatchManager.resumeWatch(item.data.watchId);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.pauseAllWatches', () => {
+            fileWatchManager.pauseAllWatches();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.resumeAllWatches', () => {
+            fileWatchManager.resumeAllWatches();
+        })
+    );
     
     // 注册 .log 补全替换命令 (参考 jaluik/dot-log 实现)
     const dotLogReplaceHandler = (

@@ -15,17 +15,8 @@ interface WatchItem {
     projectName: string;           // 项目名称
     watcher: vscode.FileSystemWatcher | null;  // VSCode 文件监听器
     fileExtensions: string[];      // 监听的文件扩展名
-}
-
-/**
- * 监听项接口
- */
-interface WatchItem {
-    id: string;                    // 唯一标识
-    directory: string;             // 监听的目录路径
-    projectName: string;           // 项目名称
-    watcher: vscode.FileSystemWatcher | null;  // VSCode 文件监听器
-    fileExtensions: string[];      // 监听的文件扩展名
+    isPaused: boolean;             // 是否暂停中
+    savedWatcher?: vscode.FileSystemWatcher | null;  // 暂停时保存的 watcher（用于恢复）
 }
 
 /**
@@ -35,6 +26,7 @@ export class FileWatchManager {
     private watchItems: Map<string, WatchItem> = new Map();
     private statusBarItem: vscode.StatusBarItem;
     private context: vscode.ExtensionContext;
+    private watchItemsChangedCallbacks: Array<() => void> = [];
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -203,7 +195,8 @@ export class FileWatchManager {
                     directory: watchDirPath,
                     projectName,
                     watcher,
-                    fileExtensions
+                    fileExtensions,
+                    isPaused: false  // 初始状态：未暂停
                 };
 
                 this.watchItems.set(watchId, watchItem);
@@ -278,6 +271,106 @@ export class FileWatchManager {
                 await this.createWatch(watchDir.path, watchDir.projectName, fileExtensions);
             }
         });
+    }
+
+    /**
+     * 暂停单个监听
+     */
+    public pauseWatch(watchId: string) {
+        const watchItem = this.watchItems.get(watchId);
+        if (!watchItem || watchItem.isPaused) {
+            return;
+        }
+
+        // 保存当前 watcher
+        watchItem.savedWatcher = watchItem.watcher;
+        // 销毁 watcher（暂停）
+        watchItem.watcher?.dispose();
+        watchItem.watcher = null;
+        watchItem.isPaused = true;
+
+        this.updateStatusBar();
+        vscode.window.showInformationMessage(
+            `⏸️ 已暂停监听: ${watchItem.projectName}/dev`
+        );
+
+        console.log(`[FileWatch] 暂停监听: ${watchItem.directory}`);
+    }
+
+    /**
+     * 恢复单个监听
+     */
+    public resumeWatch(watchId: string) {
+        const watchItem = this.watchItems.get(watchId);
+        if (!watchItem || !watchItem.isPaused) {
+            return;
+        }
+
+        // 异步重建 watcher
+        setImmediate(() => {
+            const pattern = new vscode.RelativePattern(
+                watchItem.directory,
+                `**/*.{${watchItem.fileExtensions.join(',')}}`
+            );
+            const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+            // 监听文件变化
+            watcher.onDidChange(uri => {
+                setImmediate(() => this.handleFileChange(uri, watchItem.projectName));
+            });
+            watcher.onDidCreate(uri => {
+                setImmediate(() => this.handleFileChange(uri, watchItem.projectName));
+            });
+
+            watchItem.watcher = watcher;
+            watchItem.savedWatcher = undefined;
+            watchItem.isPaused = false;
+
+            this.updateStatusBar();
+            vscode.window.showInformationMessage(
+                `▶️ 已恢复监听: ${watchItem.projectName}/dev`
+            );
+
+            console.log(`[FileWatch] 恢复监听: ${watchItem.directory}`);
+        });
+    }
+
+    /**
+     * 暂停所有监听
+     */
+    public pauseAllWatches() {
+        let count = 0;
+        for (const [watchId, watchItem] of this.watchItems) {
+            if (!watchItem.isPaused) {
+                this.pauseWatch(watchId);
+                count++;
+            }
+        }
+
+        if (count > 0) {
+            vscode.window.showInformationMessage(
+                `⏸️ 已暂停 ${count} 个监听`
+            );
+        }
+    }
+
+    /**
+     * 恢复所有监听
+     */
+    public resumeAllWatches() {
+        let count = 0;
+        for (const [watchId, watchItem] of this.watchItems) {
+            if (watchItem.isPaused) {
+                this.resumeWatch(watchId);
+                count++;
+            }
+        }
+
+        if (count > 0) {
+            vscode.window.showInformationMessage(
+                `▶️ 已恢复 ${count} 个监听`
+            );
+        }
     }
 
     /**
@@ -446,18 +539,21 @@ export class FileWatchManager {
                             if (content.includes("var html =")) {
                                 const lines = content.split('\n');
                                 let foundHtmlLine = false;
-                                let updatedContent = '';
+                                const updatedLines: string[] = [];
 
-                                for (const line of lines) {
+                                for (let i = 0; i < lines.length; i++) {
+                                    const line = lines[i];
                                     if (!foundHtmlLine && line.trim().startsWith('var html =')) {
                                         foundHtmlLine = true;
-                                        updatedContent += `var html = '${processedHtml}';\n`;
+                                        updatedLines.push(`var html = '${processedHtml}';`);
                                     } else {
-                                        updatedContent += line + '\n';
+                                        updatedLines.push(line);
                                     }
                                 }
 
                                 if (foundHtmlLine) {
+                                    // 使用 join 而不是逐行添加 \n，避免文末添加空行
+                                    const updatedContent = updatedLines.join('\n');
                                     fs.writeFileSync(jsFile, updatedContent, 'utf8');
                                     console.log(`[${projectName}] 已更新: ${path.basename(jsFile)}`);
                                     updateCount++;
@@ -670,17 +766,38 @@ export class FileWatchManager {
     /**
      * 获取所有监听项（供 TreeView 使用）
      */
-    public getAllWatchItems(): Array<{id: string; directory: string; projectName: string; fileExtensions: string[]}> {
-        const items: Array<{id: string; directory: string; projectName: string; fileExtensions: string[]}> = [];
+    public getAllWatchItems(): Array<{id: string; directory: string; projectName: string; fileExtensions: string[]; isPaused: boolean}> {
+        const items: Array<{id: string; directory: string; projectName: string; fileExtensions: string[]; isPaused: boolean}> = [];
         this.watchItems.forEach(item => {
             items.push({
                 id: item.id,
                 directory: item.directory,
                 projectName: item.projectName,
-                fileExtensions: item.fileExtensions
+                fileExtensions: item.fileExtensions,
+                isPaused: item.isPaused
             });
         });
         return items;
+    }
+
+    /**
+     * 注册监听项变化回调
+     */
+    public onWatchItemsChanged(callback: () => void): void {
+        this.watchItemsChangedCallbacks.push(callback);
+    }
+
+    /**
+     * 触发监听项变化事件
+     */
+    private fireWatchItemsChanged(): void {
+        this.watchItemsChangedCallbacks.forEach(callback => {
+            try {
+                callback();
+            } catch (err) {
+                console.error('[FileWatch] 监听项变化回调出错:', err);
+            }
+        });
     }
 
     /**
@@ -694,6 +811,9 @@ export class FileWatchManager {
             this.statusBarItem.text = `$(eye) ${count}`;
             this.statusBarItem.show();
         }
+        
+        // 触发变化事件（用于刷新 TreeView）
+        this.fireWatchItemsChanged();
     }
 
     /**

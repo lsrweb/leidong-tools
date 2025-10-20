@@ -93,4 +93,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         showCollapseAll: false
     });
     context.subscriptions.push(watchServiceTreeView);
+
+    // 将 TreeView 刷新方法注入到 FileWatchManager
+    fileWatchManager.onWatchItemsChanged(() => {
+        watchServiceProvider.refresh();
+    });
 }
