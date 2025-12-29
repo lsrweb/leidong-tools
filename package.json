@@ -92,6 +92,11 @@
         "category": "雷动三千工具集"
       },
       {
+        "command": "leidong-tools.addVariableComment",
+        "title": "Add Variable Comment",
+        "category": "雷动三千工具集"
+      },
+      {
         "command": "leidong-tools.showPerformanceReport",
         "title": "Show Performance Report",
         "category": "雷动三千工具集"
@@ -232,6 +237,12 @@
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l",
         "when": "editorHasSelection"
+      },
+      {
+        "command": "leidong-tools.addVariableComment",
+        "key": "ctrl+alt+/",
+        "mac": "cmd+alt+/",
+        "when": "editorTextFocus"
       }
     ],
     "viewsContainers": {

@@ -318,6 +318,10 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
         index.data.forEach((_loc, name) => {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
             item.detail = 'data 属性 (雷动三千)';
+            const dataMeta = index.dataMeta.get(name);
+            if (dataMeta?.doc) {
+                item.documentation = new vscode.MarkdownString(dataMeta.doc);
+            }
             variables.push(item);
             thisReferences.set(name, item);
         });
@@ -339,6 +343,10 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
                 item.detail = 'mixin data (雷动三千)';
+                const dataMeta = index.dataMeta.get(name);
+                if (dataMeta?.doc) {
+                    item.documentation = new vscode.MarkdownString(dataMeta.doc);
+                }
                 variables.push(item);
                 thisReferences.set(name, item);
             }

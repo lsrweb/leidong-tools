@@ -47,6 +47,7 @@ exports.registerCommands = registerCommands;
 const vscode = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const consoleLogger_1 = __webpack_require__(4);
+const variableCommenter_1 = __webpack_require__(194);
 const performanceMonitor_1 = __webpack_require__(6);
 const codeCompressor_1 = __webpack_require__(7);
 const config_1 = __webpack_require__(5);
@@ -202,6 +203,9 @@ function registerCommands(context) {
     // 注册选中变量快速日志命令
     context.subscriptions.push(vscode.commands.registerCommand(config_1.COMMANDS.LOG_SELECTED_VARIABLE, () => {
         (0, consoleLogger_1.logSelectedVariable)();
+    }));
+    context.subscriptions.push(vscode.commands.registerCommand(config_1.COMMANDS.ADD_VARIABLE_COMMENT, () => {
+        (0, variableCommenter_1.addVariableComment)();
     }));
     // 注册性能报告命令
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.showPerformanceReport', async () => {
@@ -525,7 +529,8 @@ exports.COMMANDS = {
     COMPRESS_LINES: `${exports.EXTENSION_CONFIG.COMMAND_PREFIX}.compressLines`,
     QUICK_CONSOLE_LOG: `${exports.EXTENSION_CONFIG.COMMAND_PREFIX}.quickConsoleLog`,
     QUICK_CONSOLE_ERROR: `${exports.EXTENSION_CONFIG.COMMAND_PREFIX}.quickConsoleError`,
-    LOG_SELECTED_VARIABLE: `${exports.EXTENSION_CONFIG.COMMAND_PREFIX}.logSelectedVariable`
+    LOG_SELECTED_VARIABLE: `${exports.EXTENSION_CONFIG.COMMAND_PREFIX}.logSelectedVariable`,
+    ADD_VARIABLE_COMMENT: `${exports.EXTENSION_CONFIG.COMMAND_PREFIX}.addVariableComment`
 };
 // 文件选择器配置
 exports.FILE_SELECTORS = {
@@ -1252,6 +1257,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
     const mixinData = new Map();
     const mixinMethods = new Map();
     const mixinComputed = new Map();
+    const dataMeta = new Map();
     const methodMeta = new Map();
     const computedMeta = new Map();
     const componentsByTemplateId = new Map();
@@ -1307,6 +1313,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         mixinMethods: new Map(),
         mixinComputed: new Map(),
         all: new Map(),
+        dataMeta: new Map(),
         methodMeta: new Map(),
         computedMeta: new Map(),
         version: 0,
@@ -1320,7 +1327,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             } });
         }
     };
-    const extractData = (node, lineOffset, target) => {
+    const extractData = (node, lineOffset, target, metaTarget) => {
         if (!node) {
             return;
         }
@@ -1374,9 +1381,17 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             return;
         }
         for (const prop of obj.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+            if (t.isObjectProperty(prop) && prop.loc) {
+                const name = getPropertyName(prop.key);
+                if (!name) {
+                    continue;
+                }
                 const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
-                target.set(prop.key.name, loc);
+                target.set(name, loc);
+                const doc = getDocFromProp(prop);
+                if (doc && metaTarget && !metaTarget.has(name)) {
+                    metaTarget.set(name, { doc });
+                }
             }
         }
     };
@@ -1504,13 +1519,20 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         return undefined;
     };
     const getDocFromProp = (prop) => {
-        if (prop.leadingComments && prop.leadingComments.length > 0) {
-            return getDocFromComments(prop.leadingComments);
+        const readComments = (comments) => {
+            if (!comments || comments.length === 0) {
+                return undefined;
+            }
+            return getDocFromComments(comments);
+        };
+        const leading = readComments(prop.leadingComments)
+            || (t.isObjectProperty(prop) ? readComments(prop.value?.leadingComments) : undefined);
+        if (leading) {
+            return leading;
         }
-        if (t.isObjectProperty(prop) && prop.value?.leadingComments) {
-            return getDocFromComments(prop.value.leadingComments);
-        }
-        return undefined;
+        const trailing = readComments(prop.trailingComments)
+            || (t.isObjectProperty(prop) ? readComments(prop.value?.trailingComments) : undefined);
+        return trailing;
     };
     const paramToString = (param) => {
         if (t.isIdentifier(param)) {
@@ -1678,7 +1700,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                 }
                 const name = getPropertyName(prop.key);
                 if (name === 'data') {
-                    extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), lineOffset, index.mixinData);
+                    extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), lineOffset, index.mixinData, index.dataMeta);
                 }
                 else if (name === 'methods') {
                     extractMethods(prop.value ?? prop, lineOffset, index.mixinMethods, index.methodMeta);
@@ -1701,7 +1723,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                 continue;
             }
             if (name === 'data') {
-                extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), lineOffset, index.data);
+                extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), lineOffset, index.data, index.dataMeta);
             }
             else if (name === 'methods') {
                 extractMethods(prop.value ?? prop, lineOffset, index.methods, index.methodMeta);
@@ -1773,6 +1795,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         mixinMethods,
         mixinComputed,
         all: new Map(),
+        dataMeta,
         methodMeta,
         computedMeta,
         version: 0,
@@ -1820,6 +1843,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
     }
     return {
         data, methods, computed, mixinData, mixinMethods, mixinComputed, all,
+        dataMeta,
         methodMeta,
         computedMeta,
         version: 0,
@@ -1889,6 +1913,10 @@ async function parseDocument(document) {
         index.data.forEach((_loc, name) => {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
             item.detail = 'data 属性 (雷动三千)';
+            const dataMeta = index.dataMeta.get(name);
+            if (dataMeta?.doc) {
+                item.documentation = new vscode.MarkdownString(dataMeta.doc);
+            }
             variables.push(item);
             thisReferences.set(name, item);
         });
@@ -1910,6 +1938,10 @@ async function parseDocument(document) {
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
                 item.detail = 'mixin data (雷动三千)';
+                const dataMeta = index.dataMeta.get(name);
+                if (dataMeta?.doc) {
+                    item.documentation = new vscode.MarkdownString(dataMeta.doc);
+                }
                 variables.push(item);
                 thisReferences.set(name, item);
             }
@@ -2049,6 +2081,7 @@ function createEmptyVueIndex() {
         mixinMethods: new Map(),
         mixinComputed: new Map(),
         all: new Map(),
+        dataMeta: new Map(),
         methodMeta: new Map(),
         computedMeta: new Map(),
         version: 0,
@@ -2071,6 +2104,7 @@ function mergeVueIndexInto(target, source) {
     mergeMap(target.mixinData, source.mixinData);
     mergeMap(target.mixinMethods, source.mixinMethods);
     mergeMap(target.mixinComputed, source.mixinComputed);
+    mergeMap(target.dataMeta, source.dataMeta);
     mergeMap(target.methodMeta, source.methodMeta);
     mergeMap(target.computedMeta, source.computedMeta);
     if (source.componentsByTemplateId) {
@@ -49609,6 +49643,7 @@ class VueHoverProvider {
             }
             const methodMeta = vueIndex.methodMeta.get(word);
             const computedMeta = vueIndex.computedMeta.get(word);
+            const dataMeta = vueIndex.dataMeta.get(word);
             const isMethod = vueIndex.methods.has(word);
             const isComputed = vueIndex.computed.has(word);
             const isData = vueIndex.data.has(word);
@@ -49620,8 +49655,9 @@ class VueHoverProvider {
             const scopeLabel = isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isMixin ? 'mixin' : 'variable';
             const parts = [header];
             parts.push(`Scope: \`${scopeLabel}\``);
-            if (meta?.doc) {
-                parts.push(meta.doc);
+            const doc = meta?.doc || dataMeta?.doc;
+            if (doc) {
+                parts.push(doc);
             }
             parts.push(`Defined at ${def.uri.fsPath}:${def.range.start.line + 1}`);
             return new vscode.Hover(new vscode.MarkdownString(parts.join('\n\n')), wordRange);
@@ -49974,6 +50010,10 @@ class HtmlVueCompletionProvider {
         index.data.forEach((_loc, name) => {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
             item.detail = 'data 属性 (雷动三千)';
+            const dataMeta = index.dataMeta.get(name);
+            if (dataMeta?.doc) {
+                item.documentation = new vscode.MarkdownString(dataMeta.doc);
+            }
             variables.push(item);
             thisReferences.set(name, item);
         });
@@ -49995,6 +50035,10 @@ class HtmlVueCompletionProvider {
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
                 item.detail = 'mixin data (雷动三千)';
+                const dataMeta = index.dataMeta.get(name);
+                if (dataMeta?.doc) {
+                    item.documentation = new vscode.MarkdownString(dataMeta.doc);
+                }
                 variables.push(item);
                 thisReferences.set(name, item);
             }
@@ -50997,6 +51041,176 @@ class DiagnosticsWebviewProvider {
     }
 }
 exports.DiagnosticsWebviewProvider = DiagnosticsWebviewProvider;
+
+
+/***/ }),
+/* 194 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.addVariableComment = addVariableComment;
+const vscode = __importStar(__webpack_require__(2));
+const parseDocument_1 = __webpack_require__(8);
+const templateContext_1 = __webpack_require__(191);
+function findLineCommentIndex(text) {
+    let inSingle = false;
+    let inDouble = false;
+    let inTemplate = false;
+    let escaped = false;
+    for (let i = 0; i < text.length - 1; i++) {
+        const ch = text[i];
+        const next = text[i + 1];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (inSingle) {
+            if (ch === '\\') {
+                escaped = true;
+            }
+            else if (ch === '\'') {
+                inSingle = false;
+            }
+            continue;
+        }
+        if (inDouble) {
+            if (ch === '\\') {
+                escaped = true;
+            }
+            else if (ch === '"') {
+                inDouble = false;
+            }
+            continue;
+        }
+        if (inTemplate) {
+            if (ch === '\\') {
+                escaped = true;
+            }
+            else if (ch === '`') {
+                inTemplate = false;
+            }
+            continue;
+        }
+        if (ch === '\'') {
+            inSingle = true;
+            continue;
+        }
+        if (ch === '"') {
+            inDouble = true;
+            continue;
+        }
+        if (ch === '`') {
+            inTemplate = true;
+            continue;
+        }
+        if (ch === '/' && next === '/') {
+            return i;
+        }
+    }
+    return -1;
+}
+async function addVariableComment() {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showInformationMessage('No active editor found');
+        return;
+    }
+    const document = editor.document;
+    const selection = editor.selection;
+    const wordRange = document.getWordRangeAtPosition(selection.active);
+    const selectedText = selection.isEmpty ? '' : document.getText(selection).trim();
+    const isPlainWord = /^[A-Za-z_$][\w$]*$/.test(selectedText);
+    const variableName = isPlainWord ? selectedText : (wordRange ? document.getText(wordRange) : '');
+    const sourceRange = isPlainWord
+        ? new vscode.Range(selection.start, selection.end)
+        : wordRange;
+    if (!variableName || !sourceRange) {
+        vscode.window.showInformationMessage('Select a variable or place the cursor on one');
+        return;
+    }
+    if (sourceRange.start.line !== sourceRange.end.line) {
+        vscode.window.showInformationMessage('Only single-line selections are supported');
+        return;
+    }
+    const commentText = await vscode.window.showInputBox({
+        prompt: 'Enter a comment for the variable',
+        placeHolder: 'e.g. group id',
+        ignoreFocusOut: true
+    });
+    if (commentText === undefined) {
+        return;
+    }
+    const trimmed = commentText.trim();
+    if (!trimmed) {
+        vscode.window.showInformationMessage('Comment text cannot be empty');
+        return;
+    }
+    let targetUri = document.uri;
+    let targetLine = sourceRange.start.line;
+    if (document.languageId === 'html') {
+        let vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+        const templateId = (0, templateContext_1.getXTemplateIdAtPosition)(document, selection.active);
+        if (templateId && vueIndex?.componentsByTemplateId?.has(templateId)) {
+            vueIndex = vueIndex.componentsByTemplateId.get(templateId) || null;
+        }
+        if (!vueIndex) {
+            vscode.window.showInformationMessage('No Vue index found for this HTML file');
+            return;
+        }
+        const dataLoc = vueIndex.data.get(variableName) || null;
+        const def = dataLoc || (0, parseDocument_1.findDefinitionInIndex)(variableName, vueIndex);
+        if (!def) {
+            vscode.window.showInformationMessage('No matching definition found in Vue index');
+            return;
+        }
+        targetUri = def.uri;
+        targetLine = def.range.start.line;
+    }
+    const targetDoc = await vscode.workspace.openTextDocument(targetUri);
+    const line = targetDoc.lineAt(targetLine);
+    const lineText = line.text;
+    const commentIndex = findLineCommentIndex(lineText);
+    const baseText = commentIndex >= 0 ? lineText.slice(0, commentIndex).replace(/\s+$/, '') : lineText.replace(/\s+$/, '');
+    const newLineText = `${baseText} // ${trimmed}`;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(targetUri, line.range, newLineText);
+    await vscode.workspace.applyEdit(edit);
+}
 
 
 /***/ })

@@ -50,6 +50,7 @@ export class VueHoverProvider implements vscode.HoverProvider {
             if (!vueIndex) { return null; }
             const methodMeta = vueIndex.methodMeta.get(word);
             const computedMeta = vueIndex.computedMeta.get(word);
+            const dataMeta = vueIndex.dataMeta.get(word);
             const isMethod = vueIndex.methods.has(word);
             const isComputed = vueIndex.computed.has(word);
             const isData = vueIndex.data.has(word);
@@ -61,8 +62,9 @@ export class VueHoverProvider implements vscode.HoverProvider {
             const scopeLabel = isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isMixin ? 'mixin' : 'variable';
             const parts: string[] = [header];
             parts.push(`Scope: \`${scopeLabel}\``);
-            if (meta?.doc) {
-                parts.push(meta.doc);
+            const doc = meta?.doc || dataMeta?.doc;
+            if (doc) {
+                parts.push(doc);
             }
             parts.push(`Defined at ${def.uri.fsPath}:${def.range.start.line + 1}`);
             return new vscode.Hover(new vscode.MarkdownString(parts.join('\n\n')), wordRange);

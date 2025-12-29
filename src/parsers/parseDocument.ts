@@ -18,6 +18,7 @@ export interface VueIndex {
     mixinMethods: Map<string, vscode.Location>;
     mixinComputed: Map<string, vscode.Location>;
     all: Map<string, vscode.Location>; // 合并所有
+    dataMeta: Map<string, { doc?: string }>;
     methodMeta: Map<string, { params: string[]; doc?: string }>;
     computedMeta: Map<string, { params: string[]; doc?: string }>;
     version: number; // 文档 version
@@ -71,6 +72,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const mixinData = new Map<string, vscode.Location>();
     const mixinMethods = new Map<string, vscode.Location>();
     const mixinComputed = new Map<string, vscode.Location>();
+    const dataMeta = new Map<string, { doc?: string }>();
     const methodMeta = new Map<string, { params: string[]; doc?: string }>();
     const computedMeta = new Map<string, { params: string[]; doc?: string }>();
     const componentsByTemplateId = new Map<string, VueIndex>();
@@ -123,6 +125,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         mixinMethods: new Map<string, vscode.Location>(),
         mixinComputed: new Map<string, vscode.Location>(),
         all: new Map<string, vscode.Location>(),
+        dataMeta: new Map<string, { doc?: string }>(),
         methodMeta: new Map<string, { params: string[]; doc?: string }>(),
         computedMeta: new Map<string, { params: string[]; doc?: string }>(),
         version: 0,
@@ -136,7 +139,12 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         }
     };
 
-    const extractData = (node: t.Node | null | undefined, lineOffset: number, target: Map<string, vscode.Location>) => {
+    const extractData = (
+        node: t.Node | null | undefined,
+        lineOffset: number,
+        target: Map<string, vscode.Location>,
+        metaTarget?: Map<string, { doc?: string }>
+    ) => {
         if (!node) { return; }
         let obj: t.ObjectExpression | null = null;
         if (t.isObjectExpression(node)) { obj = node; }
@@ -169,9 +177,15 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         }
         if (!obj) { return; }
         for (const prop of obj.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
+            if (t.isObjectProperty(prop) && prop.loc) {
+                const name = getPropertyName(prop.key);
+                if (!name) { continue; }
                 const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
-                target.set(prop.key.name, loc);
+                target.set(name, loc);
+                const doc = getDocFromProp(prop);
+                if (doc && metaTarget && !metaTarget.has(name)) {
+                    metaTarget.set(name, { doc });
+                }
             }
         }
     };
@@ -296,13 +310,16 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     };
 
     const getDocFromProp = (prop: t.ObjectMethod | t.ObjectProperty): string | undefined => {
-        if (prop.leadingComments && prop.leadingComments.length > 0) {
-            return getDocFromComments(prop.leadingComments);
-        }
-        if (t.isObjectProperty(prop) && (prop.value as any)?.leadingComments) {
-            return getDocFromComments((prop.value as any).leadingComments);
-        }
-        return undefined;
+        const readComments = (comments?: t.Comment[] | null): string | undefined => {
+            if (!comments || comments.length === 0) { return undefined; }
+            return getDocFromComments(comments);
+        };
+        const leading = readComments(prop.leadingComments)
+            || (t.isObjectProperty(prop) ? readComments((prop.value as any)?.leadingComments) : undefined);
+        if (leading) { return leading; }
+        const trailing = readComments(prop.trailingComments)
+            || (t.isObjectProperty(prop) ? readComments((prop.value as any)?.trailingComments) : undefined);
+        return trailing;
     };
 
     const paramToString = (param: t.Node): string => {
@@ -452,7 +469,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                 if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) { continue; }
                 const name = getPropertyName((prop as any).key);
                 if (name === 'data') {
-                    extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), lineOffset, index.mixinData);
+                    extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), lineOffset, index.mixinData, index.dataMeta);
                 } else if (name === 'methods') {
                     extractMethods((prop as any).value ?? prop, lineOffset, index.mixinMethods, index.methodMeta);
                 } else if (name === 'computed') {
@@ -471,7 +488,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             const name = getPropertyName((prop as any).key);
             if (!name) { continue; }
             if (name === 'data') {
-                extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), lineOffset, index.data);
+                extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), lineOffset, index.data, index.dataMeta);
             } else if (name === 'methods') {
                 extractMethods((prop as any).value ?? prop, lineOffset, index.methods, index.methodMeta);
             } else if (name === 'computed') {
@@ -523,6 +540,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         mixinMethods,
         mixinComputed,
         all: new Map<string, vscode.Location>(),
+        dataMeta,
         methodMeta,
         computedMeta,
         version: 0,
@@ -568,6 +586,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
 
     return {
         data, methods, computed, mixinData, mixinMethods, mixinComputed, all,
+        dataMeta,
         methodMeta,
         computedMeta,
         version: 0,
@@ -644,6 +663,10 @@ export async function parseDocument(document: vscode.TextDocument): Promise<Pars
         index.data.forEach((_loc, name) => {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
             item.detail = 'data 属性 (雷动三千)';
+            const dataMeta = index.dataMeta.get(name);
+            if (dataMeta?.doc) {
+                item.documentation = new vscode.MarkdownString(dataMeta.doc);
+            }
             variables.push(item);
             thisReferences.set(name, item);
         });
@@ -665,6 +688,10 @@ export async function parseDocument(document: vscode.TextDocument): Promise<Pars
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
                 item.detail = 'mixin data (雷动三千)';
+                const dataMeta = index.dataMeta.get(name);
+                if (dataMeta?.doc) {
+                    item.documentation = new vscode.MarkdownString(dataMeta.doc);
+                }
                 variables.push(item);
                 thisReferences.set(name, item);
             }
@@ -803,6 +830,7 @@ function createEmptyVueIndex(): VueIndex {
         mixinMethods: new Map<string, vscode.Location>(),
         mixinComputed: new Map<string, vscode.Location>(),
         all: new Map<string, vscode.Location>(),
+        dataMeta: new Map<string, { doc?: string }>(),
         methodMeta: new Map<string, { params: string[]; doc?: string }>(),
         computedMeta: new Map<string, { params: string[]; doc?: string }>(),
         version: 0,
@@ -827,6 +855,7 @@ function mergeVueIndexInto(target: VueIndex, source: VueIndex) {
     mergeMap(target.mixinData, source.mixinData);
     mergeMap(target.mixinMethods, source.mixinMethods);
     mergeMap(target.mixinComputed, source.mixinComputed);
+    mergeMap(target.dataMeta, source.dataMeta);
     mergeMap(target.methodMeta, source.methodMeta);
     mergeMap(target.computedMeta, source.computedMeta);
     if (source.componentsByTemplateId) {

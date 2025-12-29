@@ -8,6 +8,7 @@ import {
     quickInsertConsoleLog,
     logSelectedVariable
 } from '../tools/consoleLogger';
+import { addVariableComment } from '../tools/variableCommenter';
 import { performanceMonitor } from '../monitoring/performanceMonitor';
 import { compressMultipleLines } from '../tools/codeCompressor';
 import { COMMANDS } from './config';
@@ -255,6 +256,12 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.LOG_SELECTED_VARIABLE, () => {
             logSelectedVariable();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand(COMMANDS.ADD_VARIABLE_COMMENT, () => {
+            addVariableComment();
         })
     );
 

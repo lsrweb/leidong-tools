@@ -63,6 +63,7 @@
 - ✅ 支持 mixins 属性和方法
 - ? 悬停显示作用域徽章（local/data/method/computed/mixin）
 - ? 支持 // 与 JSDoc 注释的 Markdown 文档解析
+- ? 支持 data 属性注释展示（HTML 悬停可见）
 - ✅ 可配置索引缓存大小和刷新策略
 
 ---
@@ -335,6 +336,7 @@ console.log('file.js:10 userName:', userName)
 | `Toggle Index Logging` | 切换索引日志 |
 | `Clear Vue Index Cache` | 清除索引缓存 |
 | `Show Index Summary` | 显示索引摘要 |
+| `Add Variable Comment` | 为当前变量添加注释 |
 | `Show Performance Report` | 显示性能报告 |
 | `启动 HTML→JS 文件监听` | 启动文件监听 |
 | `查看/管理文件监听列表` | 管理监听列表 |
