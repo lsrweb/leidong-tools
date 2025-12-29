@@ -13,7 +13,7 @@
     const emptyState = document.getElementById('emptyState');
 
     // 虚拟滚动参数
-    const ITEM_HEIGHT = 32;
+    const ITEM_HEIGHT = 36;
     let visibleStart = 0;
     let visibleEnd = 0;
     let visibleCount = 0;

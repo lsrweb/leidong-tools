@@ -7,9 +7,11 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheItem } from '../types';
-import { parseDocument, resolveVueIndexForHtml } from '../parsers/parseDocument';
+import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
+import { inferObjectProperties } from '../helpers/propertyInference';
+import * as fs from 'fs';
 
 /**
  * 日志配置项接口
@@ -110,9 +112,11 @@ export class QuickLogCompletionProvider implements vscode.CompletionItemProvider
 export class JavaScriptCompletionProvider implements vscode.CompletionItemProvider {
     // 存储解析结果的缓存
     private parseCache = new Map<string, CacheItem>();
+    private propertyCache = new Map<string, { items: vscode.CompletionItem[]; updatedAt: number; docVersion: number }>();
 
     // 缓存有效期 (30秒)
     private cacheValidityPeriod = 30 * 1000;
+    private propertyCacheTtlMs = 1500;
 
     // 提供自动完成项目
     async provideCompletionItems(
@@ -124,6 +128,14 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         try {
             // 检查触发自动完成的字符
             const linePrefix = document.lineAt(position).text.substring(0, position.character);
+            const objectContext = this.getObjectPropertyContext(linePrefix);
+            if (objectContext) {
+                const inferredItems = this.getInferredPropertyItems(document, objectContext.root);
+                if (inferredItems.length > 0) {
+                    return new vscode.CompletionList(inferredItems, false);
+                }
+                return [];
+            }
             
             // 判断当前作用域
             const isThisContext = this.isInThisContext(linePrefix);
@@ -185,6 +197,28 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         return linePrefix.endsWith('that.');
     }
 
+    private getObjectPropertyContext(linePrefix: string): { root: string } | null {
+        const match = /((?:this|that)\.)?([a-zA-Z_$][\w$]*)\.$/.exec(linePrefix);
+        if (!match) { return null; }
+        return { root: match[2] };
+    }
+
+    private getInferredPropertyItems(document: vscode.TextDocument, root: string): vscode.CompletionItem[] {
+        const cacheKey = `${document.uri.toString()}:${root}`;
+        const cached = this.propertyCache.get(cacheKey);
+        if (cached && (cached.docVersion === document.version || Date.now() - cached.updatedAt < this.propertyCacheTtlMs)) {
+            return cached.items;
+        }
+        const props = inferObjectProperties(document.getText(), root);
+        const items = props.map(name => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'inferred property (雷动三千)';
+            return item;
+        });
+        this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version });
+        return items;
+    }
+
     // 获取缓存的解析结果
     private getCachedParseResult(document: vscode.TextDocument) {
         const uri = document.uri.toString();
@@ -210,6 +244,8 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
  */
 export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider {
     private completionCache = new Map<string, CacheItem>();
+    private propertyCache = new Map<string, { items: vscode.CompletionItem[]; updatedAt: number; docVersion: number; scriptMtime?: number }>();
+    private propertyCacheTtlMs = 1500;
 
     async provideCompletionItems(
         document: vscode.TextDocument,
@@ -222,10 +258,17 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
             return [];
         }
 
-        const rootIndex = resolveVueIndexForHtml(document);
-        if (!rootIndex) {
+        const objectContext = this.getObjectPropertyContext(linePrefix);
+        if (objectContext) {
+            const inferredItems = this.getInferredPropertyItems(document, objectContext.root);
+            if (inferredItems.length > 0) {
+                return new vscode.CompletionList(inferredItems, false);
+            }
             return [];
         }
+
+        const rootIndex = resolveVueIndexForHtml(document);
+        if (!rootIndex) { return []; }
 
         const templateId = getXTemplateIdAtPosition(document, position);
         const targetIndex = templateId && rootIndex.componentsByTemplateId?.has(templateId)
@@ -325,6 +368,41 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
         const inTag = linePrefix.lastIndexOf('<') > linePrefix.lastIndexOf('>');
         if (!inTag) { return false; }
         return /(v-bind:|:|v-on:|@|v-if|v-else-if|v-show|v-model|v-for|v-slot|slot-scope)\S*\s*=\s*["'][^"']*$/.test(linePrefix);
+    }
+
+    private getObjectPropertyContext(linePrefix: string): { root: string } | null {
+        const match = /((?:this|that)\.)?([a-zA-Z_$][\w$]*)\.$/.exec(linePrefix);
+        if (!match) { return null; }
+        return { root: match[2] };
+    }
+
+    private getInferredPropertyItems(document: vscode.TextDocument, root: string): vscode.CompletionItem[] {
+        const scriptPath = getExternalDevScriptPathForHtml(document);
+        const cacheKey = `${document.uri.toString()}:${root}:${scriptPath || ''}`;
+        const cached = this.propertyCache.get(cacheKey);
+        if (cached && (cached.docVersion === document.version || Date.now() - cached.updatedAt < this.propertyCacheTtlMs)) {
+            return cached.items;
+        }
+        const props = new Set<string>();
+        inferObjectProperties(document.getText(), root).forEach(p => props.add(p));
+        let scriptMtime: number | undefined;
+        if (scriptPath && fs.existsSync(scriptPath)) {
+            try {
+                scriptMtime = fs.statSync(scriptPath).mtimeMs;
+                if (cached && cached.scriptMtime === scriptMtime && Date.now() - cached.updatedAt < this.propertyCacheTtlMs) {
+                    return cached.items;
+                }
+                const content = fs.readFileSync(scriptPath, 'utf8');
+                inferObjectProperties(content, root).forEach(p => props.add(p));
+            } catch { /* ignore read errors */ }
+        }
+        const items = Array.from(props.values()).map(name => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'inferred property (雷动三千)';
+            return item;
+        });
+        this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version, scriptMtime });
+        return items;
     }
 }
 

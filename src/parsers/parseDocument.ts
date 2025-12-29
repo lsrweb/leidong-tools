@@ -749,6 +749,10 @@ function getExternalFileIndex(fullPath: string): VueIndex | null {
     } catch { return null; }
 }
 
+export function getExternalDevScriptPathForHtml(document: vscode.TextDocument): string | null {
+    return findExternalDevScriptPath(document.uri.fsPath);
+}
+
 export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex | null {
     const htmlPath = document.uri.fsPath;
     const externalPath = findExternalDevScriptPath(htmlPath);

@@ -1,10 +1,44 @@
+:root {
+    --ui-bg: var(--vscode-sideBar-background);
+    --ui-panel: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+    --ui-panel-2: var(--vscode-sideBar-background);
+    --ui-border: var(--vscode-panel-border);
+    --ui-accent: var(--vscode-focusBorder);
+    --ui-accent-2: var(--vscode-button-background);
+    --ui-text: var(--vscode-sideBar-foreground);
+    --ui-muted: var(--vscode-descriptionForeground);
+    --ui-hover: var(--vscode-list-hoverBackground);
+    --ui-active: var(--vscode-list-activeSelectionBackground);
+    --ui-active-text: var(--vscode-list-activeSelectionForeground);
+    --ui-badge-bg: var(--vscode-badge-background);
+    --ui-badge-text: var(--vscode-badge-foreground, var(--vscode-sideBar-foreground));
+    --ui-radius: 10px;
+    --ui-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+    --ui-font: "Space Grotesk", "IBM Plex Sans", "Noto Sans", "Segoe UI", sans-serif;
+    --ui-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+}
+
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--ui-font);
     margin: 0;
     padding: 0;
-    background: var(--vscode-sideBar-background);
-    color: var(--vscode-sideBar-foreground);
+    background: var(--ui-bg);
+    color: var(--ui-text);
     overflow: hidden;
+    position: relative;
+    letter-spacing: 0.1px;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+        radial-gradient(520px 320px at 85% -10%, color-mix(in srgb, var(--ui-accent) 22%, transparent), transparent 70%),
+        radial-gradient(420px 260px at 10% 0%, color-mix(in srgb, var(--ui-accent-2) 18%, transparent), transparent 65%),
+        linear-gradient(180deg, color-mix(in srgb, var(--ui-panel) 90%, transparent), transparent 60%);
 }
 
 /* ========== 头部区域 ========== */
@@ -12,93 +46,103 @@ body {
     position: sticky;
     top: 0;
     z-index: 100;
-    background: var(--vscode-sideBar-background);
-    padding: 12px;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    backdrop-filter: blur(8px);
+    background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--ui-panel) 92%, transparent),
+        color-mix(in srgb, var(--ui-panel-2) 98%, transparent)
+    );
+    padding: 14px 12px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(10px);
 }
 
 .search-box {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     align-items: center;
     margin-bottom: 8px;
 }
 
 #searchInput {
     flex: 1;
-    padding: 8px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--vscode-input-border);
-    background: var(--vscode-input-background);
-    color: var(--vscode-input-foreground);
-    font-size: 13px;
-    transition: all 0.2s ease;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+    background: color-mix(in srgb, var(--ui-panel) 88%, transparent);
+    color: var(--ui-text);
+    font-size: 12px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
     outline: none;
 }
 
 #searchInput:focus {
-    border-color: var(--vscode-focusBorder);
-    box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+    border-color: var(--ui-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 25%, transparent);
+    background: color-mix(in srgb, var(--ui-panel) 96%, transparent);
 }
 
 #searchInput::placeholder {
-    color: var(--vscode-input-placeholderForeground);
-    opacity: 0.6;
+    color: var(--ui-muted);
+    opacity: 0.7;
 }
 
 #refreshBtn {
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
+    background: linear-gradient(135deg, var(--ui-accent-2), color-mix(in srgb, var(--ui-accent) 35%, var(--ui-accent-2)));
+    color: var(--vscode-button-foreground, #fff);
     border: none;
     width: 32px;
     height: 32px;
-    border-radius: 6px;
+    border-radius: 50%;
     font-size: 16px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
     display: flex;
     align-items: center;
     justify-content: center;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
 }
 
 #refreshBtn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
-    transform: scale(1.05);
+    transform: translateY(-1px);
+    filter: brightness(1.05);
 }
 
 #refreshBtn:active {
-    transform: scale(0.95);
+    transform: translateY(0);
 }
 
 .stats {
     font-size: 11px;
-    color: var(--vscode-descriptionForeground);
-    opacity: 0.8;
+    color: var(--ui-muted);
     padding: 4px 0;
-    font-weight: 500;
+    font-weight: 600;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
 }
 
 /* ========== 分类按钮 ========== */
 .categories {
     display: flex;
-    gap: 6px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--vscode-panel-border);
-    background: var(--vscode-sideBar-background);
+    gap: 8px;
+    padding: 10px 12px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+    background: color-mix(in srgb, var(--ui-panel-2) 92%, transparent);
 }
 
 .category-btn {
     flex: 1;
-    background: var(--vscode-button-secondaryBackground);
-    color: var(--vscode-button-secondaryForeground);
-    border: none;
+    background: color-mix(in srgb, var(--ui-panel) 75%, transparent);
+    color: var(--ui-muted);
+    border: 1px solid color-mix(in srgb, var(--ui-border) 60%, transparent);
     padding: 8px 12px;
-    border-radius: 6px;
+    border-radius: 999px;
     cursor: pointer;
-    font-size: 12px;
-    font-weight: 500;
-    transition: all 0.2s ease;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
     position: relative;
     overflow: hidden;
 }
@@ -106,28 +150,26 @@ body {
 .category-btn::before {
     content: '';
     position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-    transition: left 0.5s ease;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-accent) 18%, transparent), transparent);
+    transform: translateX(-100%);
+    transition: transform 0.5s ease;
 }
 
 .category-btn:hover::before {
-    left: 100%;
+    transform: translateX(100%);
 }
 
 .category-btn:hover {
-    background: var(--vscode-button-secondaryHoverBackground);
+    color: var(--ui-text);
     transform: translateY(-1px);
 }
 
 .category-btn.active {
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transform: translateY(-1px);
+    background: linear-gradient(135deg, var(--ui-accent-2), color-mix(in srgb, var(--ui-accent) 35%, var(--ui-accent-2)));
+    color: var(--vscode-button-foreground, #fff);
+    border-color: transparent;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.24);
 }
 
 .category-btn:active {
@@ -136,7 +178,7 @@ body {
 
 /* ========== 变量列表区域 ========== */
 .variable-list {
-    height: calc(100vh - 140px);
+    height: calc(100vh - 172px);
     overflow: hidden;
     position: relative;
 }
@@ -147,142 +189,130 @@ body {
     overflow-x: hidden;
     position: relative;
     scroll-behavior: smooth;
+    padding: 6px 6px 10px;
 }
 
 /* 自定义滚动条 */
 .scroll-container::-webkit-scrollbar {
-    width: 10px;
+    width: 8px;
 }
 
 .scroll-container::-webkit-scrollbar-track {
-    background: var(--vscode-scrollbarSlider-background);
-    border-radius: 10px;
+    background: transparent;
 }
 
 .scroll-container::-webkit-scrollbar-thumb {
-    background: var(--vscode-scrollbarSlider-hoverBackground);
+    background: color-mix(in srgb, var(--ui-border) 70%, transparent);
     border-radius: 10px;
-    border: 2px solid transparent;
-    background-clip: content-box;
 }
 
 .scroll-container::-webkit-scrollbar-thumb:hover {
-    background: var(--vscode-scrollbarSlider-activeBackground);
-    background-clip: content-box;
+    background: color-mix(in srgb, var(--ui-accent) 40%, var(--ui-border));
 }
 
 .scroll-content {
     position: relative;
     min-height: 100%;
-    padding: 4px 0;
 }
 
 /* ========== 变量项 ========== */
 .variable-item {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto auto;
     align-items: center;
+    gap: 8px;
     width: 100%;
-    padding: 10px 16px;
-    border-bottom: 1px solid var(--vscode-panel-border);
+    height: 36px;
+    padding: 6px 12px;
+    border-radius: 12px;
     cursor: pointer;
     position: relative;
-    background: var(--vscode-sideBar-background);
-    /* ✅ 移除 transition: all，避免每次渲染都触发动画 */
+    background: color-mix(in srgb, var(--ui-panel) 70%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ui-border) 65%, transparent);
+    box-sizing: border-box;
+    animation: riseIn 0.2s ease;
 }
 
 .variable-item::before {
     content: '';
     position: absolute;
-    left: 0;
-    top: 0;
+    left: 6px;
+    top: 6px;
     width: 3px;
-    height: 100%;
-    background: var(--vscode-focusBorder);
-    transform: scaleY(0);
-    transition: transform 0.15s ease; /* 只保留必要的动画 */
+    height: calc(100% - 12px);
+    background: linear-gradient(180deg, var(--ui-accent), transparent);
+    border-radius: 999px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
 }
 
 .variable-item:hover::before {
-    transform: scaleY(1);
+    opacity: 1;
 }
 
 .variable-item:hover {
-    background: var(--vscode-list-hoverBackground);
-    /* ✅ 移除 transform: translateX(2px)，减少重排 */
+    background: color-mix(in srgb, var(--ui-panel) 86%, transparent);
+    box-shadow: 0 10px 18px rgba(0, 0, 0, 0.2);
 }
 
 .variable-item:active {
-    background: var(--vscode-list-activeSelectionBackground);
-    color: var(--vscode-list-activeSelectionForeground);
+    background: var(--ui-active);
+    color: var(--ui-active-text);
 }
 
 .variable-name {
-    flex: 1;
-    font-weight: 500;
+    font-weight: 600;
     font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    letter-spacing: 0.2px;
+    padding-left: 8px;
 }
 
 .variable-type {
     font-size: 10px;
-    color: var(--vscode-descriptionForeground);
-    background: var(--vscode-badge-background);
-    padding: 2px 8px;
-    border-radius: 10px;
-    margin-right: 8px;
-    font-weight: 600;
+    color: var(--ui-badge-text);
+    background: color-mix(in srgb, var(--ui-badge-bg) 82%, transparent);
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    opacity: 0.9;
 }
 
 .variable-line {
     font-size: 11px;
-    color: var(--vscode-descriptionForeground);
-    min-width: 50px;
+    color: var(--ui-muted);
+    min-width: 52px;
     text-align: right;
-    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-    font-weight: 500;
-    opacity: 0.7;
+    font-family: var(--ui-mono);
+    font-weight: 600;
+    opacity: 0.75;
 }
 
 /* ========== 空状态 ========== */
 .empty-state {
     text-align: center;
     padding: 60px 20px;
-    color: var(--vscode-descriptionForeground);
+    color: var(--ui-muted);
     animation: fadeIn 0.3s ease;
 }
 
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
 .empty-state p:first-child {
-    font-size: 48px;
-    margin: 0 0 16px 0;
+    font-size: 46px;
+    margin: 0 0 12px 0;
 }
 
 .empty-state p:last-child {
-    font-size: 13px;
+    font-size: 12px;
     margin: 0;
-    opacity: 0.7;
+    opacity: 0.8;
 }
 
 .hint {
     font-size: 12px;
-    color: var(--vscode-descriptionForeground);
-    opacity: 0.6;
+    color: var(--ui-muted);
+    opacity: 0.7;
     margin-top: 8px;
 }
 
@@ -294,7 +324,7 @@ body {
     }
     
     .variable-item {
-        padding: 8px 12px;
+        padding: 6px 10px;
     }
     
     .variable-name {
@@ -303,19 +333,14 @@ body {
 }
 
 /* ========== 动画效果 ========== */
-@keyframes slideIn {
-    from {
-        opacity: 0;
-        transform: translateX(-10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateX(0);
-    }
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
-.variable-item {
-    animation: slideIn 0.2s ease;
+@keyframes riseIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 /* ========== 加载状态 ========== */
@@ -324,8 +349,8 @@ body {
     align-items: center;
     justify-content: center;
     padding: 40px;
-    color: var(--vscode-descriptionForeground);
-    opacity: 0.7;
+    color: var(--ui-muted);
+    opacity: 0.8;
 }
 
 .loading::after {

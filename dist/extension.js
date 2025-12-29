@@ -1188,6 +1188,7 @@ exports.getOrCreateVueIndexFromContent = getOrCreateVueIndexFromContent;
 exports.getCachedVueIndex = getCachedVueIndex;
 exports.removeVueIndexForUri = removeVueIndexForUri;
 exports.parseDocument = parseDocument;
+exports.getExternalDevScriptPathForHtml = getExternalDevScriptPathForHtml;
 exports.resolveVueIndexForHtml = resolveVueIndexForHtml;
 exports.findDefinitionInIndex = findDefinitionInIndex;
 exports.findChainedRootDefinition = findChainedRootDefinition;
@@ -1994,6 +1995,9 @@ function getExternalFileIndex(fullPath) {
     catch {
         return null;
     }
+}
+function getExternalDevScriptPathForHtml(document) {
+    return findExternalDevScriptPath(document.uri.fsPath);
 }
 function resolveVueIndexForHtml(document) {
     const htmlPath = document.uri.fsPath;
@@ -49547,6 +49551,8 @@ exports.VonCompletionProvider = exports.HtmlVueCompletionProvider = exports.Java
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(8);
 const templateContext_1 = __webpack_require__(191);
+const propertyInference_1 = __webpack_require__(192);
+const fs = __importStar(__webpack_require__(176));
 /**
  * 快速日志补全提供器 (重写版)
  * 参考 jaluik/dot-log 实现，使用命令替换文本
@@ -49622,14 +49628,24 @@ class JavaScriptCompletionProvider {
     constructor() {
         // 存储解析结果的缓存
         this.parseCache = new Map();
+        this.propertyCache = new Map();
         // 缓存有效期 (30秒)
         this.cacheValidityPeriod = 30 * 1000;
+        this.propertyCacheTtlMs = 1500;
     }
     // 提供自动完成项目
     async provideCompletionItems(document, position, token, context) {
         try {
             // 检查触发自动完成的字符
             const linePrefix = document.lineAt(position).text.substring(0, position.character);
+            const objectContext = this.getObjectPropertyContext(linePrefix);
+            if (objectContext) {
+                const inferredItems = this.getInferredPropertyItems(document, objectContext.root);
+                if (inferredItems.length > 0) {
+                    return new vscode.CompletionList(inferredItems, false);
+                }
+                return [];
+            }
             // 判断当前作用域
             const isThisContext = this.isInThisContext(linePrefix);
             const isThatContext = this.isInThatContext(linePrefix);
@@ -49684,6 +49700,28 @@ class JavaScriptCompletionProvider {
     isInThatContext(linePrefix) {
         return linePrefix.endsWith('that.');
     }
+    getObjectPropertyContext(linePrefix) {
+        const match = /((?:this|that)\.)?([a-zA-Z_$][\w$]*)\.$/.exec(linePrefix);
+        if (!match) {
+            return null;
+        }
+        return { root: match[2] };
+    }
+    getInferredPropertyItems(document, root) {
+        const cacheKey = `${document.uri.toString()}:${root}`;
+        const cached = this.propertyCache.get(cacheKey);
+        if (cached && (cached.docVersion === document.version || Date.now() - cached.updatedAt < this.propertyCacheTtlMs)) {
+            return cached.items;
+        }
+        const props = (0, propertyInference_1.inferObjectProperties)(document.getText(), root);
+        const items = props.map(name => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'inferred property (雷动三千)';
+            return item;
+        });
+        this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version });
+        return items;
+    }
     // 获取缓存的解析结果
     getCachedParseResult(document) {
         const uri = document.uri.toString();
@@ -49707,10 +49745,20 @@ exports.JavaScriptCompletionProvider = JavaScriptCompletionProvider;
 class HtmlVueCompletionProvider {
     constructor() {
         this.completionCache = new Map();
+        this.propertyCache = new Map();
+        this.propertyCacheTtlMs = 1500;
     }
     async provideCompletionItems(document, position, _token, _context) {
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
         if (!this.isTemplateContext(linePrefix)) {
+            return [];
+        }
+        const objectContext = this.getObjectPropertyContext(linePrefix);
+        if (objectContext) {
+            const inferredItems = this.getInferredPropertyItems(document, objectContext.root);
+            if (inferredItems.length > 0) {
+                return new vscode.CompletionList(inferredItems, false);
+            }
             return [];
         }
         const rootIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
@@ -49808,6 +49856,42 @@ class HtmlVueCompletionProvider {
             return false;
         }
         return /(v-bind:|:|v-on:|@|v-if|v-else-if|v-show|v-model|v-for|v-slot|slot-scope)\S*\s*=\s*["'][^"']*$/.test(linePrefix);
+    }
+    getObjectPropertyContext(linePrefix) {
+        const match = /((?:this|that)\.)?([a-zA-Z_$][\w$]*)\.$/.exec(linePrefix);
+        if (!match) {
+            return null;
+        }
+        return { root: match[2] };
+    }
+    getInferredPropertyItems(document, root) {
+        const scriptPath = (0, parseDocument_1.getExternalDevScriptPathForHtml)(document);
+        const cacheKey = `${document.uri.toString()}:${root}:${scriptPath || ''}`;
+        const cached = this.propertyCache.get(cacheKey);
+        if (cached && (cached.docVersion === document.version || Date.now() - cached.updatedAt < this.propertyCacheTtlMs)) {
+            return cached.items;
+        }
+        const props = new Set();
+        (0, propertyInference_1.inferObjectProperties)(document.getText(), root).forEach(p => props.add(p));
+        let scriptMtime;
+        if (scriptPath && fs.existsSync(scriptPath)) {
+            try {
+                scriptMtime = fs.statSync(scriptPath).mtimeMs;
+                if (cached && cached.scriptMtime === scriptMtime && Date.now() - cached.updatedAt < this.propertyCacheTtlMs) {
+                    return cached.items;
+                }
+                const content = fs.readFileSync(scriptPath, 'utf8');
+                (0, propertyInference_1.inferObjectProperties)(content, root).forEach(p => props.add(p));
+            }
+            catch { /* ignore read errors */ }
+        }
+        const items = Array.from(props.values()).map(name => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'inferred property (雷动三千)';
+            return item;
+        });
+        this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version, scriptMtime });
+        return items;
     }
 }
 exports.HtmlVueCompletionProvider = HtmlVueCompletionProvider;
@@ -50555,6 +50639,36 @@ function getXTemplateIdAtPosition(document, position) {
         }
     }
     return null;
+}
+
+
+/***/ }),
+/* 192 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.inferObjectProperties = inferObjectProperties;
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function inferObjectProperties(text, root) {
+    if (!root) {
+        return [];
+    }
+    const props = new Set();
+    const escapedRoot = escapeRegExp(root);
+    const dotAccess = new RegExp(`(?:\\b(?:this|that)\\s*\\.\\s*)?\\b${escapedRoot}\\s*(?:\\?\\.|\\.)\\s*([a-zA-Z_$][\\w$]*)`, 'g');
+    const bracketAccess = new RegExp(`(?:\\b(?:this|that)\\s*\\.\\s*)?\\b${escapedRoot}\\s*(?:\\?\\.)?\\s*\\[\\s*(['"])([^'"]+)\\1\\s*\\]`, 'g');
+    let match;
+    while ((match = dotAccess.exec(text)) !== null) {
+        props.add(match[1]);
+    }
+    while ((match = bracketAccess.exec(text)) !== null) {
+        props.add(match[2]);
+    }
+    return Array.from(props.values());
 }
 
 
