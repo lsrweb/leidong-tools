@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { resolveVueIndexForHtml, findDefinitionInIndex } from '../parsers/parseDocument';
 import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
+import { jsSymbolParser } from '../parsers/jsSymbolParser';
 
 export class VueHoverProvider implements vscode.HoverProvider {
     private hoverTimeout: NodeJS.Timeout | null = null;
@@ -18,19 +19,19 @@ export class VueHoverProvider implements vscode.HoverProvider {
             const delay = config.get<number>('hoverDelay', 300);
 
             // 设置延迟
-            this.hoverTimeout = setTimeout(() => {
+            this.hoverTimeout = setTimeout(async () => {
                 if (token.isCancellationRequested) {
                     resolve(null);
                     return;
                 }
 
-                const hover = this.getHoverContent(document, position);
+                const hover = await this.getHoverContent(document, position);
                 resolve(hover);
             }, delay);
         });
     }
 
-    private getHoverContent(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | null {
+    private async getHoverContent(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | null> {
         // 检查功能是否启用
         const config = vscode.workspace.getConfiguration('leidong-tools');
         const isEnabled = config.get<boolean>('enableDefinitionJump', true);
@@ -49,13 +50,17 @@ export class VueHoverProvider implements vscode.HoverProvider {
             if (!vueIndex) { return null; }
             const methodMeta = vueIndex.methodMeta.get(word);
             const computedMeta = vueIndex.computedMeta.get(word);
-            const isMethod = vueIndex.methods.has(word) || vueIndex.mixinMethods.has(word) || !!methodMeta;
-            const isComputed = vueIndex.computed.has(word) || vueIndex.mixinComputed.has(word) || !!computedMeta;
-            const label = isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : 'Vue Variable';
+            const isMethod = vueIndex.methods.has(word);
+            const isComputed = vueIndex.computed.has(word);
+            const isData = vueIndex.data.has(word);
+            const isMixin = vueIndex.mixinMethods.has(word) || vueIndex.mixinComputed.has(word) || vueIndex.mixinData.has(word);
+            const label = isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : isData ? 'Vue Data' : isMixin ? 'Vue Mixin' : 'Vue Variable';
             const meta = methodMeta || computedMeta;
             const params = meta?.params?.length ? `(${meta.params.join(', ')})` : isMethod ? '()' : '';
             const header = `**${label}**: ${word}${params}`;
+            const scopeLabel = isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isMixin ? 'mixin' : 'variable';
             const parts: string[] = [header];
+            parts.push(`Scope: \`${scopeLabel}\``);
             if (meta?.doc) {
                 parts.push(meta.doc);
             }
@@ -67,7 +72,7 @@ export class VueHoverProvider implements vscode.HoverProvider {
         if (document.languageId === 'html') {
             const templateVar = findTemplateVar(document, position, word);
             if (templateVar) {
-                return new vscode.Hover(new vscode.MarkdownString(`**Template Variable**: ${word}\n\nDefined at line ${templateVar.range.start.line + 1}`), wordRange);
+                return new vscode.Hover(new vscode.MarkdownString(`**Template Variable**: ${word}\n\nScope: \`local\`\n\nDefined at line ${templateVar.range.start.line + 1}`), wordRange);
             }
 
             // 检查Vue索引
@@ -87,6 +92,13 @@ export class VueHoverProvider implements vscode.HoverProvider {
 
         // 检查JavaScript/TypeScript
         if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            const localSymbol = await jsSymbolParser.findLocalSymbol(document, position, word);
+            if (localSymbol) {
+                return new vscode.Hover(
+                    new vscode.MarkdownString(`**Local Symbol**: ${word}\n\nScope: \`local\`\n\nDefined at ${document.uri.fsPath}:${localSymbol.range.start.line + 1}`),
+                    wordRange
+                );
+            }
             const vueIndex = resolveVueIndexForHtml(document);
             if (vueIndex) {
                 const def = findDefinitionInIndex(word, vueIndex);

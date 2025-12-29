@@ -18,6 +18,7 @@ export interface TemplateIndex {
 interface CacheEntry { index: TemplateIndex; lastAccess: number; }
 function getMaxTemplateEntries(): number { try { return Math.max(10, vscode.workspace.getConfiguration('leidong-tools').get<number>('maxTemplateIndexEntries', 50)); } catch { return 50; } }
 let templateIndexCache = new LRUCache<string, CacheEntry>(getMaxTemplateEntries());
+let lastTemplateIndexBuiltAt = 0;
 
 function fastHash(str: string): string {
     let h = 0; for (let i = 0; i < str.length; i++) { h = (h * 33 + str.charCodeAt(i)) >>> 0; }
@@ -101,7 +102,9 @@ function buildTemplateIndex(doc: vscode.TextDocument): TemplateIndex {
 
     const contentHash = fastHash(text);
     if (loggingEnabled()) { console.log(`[template-index][build] ${doc.uri.fsPath} vars=${vars.length} hash=${contentHash}`); }
-    return { vars, version: doc.version, builtAt: Date.now(), hash: contentHash };
+    const builtAt = Date.now();
+    lastTemplateIndexBuiltAt = builtAt;
+    return { vars, version: doc.version, builtAt, hash: contentHash };
 }
 
 export function getTemplateIndex(doc: vscode.TextDocument): TemplateIndex | null {
@@ -158,3 +161,10 @@ export function showTemplateIndexSummary() {
 }
 
 export function clearTemplateIndexCache() { templateIndexCache.clear(); }
+
+export function getTemplateIndexCacheStats() {
+    return {
+        size: templateIndexCache.size,
+        lastBuiltAt: lastTemplateIndexBuiltAt || 0
+    };
+}

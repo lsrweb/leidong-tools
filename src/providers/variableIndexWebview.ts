@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { jsSymbolParser, SymbolType } from '../parsers/jsSymbolParser';
+import { jsSymbolParser, SymbolType, ParseResult } from '../parsers/jsSymbolParser';
+import { getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import { monitor } from '../monitoring/performanceMonitor';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -87,6 +88,8 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
      */
     private invalidateCacheForDocument(document: vscode.TextDocument): void {
         console.log('[VariableIndexWebview] 文件保存，清除缓存:', document.uri.toString());
+        this._lastParsedUri = '';
+        this._lastVariables = [];
         
         // 清除 jsSymbolParser 缓存
         jsSymbolParser.invalidateCache(document.uri);
@@ -142,156 +145,145 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
      */
     @monitor('variableIndexWebview.collectVariables')
     private async collectVariables(document: vscode.TextDocument): Promise<VariableItem[]> {
-        let parseResult;
-        let targetUri = document.uri;
-        let targetUriString = targetUri.toString();
+        const results: Array<{ result: ParseResult; uri: vscode.Uri }> = [];
+        let cacheKey = document.uri.toString();
 
         try {
             // HTML 文件处理
             if (document.languageId === 'html') {
-                const scriptPath = this.findExternalScript(document.uri.fsPath);
-                
-                if (scriptPath && fs.existsSync(scriptPath)) {
-                    // 外部 JS 文件
-                    targetUri = vscode.Uri.file(scriptPath);
-                    targetUriString = targetUri.toString();
-                    
-                    // ✅ 检查缓存：避免重复解析同一文件
-                    if (this._lastParsedUri === targetUriString) {
-                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
+                const scriptPaths = getExternalDevScriptPathsForHtml(document);
+                if (scriptPaths.length > 0) {
+                    cacheKey = scriptPaths.join('|');
+                    if (this._lastParsedUri === cacheKey) {
+                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', cacheKey);
                         return this._lastVariables;
                     }
-                    
-                    const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
-                    parseResult = await jsSymbolParser.parse(scriptContent, targetUri);
+
+                    for (const scriptPath of scriptPaths) {
+                        if (!fs.existsSync(scriptPath)) {
+                            continue;
+                        }
+                        const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
+                        const scriptUri = vscode.Uri.file(scriptPath);
+                        const parsed = await jsSymbolParser.parse(scriptContent, scriptUri);
+                        results.push({ result: parsed, uri: scriptUri });
+                    }
                 } else {
-                    // 内联脚本
                     const inlineScript = this.extractInlineScript(document.getText());
                     if (inlineScript) {
-                        parseResult = await jsSymbolParser.parse(
+                        cacheKey = `${document.uri.toString()}:${inlineScript.startLine}`;
+                        if (this._lastParsedUri === cacheKey) {
+                            console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', cacheKey);
+                            return this._lastVariables;
+                        }
+                        const parsed = await jsSymbolParser.parse(
                             inlineScript.content,
                             document.uri,
                             inlineScript.startLine
                         );
-                        targetUri = document.uri;
+                        results.push({ result: parsed, uri: document.uri });
                     }
                 }
-            } 
+            }
             // JS/TS 文件
             else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                targetUriString = document.uri.toString();
-                
-                // ✅ 检查缓存：避免重复解析同一文件
-                if (this._lastParsedUri === targetUriString) {
-                    console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', targetUriString);
+                cacheKey = document.uri.toString();
+                if (this._lastParsedUri === cacheKey) {
+                    console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', cacheKey);
                     return this._lastVariables;
                 }
-                
-                parseResult = await jsSymbolParser.parse(document, document.uri);
+                const parsed = await jsSymbolParser.parse(document, document.uri);
+                results.push({ result: parsed, uri: document.uri });
             }
         } catch (e) {
             console.error('[VariableIndexWebview] Parse error:', e);
         }
 
-        if (!parseResult) {
-            console.log('[VariableIndexWebview] ❌ 解析失败，parseResult 为空');
+        if (results.length === 0) {
+            console.log('[VariableIndexWebview] ? 解析失败，parseResult 为空');
             return [];
         }
 
-        console.log('[VariableIndexWebview] 📊 解析结果:', {
-            symbols: parseResult.symbols.length,
-            variables: parseResult.variables.size,
-            functions: parseResult.functions.size,
-            classes: parseResult.classes.size,
-            thisReferences: parseResult.thisReferences.size
-        });
+        const totals = results.reduce(
+            (acc, item) => {
+                acc.symbols += item.result.symbols.length;
+                acc.variables += item.result.variables.size;
+                acc.functions += item.result.functions.size;
+                acc.classes += item.result.classes.size;
+                acc.thisReferences += item.result.thisReferences.size;
+                return acc;
+            },
+            { symbols: 0, variables: 0, functions: 0, classes: 0, thisReferences: 0 }
+        );
 
-        if (parseResult.thisReferences.size === 0) {
-            console.log('[VariableIndexWebview] ⚠️ 未找到 this 引用，尝试显示所有变量和函数');
-            
-            // ✅ 如果没有 this 引用，显示所有 variables 和 functions
-            const variables: VariableItem[] = [];
-            
-            // 添加所有变量
-            parseResult.variables.forEach((symbol, name) => {
-                variables.push({
-                    name,
-                    type: 'data',
-                    line: symbol.range.start.line + 1,
-                    uri: targetUri.toString()
-                });
-            });
-            
-            // 添加所有函数
-            parseResult.functions.forEach((symbol, name) => {
-                variables.push({
-                    name,
-                    type: 'method',
-                    line: symbol.range.start.line + 1,
-                    uri: targetUri.toString()
-                });
-            });
-            
-            if (variables.length === 0) {
-                console.log('[VariableIndexWebview] ❌ 完全没有找到变量或函数');
-            } else {
-                console.log(`[VariableIndexWebview] ✅ 找到 ${variables.length} 个变量/函数`);
-            }
-            
-            variables.sort((a, b) => a.line - b.line);
-            this._lastParsedUri = targetUriString;
-            this._lastVariables = variables;
-            return variables;
+        console.log('[VariableIndexWebview] ?? 解析结果:', totals);
+
+        const variables = this.buildVariableItems(results);
+        if (variables.length === 0) {
+            console.log('[VariableIndexWebview] ? 完全没有找到变量或函数');
+        } else {
+            console.log(`[VariableIndexWebview] ? 找到 ${variables.length} 个变量/函数`);
         }
 
-        // 转换为 VariableItem 数组
-        const variables: VariableItem[] = [];
-        parseResult.thisReferences.forEach((symbol, name) => {
-            let type: 'data' | 'method' | 'computed' = 'data';
-            
-            if (symbol.kind === SymbolType.Method) {
-                type = 'method';
-            } else if (symbol.kind === SymbolType.Property) {
-                type = 'data';
-            }
-
-            variables.push({
-                name,
-                type,
-                line: symbol.range.start.line + 1,
-                uri: targetUri.toString()
-            });
-        });
-
-        // ✅ 按行号排序，保持代码顺序
-        variables.sort((a, b) => a.line - b.line);
-
-        // ✅ 缓存结果
-        this._lastParsedUri = targetUriString;
+        this._lastParsedUri = cacheKey;
         this._lastVariables = variables;
 
         return variables;
     }
 
     /**
-     * 查找外部脚本文件
+     * 生成变量列表
      */
-    private findExternalScript(htmlPath: string): string | null {
-        const dir = path.dirname(htmlPath);
-        const basename = path.basename(htmlPath, path.extname(htmlPath));
-        
-        const patterns = [
-            path.join(dir, 'js', `${basename}.dev.js`),
-            path.join(dir, 'js', basename, `${basename}.dev.js`)
-        ];
-        
-        for (const p of patterns) {
-            if (fs.existsSync(p)) {
-                return p;
+    private buildVariableItems(results: Array<{ result: ParseResult; uri: vscode.Uri }>): VariableItem[] {
+        const hasThisReferences = results.some(item => item.result.thisReferences.size > 0);
+        const variables: VariableItem[] = [];
+        const seen = new Set<string>();
+
+        const pushItem = (name: string, type: 'data' | 'method' | 'computed', line: number, uri: vscode.Uri) => {
+            const key = `${uri.toString()}|${type}|${name}|${line}`;
+            if (seen.has(key)) {
+                return;
             }
+            seen.add(key);
+            variables.push({
+                name,
+                type,
+                line,
+                uri: uri.toString()
+            });
+        };
+
+        if (hasThisReferences) {
+            results.forEach(item => {
+                item.result.thisReferences.forEach((symbol, name) => {
+                    let type: 'data' | 'method' | 'computed' = 'data';
+                    if (symbol.kind === SymbolType.Method) {
+                        type = 'method';
+                    } else if (symbol.kind === SymbolType.Property) {
+                        type = 'data';
+                    }
+                    pushItem(name, type, symbol.range.start.line + 1, item.uri);
+                });
+            });
+        } else {
+            results.forEach(item => {
+                item.result.variables.forEach((symbol, name) => {
+                    pushItem(name, 'data', symbol.range.start.line + 1, item.uri);
+                });
+                item.result.functions.forEach((symbol, name) => {
+                    pushItem(name, 'method', symbol.range.start.line + 1, item.uri);
+                });
+            });
         }
-        
-        return null;
+
+        variables.sort((a, b) => {
+            const uriCompare = a.uri.localeCompare(b.uri);
+            if (uriCompare !== 0) {
+                return uriCompare;
+            }
+            return a.line - b.line;
+        });
+        return variables;
     }
 
     /**
@@ -422,6 +414,14 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
         <button class="category-btn active" data-type="all">全部</button>
         <button class="category-btn" data-type="data">Data</button>
         <button class="category-btn" data-type="method">Methods</button>
+    </div>
+
+    <div class="pinned-section" id="pinnedSection" style="display: none;">
+        <div class="pinned-header">
+            <span>📌 Pinned</span>
+            <button id="clearPins" title="清空 Pin">清空</button>
+        </div>
+        <div class="pinned-list" id="pinnedList"></div>
     </div>
     
     <div class="variable-list" id="variableList">

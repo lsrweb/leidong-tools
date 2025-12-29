@@ -25,6 +25,7 @@
   - 实时显示当前 HTML 文件的 Vue 实例结构
   - Data、Methods、Computed 分类展示
   - 点击任意项直接跳转到定义
+  - 支持 Pin 常用变量/方法，跨文件快速跳转
   - 自动监听文件切换和保存
   
 - 👁️ **监听服务面板**：
@@ -32,6 +33,10 @@
   - 显示项目名称和监听目录
   - 点击可在资源管理器中定位
   - 无监听时友好提示
+
+- ?? **诊断面板**：
+  - 查看索引/缓存状态与上次更新时间
+  - 快速定位性能瓶颈与缓存命中问题
 
 **使用方式**：
 - 点击活动栏的 "雷动三千工具" 图标（🔧）
@@ -56,6 +61,8 @@
 - ✅ 智能识别 `this.` 和 `that.` 上下文
 - ✅ 模板局部变量优先跳转（v-for, slot-scope）
 - ✅ 支持 mixins 属性和方法
+- ? 悬停显示作用域徽章（local/data/method/computed/mixin）
+- ? 支持 // 与 JSDoc 注释的 Markdown 文档解析
 - ✅ 可配置索引缓存大小和刷新策略
 
 ---
@@ -197,7 +204,7 @@ my-project/
 ### 首次使用
 
 安装后，扩展会在以下文件类型自动激活：
-- HTML, JavaScript, TypeScript, Vue, JSON, CSS
+- HTML, JavaScript, TypeScript, JSON, CSS
 
 无需额外配置，开箱即用！
 
@@ -298,6 +305,7 @@ console.log('file.js:10 userName:', userName)
 | `rebuildOnSave` | boolean | true | 保存时重建索引 |
 | `maxIndexEntries` | number | 200 | Vue 索引缓存上限 |
 | `maxTemplateIndexEntries` | number | 300 | 模板索引缓存上限 |
+| `devScriptPatterns` | string[] | [] | 自定义 HTML 对应 dev.js 的匹配路径（支持 ${dir} ${base}），可配置多个，匹配脚本会合并索引 |
 | `hoverDelay` | number | 300 | 悬停延迟（毫秒） |
 
 ### 配置示例
@@ -306,7 +314,12 @@ console.log('file.js:10 userName:', userName)
 {
   "leidong-tools.enableDefinitionJump": true,
   "leidong-tools.indexLogging": false,
-  "leidong-tools.maxIndexEntries": 500
+  "leidong-tools.maxIndexEntries": 500,
+  "leidong-tools.devScriptPatterns": [
+    "${dir}/js/${base}.dev.js",
+    "${dir}/scripts/${base}.dev.js",
+    "${dir}/js/${base}/index.dev.js"
+  ]
 }
 ```
 
@@ -340,7 +353,7 @@ console.log('file.js:10 userName:', userName)
 ### 2. 调试跳转问题
 
 如果跳转失败：
-1. 检查 `.dev.js` 文件是否存在于 `js/` 目录
+1. 检查 dev.js 位置（默认 `js/同名.dev.js`），结构不同可配置 `devScriptPatterns`
 2. 确认 `<script>` 包含 `new Vue({...})`
 3. 运行命令 `Toggle Index Logging` 开启日志
 4. 运行命令 `Show Index Summary` 查看索引状态
@@ -460,4 +473,3 @@ Copyright (c) 2025 雷动三千 (KuCai)
 [返回顶部](#雷动三千-vscode-工具集)
 
 </div>
-

@@ -1,0 +1,177 @@
+:root {
+    --ui-bg: var(--vscode-sideBar-background);
+    --ui-panel: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+    --ui-border: var(--vscode-panel-border);
+    --ui-text: var(--vscode-sideBar-foreground);
+    --ui-muted: var(--vscode-descriptionForeground);
+    --ui-accent: var(--vscode-focusBorder);
+    --ui-accent-2: var(--vscode-button-background);
+    --ui-radius: 14px;
+    --ui-shadow: 0 12px 26px rgba(0, 0, 0, 0.2);
+    --ui-font: "Space Grotesk", "IBM Plex Sans", "Noto Sans", "Segoe UI", sans-serif;
+    --ui-mono: "IBM Plex Mono", "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--ui-font);
+    background: var(--ui-bg);
+    color: var(--ui-text);
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background:
+        radial-gradient(480px 320px at 90% -10%, color-mix(in srgb, var(--ui-accent) 25%, transparent), transparent 70%),
+        radial-gradient(420px 280px at 10% 0%, color-mix(in srgb, var(--ui-accent-2) 20%, transparent), transparent 65%),
+        linear-gradient(180deg, color-mix(in srgb, var(--ui-panel) 94%, transparent), transparent 60%);
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    height: 100%;
+    padding: 16px 14px 18px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: var(--ui-radius);
+    background: color-mix(in srgb, var(--ui-panel) 88%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+    box-shadow: var(--ui-shadow);
+}
+
+.eyebrow {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--ui-muted);
+    margin-bottom: 4px;
+}
+
+h1 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
+.subtitle {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--ui-muted);
+}
+
+.refresh-btn {
+    border: none;
+    background: linear-gradient(135deg, var(--ui-accent-2), color-mix(in srgb, var(--ui-accent) 35%, var(--ui-accent-2)));
+    color: var(--vscode-button-foreground, #fff);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+    box-shadow: 0 10px 18px rgba(0, 0, 0, 0.24);
+}
+
+.refresh-btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.06);
+}
+
+.refresh-btn:active {
+    transform: translateY(0);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    overflow: hidden;
+}
+
+.card {
+    background: color-mix(in srgb, var(--ui-panel) 92%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ui-border) 65%, transparent);
+    border-radius: var(--ui-radius);
+    padding: 12px 14px 10px;
+    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    animation: liftIn 0.25s ease;
+}
+
+.card.full {
+    grid-column: 1 / -1;
+}
+
+.card-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--ui-muted);
+    margin-bottom: 10px;
+    font-weight: 700;
+}
+
+.card-body {
+    display: grid;
+    gap: 8px;
+}
+
+.metric {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--ui-panel) 85%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ui-border) 55%, transparent);
+}
+
+.metric span {
+    font-size: 11px;
+    color: var(--ui-muted);
+}
+
+.metric strong {
+    font-size: 12px;
+    font-family: var(--ui-mono);
+    font-weight: 600;
+    color: var(--ui-text);
+}
+
+@media (min-width: 460px) {
+    .grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@keyframes liftIn {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

@@ -27,6 +27,9 @@ body {
     overflow: hidden;
     position: relative;
     letter-spacing: 0.1px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 body::before {
@@ -130,6 +133,80 @@ body::before {
     background: color-mix(in srgb, var(--ui-panel-2) 92%, transparent);
 }
 
+/* ========== Pin 区域 ========== */
+.pinned-section {
+    padding: 10px 12px 6px;
+    border-bottom: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
+    background: color-mix(in srgb, var(--ui-panel) 84%, transparent);
+}
+
+.pinned-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--ui-muted);
+    margin-bottom: 8px;
+}
+
+#clearPins {
+    border: none;
+    background: color-mix(in srgb, var(--ui-border) 45%, transparent);
+    color: var(--ui-muted);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+#clearPins:hover {
+    color: var(--ui-text);
+    background: color-mix(in srgb, var(--ui-accent) 35%, transparent);
+}
+
+.pinned-list {
+    display: grid;
+    gap: 6px;
+}
+
+.pinned-item {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--ui-panel) 90%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ui-border) 60%, transparent);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pinned-item:hover {
+    background: color-mix(in srgb, var(--ui-panel) 98%, transparent);
+}
+
+.pinned-name {
+    font-size: 12px;
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pinned-file {
+    font-size: 10px;
+    color: var(--ui-muted);
+    font-family: var(--ui-mono);
+    white-space: nowrap;
+    opacity: 0.7;
+}
+
 .category-btn {
     flex: 1;
     background: color-mix(in srgb, var(--ui-panel) 75%, transparent);
@@ -178,13 +255,17 @@ body::before {
 
 /* ========== 变量列表区域 ========== */
 .variable-list {
-    height: calc(100vh - 172px);
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     position: relative;
+    display: flex;
 }
 
 .scroll-container {
     height: 100%;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     position: relative;
@@ -218,7 +299,7 @@ body::before {
 /* ========== 变量项 ========== */
 .variable-item {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr auto auto auto;
     align-items: center;
     gap: 8px;
     width: 100%;
@@ -288,6 +369,28 @@ body::before {
     font-family: var(--ui-mono);
     font-weight: 600;
     opacity: 0.75;
+}
+
+.pin-btn {
+    border: none;
+    background: color-mix(in srgb, var(--ui-border) 55%, transparent);
+    color: var(--ui-muted);
+    font-size: 12px;
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pin-btn:hover {
+    color: var(--ui-text);
+    background: color-mix(in srgb, var(--ui-accent) 35%, transparent);
+}
+
+.pin-btn.pinned {
+    background: color-mix(in srgb, var(--ui-accent) 55%, transparent);
+    color: var(--ui-text);
 }
 
 /* ========== 空状态 ========== */

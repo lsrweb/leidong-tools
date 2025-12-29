@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheItem } from '../types';
-import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathForHtml } from '../parsers/parseDocument';
+import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { inferObjectProperties } from '../helpers/propertyInference';
@@ -377,19 +377,21 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
     }
 
     private getInferredPropertyItems(document: vscode.TextDocument, root: string): vscode.CompletionItem[] {
-        const scriptPath = getExternalDevScriptPathForHtml(document);
-        const cacheKey = `${document.uri.toString()}:${root}:${scriptPath || ''}`;
+        const scriptPaths = getExternalDevScriptPathsForHtml(document);
+        const cacheKey = `${document.uri.toString()}:${root}:${scriptPaths.join('|')}`;
         const cached = this.propertyCache.get(cacheKey);
         if (cached && (cached.docVersion === document.version || Date.now() - cached.updatedAt < this.propertyCacheTtlMs)) {
             return cached.items;
         }
         const props = new Set<string>();
         inferObjectProperties(document.getText(), root).forEach(p => props.add(p));
-        let scriptMtime: number | undefined;
-        if (scriptPath && fs.existsSync(scriptPath)) {
+        let newestMtime = 0;
+        for (const scriptPath of scriptPaths) {
+            if (!fs.existsSync(scriptPath)) { continue; }
             try {
-                scriptMtime = fs.statSync(scriptPath).mtimeMs;
-                if (cached && cached.scriptMtime === scriptMtime && Date.now() - cached.updatedAt < this.propertyCacheTtlMs) {
+                const stat = fs.statSync(scriptPath);
+                newestMtime = Math.max(newestMtime, stat.mtimeMs);
+                if (cached && cached.scriptMtime === newestMtime && Date.now() - cached.updatedAt < this.propertyCacheTtlMs) {
                     return cached.items;
                 }
                 const content = fs.readFileSync(scriptPath, 'utf8');
@@ -401,7 +403,7 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
             item.detail = 'inferred property (雷动三千)';
             return item;
         });
-        this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version, scriptMtime });
+        this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version, scriptMtime: newestMtime || undefined });
         return items;
     }
 }

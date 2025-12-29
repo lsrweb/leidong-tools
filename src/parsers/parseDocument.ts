@@ -27,6 +27,8 @@ export interface VueIndex {
 }
 
 interface CacheEntry { index: VueIndex; }
+let lastVueIndexBuiltAt = 0;
+let lastExternalIndexBuiltAt = 0;
 
 // 使用 LRU 缓存
 function getMaxIndexEntries(): number {
@@ -592,6 +594,7 @@ export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri,
     }
     // 构建新索引并缓存
     const index = buildVueIndex(content, uri, baseLine);
+    lastVueIndexBuiltAt = Math.max(lastVueIndexBuiltAt, index.builtAt);
     indexCache.set(key, { index });
     if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`); }
     return index;
@@ -696,16 +699,57 @@ export async function parseDocument(document: vscode.TextDocument): Promise<Pars
 // 外部文件索引缓存（避免频繁读磁盘）
 interface ExternalFileCacheEntry { mtimeMs: number; hash: string; index: VueIndex; }
 const externalFileCache = new Map<string, ExternalFileCacheEntry>();
-interface HtmlScriptCacheEntry { scriptPath: string | null; checkedAt: number; }
+interface HtmlScriptCacheEntry { scriptPaths: string[]; checkedAt: number; }
 const htmlScriptCache = new Map<string, HtmlScriptCacheEntry>();
 const HTML_SCRIPT_CACHE_TTL_MS = 30 * 1000;
 
-function findExternalDevScriptPath(htmlPath: string): string | null {
+function getDevScriptPatterns(): string[] {
+    try {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        const patterns = cfg.get<string[]>('devScriptPatterns', []);
+        return Array.isArray(patterns) ? patterns.filter(Boolean) : [];
+    } catch {
+        return [];
+    }
+}
+
+function expandDevScriptPattern(pattern: string, htmlPath: string): string {
+    const dir = path.dirname(htmlPath);
+    const base = path.basename(htmlPath, path.extname(htmlPath));
+    let result = pattern.replace(/\$\{dir\}/g, dir).replace(/\$\{base\}/g, base);
+    if (!path.isAbsolute(result) && !pattern.includes('${dir}')) {
+        result = path.join(dir, result);
+    }
+    return result;
+}
+
+function resolveScriptPathsFromPatterns(htmlPath: string): string[] {
+    const patterns = getDevScriptPatterns();
+    const paths: string[] = [];
+    for (const pattern of patterns) {
+        const candidate = expandDevScriptPattern(pattern, htmlPath);
+        if (candidate.includes('*') || candidate.includes('?')) {
+            continue;
+        }
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            paths.push(candidate);
+        }
+    }
+    return paths;
+}
+
+function findExternalDevScriptPaths(htmlPath: string): string[] {
     const cached = htmlScriptCache.get(htmlPath);
     const now = Date.now();
     if (cached && now - cached.checkedAt < HTML_SCRIPT_CACHE_TTL_MS) {
-        if (cached.scriptPath && fs.existsSync(cached.scriptPath)) { return cached.scriptPath; }
-        if (!cached.scriptPath) { return null; }
+        const existing = cached.scriptPaths.filter(p => fs.existsSync(p));
+        if (existing.length > 0) { return existing; }
+        if (cached.scriptPaths.length === 0) { return []; }
+    }
+    const patternPaths = resolveScriptPathsFromPatterns(htmlPath);
+    if (patternPaths.length > 0) {
+        htmlScriptCache.set(htmlPath, { scriptPaths: patternPaths, checkedAt: now });
+        return patternPaths;
     }
     const dir = path.dirname(htmlPath);
     const base = path.basename(htmlPath, path.extname(htmlPath));
@@ -722,15 +766,15 @@ function findExternalDevScriptPath(htmlPath: string): string | null {
                     if (ent.isDirectory()) {
                         stack.push(full);
                     } else if (ent.isFile() && ent.name === targetFileName) {
-                        htmlScriptCache.set(htmlPath, { scriptPath: full, checkedAt: now });
-                        return full;
+                        htmlScriptCache.set(htmlPath, { scriptPaths: [full], checkedAt: now });
+                        return [full];
                     }
                 }
             } catch (e) { /* ignore directory read errors */ }
         }
     }
-    htmlScriptCache.set(htmlPath, { scriptPath: null, checkedAt: now });
-    return null;
+    htmlScriptCache.set(htmlPath, { scriptPaths: [], checkedAt: now });
+    return [];
 }
 
 function getExternalFileIndex(fullPath: string): VueIndex | null {
@@ -744,21 +788,90 @@ function getExternalFileIndex(fullPath: string): VueIndex | null {
         const content = fs.readFileSync(fullPath, 'utf8');
         const index = getOrCreateVueIndexFromContent(content, vscode.Uri.file(fullPath), 0);
         externalFileCache.set(fullPath, { mtimeMs: stat.mtimeMs, hash: index.hash, index });
-    if (loggingEnabled()) { console.log(`[vue-index][external-build] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`); }
+        lastExternalIndexBuiltAt = Math.max(lastExternalIndexBuiltAt, index.builtAt);
+        if (loggingEnabled()) { console.log(`[vue-index][external-build] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`); }
         return index;
     } catch { return null; }
 }
 
-export function getExternalDevScriptPathForHtml(document: vscode.TextDocument): string | null {
-    return findExternalDevScriptPath(document.uri.fsPath);
+function createEmptyVueIndex(): VueIndex {
+    return {
+        data: new Map<string, vscode.Location>(),
+        methods: new Map<string, vscode.Location>(),
+        computed: new Map<string, vscode.Location>(),
+        mixinData: new Map<string, vscode.Location>(),
+        mixinMethods: new Map<string, vscode.Location>(),
+        mixinComputed: new Map<string, vscode.Location>(),
+        all: new Map<string, vscode.Location>(),
+        methodMeta: new Map<string, { params: string[]; doc?: string }>(),
+        computedMeta: new Map<string, { params: string[]; doc?: string }>(),
+        version: 0,
+        hash: '',
+        builtAt: 0,
+        componentsByTemplateId: undefined
+    };
+}
+
+function mergeMap<T>(target: Map<string, T>, source: Map<string, T>) {
+    source.forEach((value, key) => {
+        if (!target.has(key)) {
+            target.set(key, value);
+        }
+    });
+}
+
+function mergeVueIndexInto(target: VueIndex, source: VueIndex) {
+    mergeMap(target.data, source.data);
+    mergeMap(target.methods, source.methods);
+    mergeMap(target.computed, source.computed);
+    mergeMap(target.mixinData, source.mixinData);
+    mergeMap(target.mixinMethods, source.mixinMethods);
+    mergeMap(target.mixinComputed, source.mixinComputed);
+    mergeMap(target.methodMeta, source.methodMeta);
+    mergeMap(target.computedMeta, source.computedMeta);
+    if (source.componentsByTemplateId) {
+        if (!target.componentsByTemplateId) {
+            target.componentsByTemplateId = new Map<string, VueIndex>();
+        }
+        source.componentsByTemplateId.forEach((value, key) => {
+            if (!target.componentsByTemplateId!.has(key)) {
+                target.componentsByTemplateId!.set(key, value);
+            }
+        });
+    }
+    target.builtAt = Math.max(target.builtAt, source.builtAt);
+}
+
+function finalizeMergedIndex(target: VueIndex, hashes: string[]) {
+    const all = new Map<string, vscode.Location>();
+    for (const m of [target.data, target.computed, target.methods, target.mixinData, target.mixinComputed, target.mixinMethods]) {
+        m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
+    }
+    target.all = all;
+    target.hash = fastHash(hashes.join('|'));
+}
+
+export function getExternalDevScriptPathsForHtml(document: vscode.TextDocument): string[] {
+    return findExternalDevScriptPaths(document.uri.fsPath);
 }
 
 export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex | null {
     const htmlPath = document.uri.fsPath;
-    const externalPath = findExternalDevScriptPath(htmlPath);
-    if (externalPath) {
-        const extIdx = getExternalFileIndex(externalPath);
-        if (extIdx) { return extIdx; }
+    const externalPaths = findExternalDevScriptPaths(htmlPath);
+    if (externalPaths.length > 0) {
+        const merged = createEmptyVueIndex();
+        const hashes: string[] = [];
+        for (const externalPath of externalPaths) {
+            const extIdx = getExternalFileIndex(externalPath);
+            if (extIdx) {
+                mergeVueIndexInto(merged, extIdx);
+                hashes.push(extIdx.hash);
+            }
+        }
+        if (hashes.length > 0) {
+            finalizeMergedIndex(merged, hashes);
+            return merged;
+        }
         return null;
     }
     // 查找内联 <script> new Vue({...})
@@ -803,6 +916,15 @@ export function findChainedRootDefinition(chainText: string, index: VueIndex): v
         return null;
     }
     return findDefinitionInIndex(parts[0], index);
+}
+
+export function getVueIndexCacheStats() {
+    return {
+        size: indexCache.size,
+        lastBuiltAt: lastVueIndexBuiltAt || 0,
+        lastExternalBuiltAt: lastExternalIndexBuiltAt || 0,
+        externalCacheSize: externalFileCache.size
+    };
 }
 
 /**

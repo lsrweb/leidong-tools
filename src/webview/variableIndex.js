@@ -11,6 +11,9 @@
     const scrollContainer = document.getElementById('scrollContainer');
     const scrollContent = document.getElementById('scrollContent');
     const emptyState = document.getElementById('emptyState');
+    const pinnedSection = document.getElementById('pinnedSection');
+    const pinnedList = document.getElementById('pinnedList');
+    const clearPins = document.getElementById('clearPins');
 
     // 虚拟滚动参数
     const ITEM_HEIGHT = 36;
@@ -20,8 +23,35 @@
     let itemPool = []; // ✅ DOM 节点池，复用节点
     let poolSize = 0;
 
+    const savedState = vscode.getState();
+    let pinnedMap = new Map();
+    if (savedState && Array.isArray(savedState.pinnedItems)) {
+        savedState.pinnedItems.forEach(item => {
+            if (item && item.key) {
+                pinnedMap.set(item.key, item);
+            }
+        });
+    }
+
+    function getPinKey(variable) {
+        return `${variable.uri}|${variable.type}|${variable.name}|${variable.line}`;
+    }
+
+    function persistPins() {
+        vscode.setState({ pinnedItems: Array.from(pinnedMap.values()) });
+    }
+
+    function jumpTo(variable) {
+        vscode.postMessage({ type: 'jump', data: { uri: variable.uri, line: variable.line } });
+    }
+
+    function getFileName(uri) {
+        const parts = uri.split(/[\\/]/);
+        return parts[parts.length - 1] || uri;
+    }
+
     function updateStats() {
-        stats.textContent = `${filteredVariables.length} / ${allVariables.length} 变量  |  文件: ${fileName}`;
+        stats.textContent = `${filteredVariables.length} / ${allVariables.length} 变量  |  Pin: ${pinnedMap.size}  |  文件: ${fileName}`;
     }
 
     function filterVariables() {
@@ -31,6 +61,55 @@
             if (!keyword) { return true; }
             return v.name.toLowerCase().includes(keyword);
         });
+        updateStats();
+        renderPinnedList();
+        renderVirtualList();
+    }
+
+    function renderPinnedList() {
+        const pins = Array.from(pinnedMap.values()).sort((a, b) => (b.pinnedAt || 0) - (a.pinnedAt || 0));
+        if (pins.length === 0) {
+            pinnedSection.style.display = 'none';
+            pinnedList.innerHTML = '';
+            return;
+        }
+
+        pinnedSection.style.display = 'block';
+        pinnedList.innerHTML = '';
+        pins.forEach(pin => {
+            const item = document.createElement('div');
+            item.className = 'pinned-item';
+            item.innerHTML = `
+                <span class="pinned-name" title="${pin.name}">${pin.name}</span>
+                <span class="variable-type">${pin.type}</span>
+                <span class="variable-line">:${pin.line}</span>
+                <span class="pinned-file">${pin.fileName || getFileName(pin.uri)}</span>
+                <button class="pin-btn pinned" title="Unpin">-</button>
+            `;
+            const pinBtn = item.querySelector('.pin-btn');
+            pinBtn.addEventListener('click', (event) => {
+                event.stopPropagation();
+                togglePin(pin);
+            });
+            item.addEventListener('click', () => jumpTo(pin));
+            pinnedList.appendChild(item);
+        });
+    }
+
+    function togglePin(variable) {
+        const key = getPinKey(variable);
+        if (pinnedMap.has(key)) {
+            pinnedMap.delete(key);
+        } else {
+            pinnedMap.set(key, {
+                ...variable,
+                key,
+                pinnedAt: Date.now(),
+                fileName: getFileName(variable.uri)
+            });
+        }
+        persistPins();
+        renderPinnedList();
         updateStats();
         renderVirtualList();
     }
@@ -51,15 +130,23 @@
 
     // ✅ 更新节点内容和位置
     function updateItem(node, variable, position) {
+        const pinKey = getPinKey(variable);
+        const isPinned = pinnedMap.has(pinKey);
         node.style.top = `${position * ITEM_HEIGHT}px`;
         node.style.display = 'flex';
         node.innerHTML = `
             <span class="variable-name" title="${variable.name}">${variable.name}</span>
             <span class="variable-type">${variable.type}</span>
             <span class="variable-line">:${variable.line}</span>
+            <button class="pin-btn ${isPinned ? 'pinned' : ''}" title="${isPinned ? 'Unpin' : 'Pin'}">${isPinned ? '-' : '+'}</button>
         `;
+        const pinBtn = node.querySelector('.pin-btn');
+        pinBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            togglePin(variable);
+        });
         node.onclick = () => {
-            vscode.postMessage({ type: 'jump', data: { uri: variable.uri, line: variable.line } });
+            jumpTo(variable);
         };
     }
 
@@ -122,6 +209,13 @@
     refreshBtn.addEventListener('click', () => {
         vscode.postMessage({ type: 'refresh' });
     });
+    clearPins.addEventListener('click', () => {
+        pinnedMap.clear();
+        persistPins();
+        renderPinnedList();
+        updateStats();
+        renderVirtualList();
+    });
     categoryBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             categoryBtns.forEach(b => b.classList.remove('active'));
@@ -148,5 +242,6 @@
     });
 
     // 首次渲染
+    renderPinnedList();
     renderVirtualList();
 })();

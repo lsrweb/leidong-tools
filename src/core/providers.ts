@@ -11,6 +11,7 @@ import {
     VonCompletionProvider
 } from '../providers/completionProvider';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
+import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
@@ -98,6 +99,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.window.registerWebviewViewProvider(
             VariableIndexWebviewProvider.viewType,
             variableIndexProvider
+        )
+    );
+
+    const diagnosticsProvider = new DiagnosticsWebviewProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            DiagnosticsWebviewProvider.viewType,
+            diagnosticsProvider
         )
     );
 

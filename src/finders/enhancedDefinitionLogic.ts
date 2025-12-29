@@ -202,7 +202,11 @@ export class EnhancedDefinitionLogic {
             console.log(`[enhanced-jump][html] word=${word} chain=${fullChain || ''}`);
         }
 
-        let target = findDefinitionInIndex(word, index);
+        const preferredScope = this.detectHtmlScope(document, position);
+        let target = this.findDefinitionByScope(word, index, preferredScope);
+        if (!target) {
+            target = findDefinitionInIndex(word, index);
+        }
         
         if (!target && fullChain) {
             target = findChainedRootDefinition(fullChain, index);
@@ -219,6 +223,34 @@ export class EnhancedDefinitionLogic {
             console.log(`[enhanced-jump][html][miss] ${word}`);
         }
 
+        return null;
+    }
+
+    private detectHtmlScope(document: vscode.TextDocument, position: vscode.Position): 'method' | 'data' | 'computed' | null {
+        const line = document.lineAt(position.line).text;
+        const before = line.substring(0, position.character);
+        const after = line.substring(position.character);
+        const eventAttr = /(@[\w-]+|v-on:[\w-]+)\s*=\s*["'][^"']*$/.test(before);
+        if (eventAttr) { return 'method'; }
+        if (/^\s*\(/.test(after)) { return 'method'; }
+        return null;
+    }
+
+    private findDefinitionByScope(
+        name: string,
+        index: ReturnType<typeof resolveVueIndexForHtml>,
+        scope: 'method' | 'data' | 'computed' | null
+    ): vscode.Location | null {
+        if (!index || !scope) { return null; }
+        if (scope === 'method') {
+            return index.methods.get(name) || index.mixinMethods.get(name) || null;
+        }
+        if (scope === 'computed') {
+            return index.computed.get(name) || index.mixinComputed.get(name) || null;
+        }
+        if (scope === 'data') {
+            return index.data.get(name) || index.mixinData.get(name) || null;
+        }
         return null;
     }
 

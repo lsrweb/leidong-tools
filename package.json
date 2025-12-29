@@ -4,7 +4,7 @@
   "description": "内部使用",
   "version": "2.1.5",
   "publisher": "KuCai",
-  "icon": "logo.jpg",
+  "icon": "logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/lsrweb/leidong-tools"
@@ -187,6 +187,14 @@
           "default": 300,
           "description": "模板索引缓存的最大条目数（LRU）。过高会占用更多内存。"
         },
+        "leidong-tools.devScriptPatterns": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "自定义 HTML 对应 dev.js 的匹配路径（支持 ${dir} ${base}），可配置多个。为空时会回退到 js/ 同名.dev.js 的自动查找。"
+        },
         "leidong-tools.hoverDelay": {
           "type": "number",
           "default": 300,
@@ -243,6 +251,13 @@
           "type": "webview",
           "icon": "$(symbol-property)",
           "contextualTitle": "Vue 变量索引"
+        },
+        {
+          "id": "leidong-tools.diagnosticsWebview",
+          "name": "诊断面板",
+          "type": "webview",
+          "icon": "$(pulse)",
+          "contextualTitle": "索引/缓存诊断"
         },
         {
           "id": "leidong-tools.watchServiceView",
