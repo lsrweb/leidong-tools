@@ -1,4 +1,4 @@
-import { buildAndCacheTemplateIndex, removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from '../finders/templateIndexer';
+import { buildAndCacheTemplateIndex, getTemplateIndex, removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from '../finders/templateIndexer';
 import { getOrCreateVueIndexFromContent, removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache } from '../parsers/parseDocument';
 import * as vscode from 'vscode';
 
@@ -24,10 +24,9 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
     const ensureIndexForEditor = (editor: vscode.TextEditor | undefined) => {
         if (!editor) { return; }
         const doc = editor.document;
-        if (doc.languageId === 'html') { buildAndCacheTemplateIndex(doc); }
+        if (doc.languageId === 'html' && !getTemplateIndex(doc)) { buildAndCacheTemplateIndex(doc); }
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            // 强制重建 JS index for current file
-            getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0, true);
+            getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0);
         }
     };
 
@@ -38,9 +37,9 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
 
     disposables.push(vscode.workspace.onDidOpenTextDocument((doc) => {
         // 打开文件时建立索引
-        if (doc.languageId === 'html') { buildAndCacheTemplateIndex(doc); }
+        if (doc.languageId === 'html' && !getTemplateIndex(doc)) { buildAndCacheTemplateIndex(doc); }
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0, true);
+            getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0);
         }
     }));
 
@@ -48,7 +47,7 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
     disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
         if (!rebuildOnSave) { return; }
         if (doc.languageId === 'html') { buildAndCacheTemplateIndex(doc); }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') { getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0, true); }
+        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') { getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0); }
     }));
 
     disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {

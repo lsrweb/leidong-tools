@@ -34,9 +34,9 @@ export const EXTENSION_CONFIG = {
     
     // 支持的文件类型
     SUPPORTED_LANGUAGES: {
-        JAVASCRIPT: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue', 'html'],
+        JAVASCRIPT: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'html'],
         COMPLETION_PATTERNS: ['**/*.dev.js'],
-        ALL_FILES: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue', 'html', 'css', 'json', 'markdown', 'plaintext']
+        ALL_FILES: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'html', 'css', 'json', 'markdown', 'plaintext']
     },
     
     // Von 功能配置
@@ -71,7 +71,6 @@ export const FILE_SELECTORS = {
         { scheme: 'file', language: 'typescript' },
         { scheme: 'file', language: 'javascriptreact' },
         { scheme: 'file', language: 'typescriptreact' },
-        { scheme: 'file', language: 'vue' },
         { scheme: 'file', language: 'html' },
         { scheme: 'file', pattern: '**/*.dev.js' }
     ],

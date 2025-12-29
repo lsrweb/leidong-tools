@@ -7,23 +7,28 @@ import { VueHoverProvider } from '../providers/hoverProvider';
 import { 
     JavaScriptCompletionProvider, 
     QuickLogCompletionProvider,
+    HtmlVueCompletionProvider,
     VonCompletionProvider
 } from '../providers/completionProvider';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
 import { FileWatchManager } from '../managers/fileWatchManager';
-import { EXTENSION_CONFIG, FILE_SELECTORS } from './config';
+import { FILE_SELECTORS } from './config';
 
 /**
  * 注册所有 Language Providers
  */
 export function registerProviders(context: vscode.ExtensionContext, fileWatchManager: FileWatchManager) {
-    // 注册 HTML Vue 定义提供器 
+    // 注册 HTML/JS Vue 定义提供器 
     // 确保只注册一次
     if (!context.subscriptions.some(sub => sub.constructor.name === 'DefinitionProviderRegistration')) {
         context.subscriptions.push(
             vscode.languages.registerDefinitionProvider(
-                { scheme: 'file', language: 'html' },
+                [
+                    { scheme: 'file', language: 'html' },
+                    { scheme: 'file', language: 'javascript' },
+                    { scheme: 'file', language: 'typescript' }
+                ],
                 new VueHtmlDefinitionProvider()
             )
         );
@@ -39,12 +44,23 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             ],
             new VueHoverProvider()
         )
-    );    // 注册 JavaScript 补全提供器
+    );
+
+    // 注册 JavaScript 补全提供器
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             FILE_SELECTORS.JAVASCRIPT_ONLY,
             new JavaScriptCompletionProvider(),
             '.', // 触发补全的字符
+        )
+    );
+
+    // 注册 HTML 模板补全提供器
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(
+            FILE_SELECTORS.HTML,
+            new HtmlVueCompletionProvider(),
+            '.', ':', '@', '{'
         )
     );
 
@@ -63,7 +79,6 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             [
                 { scheme: 'file', language: 'javascript' },
                 { scheme: 'file', language: 'typescript' },
-                { scheme: 'file', language: 'vue' },
                 { scheme: 'file', language: 'html' },
                 { scheme: 'file', language: 'css' },
                 { scheme: 'file', language: 'json' },

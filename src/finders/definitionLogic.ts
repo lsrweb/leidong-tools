@@ -12,6 +12,7 @@ import { monitor } from '../monitoring/performanceMonitor';
 import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, findDefinitionInIndex, findChainedRootDefinition } from '../parsers/parseDocument';
 import { findTemplateVar, getTemplateIndex } from './templateIndexer';
 import * as path from 'path';
+import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 
 interface DocIndexCache { version: number; hash: string; }
 const jsDocIndexCache = new Map<string, DocIndexCache>();
@@ -51,8 +52,12 @@ export class DefinitionLogic {
 
             // HTML 文件：尝试外部 js/***.dev.js 或内联脚本
             if (document.languageId === 'html') {
-                const index = resolveVueIndexForHtml(document);
+                let index = resolveVueIndexForHtml(document);
                 if (!index) { return null; }
+                const templateId = getXTemplateIdAtPosition(document, position);
+                if (templateId && index.componentsByTemplateId && index.componentsByTemplateId.has(templateId)) {
+                    index = index.componentsByTemplateId.get(templateId)!;
+                }
                 // 先尝试模板局部变量 (包括 v-for / slot-scope) root token
                 const templateHit = findTemplateVar(document, position, word);
                 if (templateHit) { if (this.shouldLog()) { console.log(`[jump][html][template-hit] ${word} -> ${templateHit.uri.fsPath}:${templateHit.range.start.line + 1}`); } return templateHit; }

@@ -179,34 +179,34 @@ export class JSSymbolParser {
             },
 
             // 函数声明
-            FunctionDeclaration: (path) => {
-                if (path.node.id && path.node.id.loc && path.node.loc) {
-                    const symbol = this.createSymbol(
-                        path.node.id.name,
-                        SymbolType.Function,
-                        path.node.loc,
-                        uri,
-                        path.node.id.loc,
-                        baseLine
-                    );
-                    
-                    // 添加参数信息
-                    symbol.detail = this.getFunctionSignature(path.node);
-                    
-                    if (scopeStack.length > 0) {
-                        this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
-                    } else {
-                        symbols.push(symbol);
-                        result.functions.set(symbol.name, symbol);
+            FunctionDeclaration: {
+                enter: (path) => {
+                    if (path.node.id && path.node.id.loc && path.node.loc) {
+                        const symbol = this.createSymbol(
+                            path.node.id.name,
+                            SymbolType.Function,
+                            path.node.loc,
+                            uri,
+                            path.node.id.loc,
+                            baseLine
+                        );
+                        
+                        // 添加参数信息
+                        symbol.detail = this.getFunctionSignature(path.node);
+                        this.addParamSymbols(symbol, path.node.params, uri, baseLine);
+                        
+                        if (scopeStack.length > 0) {
+                            this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
+                        } else {
+                            symbols.push(symbol);
+                            result.functions.set(symbol.name, symbol);
+                        }
+
+                        // 进入函数作用域
+                        scopeStack.push(symbol);
                     }
-
-                    // 进入函数作用域
-                    scopeStack.push(symbol);
-                }
-            },
-
-            'FunctionDeclaration|FunctionExpression|ArrowFunctionExpression': {
-                exit: (path) => {
+                },
+                exit: () => {
                     // 退出函数作用域
                     if (scopeStack.length > 0) {
                         const last = scopeStack[scopeStack.length - 1];
@@ -216,6 +216,44 @@ export class JSSymbolParser {
                     }
                 }
             },
+
+            // 函数表达式 / 箭头函数
+            'FunctionExpression|ArrowFunctionExpression': {
+                enter: (path) => {
+                    if (!path.node.loc) {
+                        return;
+                    }
+                    const name = t.isFunctionExpression(path.node) && path.node.id && path.node.id.name
+                        ? path.node.id.name
+                        : '<anonymous>';
+                    const symbol = this.createSymbol(
+                        name,
+                        SymbolType.Function,
+                        path.node.loc,
+                        uri,
+                        path.node.loc,
+                        baseLine
+                    );
+                    symbol.detail = this.getFunctionSignature(path.node as t.Function);
+                    this.addParamSymbols(symbol, (path.node as t.Function).params, uri, baseLine);
+
+                    if (scopeStack.length > 0) {
+                        this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
+                    } else {
+                        symbols.push(symbol);
+                    }
+                    scopeStack.push(symbol);
+                },
+                exit: (path) => {
+                    if (scopeStack.length > 0) {
+                        const last = scopeStack[scopeStack.length - 1];
+                        if (last.kind === SymbolType.Function || last.kind === SymbolType.Method) {
+                            scopeStack.pop();
+                        }
+                    }
+                }
+            },
+
 
             // 类声明
             ClassDeclaration: {
@@ -259,6 +297,7 @@ export class JSSymbolParser {
                         );
                         
                         symbol.detail = this.getFunctionSignature(path.node);
+                        this.addParamSymbols(symbol, path.node.params, uri, baseLine);
                         
                         if (scopeStack.length > 0) {
                             this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
@@ -307,9 +346,9 @@ export class JSSymbolParser {
             },
 
             // 对象方法（简写形式）
-            ObjectMethod: (path) => {
-                if (t.isIdentifier(path.node.key) && path.node.key.loc && path.node.loc) {
-                    if (this.isInVueContext(path)) {
+            ObjectMethod: {
+                enter: (path) => {
+                    if (t.isIdentifier(path.node.key) && path.node.key.loc && path.node.loc) {
                         const symbol = this.createSymbol(
                             path.node.key.name,
                             SymbolType.Method,
@@ -318,9 +357,24 @@ export class JSSymbolParser {
                             path.node.key.loc,
                             baseLine
                         );
-                        
                         symbol.detail = this.getFunctionSignature(path.node);
-                        result.thisReferences.set(symbol.name, symbol);
+                        this.addParamSymbols(symbol, path.node.params, uri, baseLine);
+
+                        if (this.isInVueContext(path)) {
+                            result.thisReferences.set(symbol.name, symbol);
+                        }
+
+                        if (scopeStack.length > 0) {
+                            this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
+                        } else {
+                            symbols.push(symbol);
+                        }
+                        scopeStack.push(symbol);
+                    }
+                },
+                exit: () => {
+                    if (scopeStack.length > 0 && scopeStack[scopeStack.length - 1].kind === SymbolType.Method) {
+                        scopeStack.pop();
                     }
                 }
             },
@@ -371,6 +425,56 @@ export class JSSymbolParser {
         parent.children.push(child);
     }
 
+    private addParamSymbols(parent: SymbolInfo, params: t.Node[], uri: vscode.Uri, baseLine: number): void {
+        const identifiers: t.Identifier[] = [];
+        params.forEach(param => this.collectParamIdentifiers(param, identifiers));
+        identifiers.forEach(id => {
+            if (!id.loc) { return; }
+            const symbol = this.createSymbol(
+                id.name,
+                SymbolType.Variable,
+                id.loc,
+                uri,
+                id.loc,
+                baseLine
+            );
+            this.addChildToScope(parent, symbol);
+        });
+    }
+
+    private collectParamIdentifiers(node: t.Node, out: t.Identifier[]): void {
+        if (t.isIdentifier(node)) {
+            out.push(node);
+            return;
+        }
+        if (t.isRestElement(node)) {
+            this.collectParamIdentifiers(node.argument, out);
+            return;
+        }
+        if (t.isAssignmentPattern(node)) {
+            this.collectParamIdentifiers(node.left, out);
+            return;
+        }
+        if (t.isObjectPattern(node)) {
+            node.properties.forEach(prop => {
+                if (t.isRestElement(prop)) {
+                    this.collectParamIdentifiers(prop.argument, out);
+                } else if (t.isObjectProperty(prop)) {
+                    const value = prop.value as t.Node;
+                    this.collectParamIdentifiers(value, out);
+                }
+            });
+            return;
+        }
+        if (t.isArrayPattern(node)) {
+            node.elements.forEach(el => {
+                if (el) {
+                    this.collectParamIdentifiers(el, out);
+                }
+            });
+        }
+    }
+
     /**
      * 获取函数签名
      */
@@ -387,6 +491,58 @@ export class JSSymbolParser {
         }).join(', ');
 
         return `(${params})`;
+    }
+
+    public async findLocalSymbol(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        name: string
+    ): Promise<SymbolInfo | null> {
+        const result = await this.parse(document);
+        const scopeStack = this.findScopeStack(result.symbols, position);
+        for (let i = scopeStack.length - 1; i >= 0; i--) {
+            const scope = scopeStack[i];
+            const hit = this.findChildByName(scope, name, position);
+            if (hit) {
+                return hit;
+            }
+        }
+        return null;
+    }
+
+    private findScopeStack(symbols: SymbolInfo[], position: vscode.Position): SymbolInfo[] {
+        let best: SymbolInfo[] = [];
+        const walk = (symbol: SymbolInfo, stack: SymbolInfo[]) => {
+            if (!symbol.range.contains(position)) { return; }
+            const next = [...stack, symbol];
+            let matched = false;
+            if (symbol.children) {
+                for (const child of symbol.children) {
+                    if (child.range.contains(position)) {
+                        walk(child, next);
+                        matched = true;
+                    }
+                }
+            }
+            if (!matched && next.length > best.length) {
+                best = next;
+            }
+        };
+        symbols.forEach(symbol => walk(symbol, []));
+        return best;
+    }
+
+    private findChildByName(scope: SymbolInfo, name: string, position: vscode.Position): SymbolInfo | null {
+        if (!scope.children) { return null; }
+        let best: SymbolInfo | null = null;
+        for (const child of scope.children) {
+            if (child.name !== name) { continue; }
+            if (!child.range.start.isBeforeOrEqual(position)) { continue; }
+            if (!best || child.range.start.isAfter(best.range.start)) {
+                best = child;
+            }
+        }
+        return best;
     }
 
     /**

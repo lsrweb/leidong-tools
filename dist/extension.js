@@ -501,9 +501,9 @@ exports.EXTENSION_CONFIG = {
     },
     // 支持的文件类型
     SUPPORTED_LANGUAGES: {
-        JAVASCRIPT: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue', 'html'],
+        JAVASCRIPT: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'html'],
         COMPLETION_PATTERNS: ['**/*.dev.js'],
-        ALL_FILES: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue', 'html', 'css', 'json', 'markdown', 'plaintext']
+        ALL_FILES: ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'html', 'css', 'json', 'markdown', 'plaintext']
     },
     // Von 功能配置
     VON: {
@@ -535,7 +535,6 @@ exports.FILE_SELECTORS = {
         { scheme: 'file', language: 'typescript' },
         { scheme: 'file', language: 'javascriptreact' },
         { scheme: 'file', language: 'typescriptreact' },
-        { scheme: 'file', language: 'vue' },
         { scheme: 'file', language: 'html' },
         { scheme: 'file', pattern: '**/*.dev.js' }
     ],
@@ -1242,13 +1241,16 @@ function sanitizeContent(raw) {
 function buildVueIndex(jsContent, uri, baseLine = 0) {
     const clean = sanitizeContent(jsContent);
     const ast = parser.parse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'], errorRecovery: true });
+    const contentHash = fastHash(jsContent);
     const data = new Map();
     const methods = new Map();
     const computed = new Map();
     const mixinData = new Map();
     const mixinMethods = new Map();
     const mixinComputed = new Map();
-    const mixinVars = []; // 需要解析的变量名
+    const methodMeta = new Map();
+    const computedMeta = new Map();
+    const componentsByTemplateId = new Map();
     const objectVarDecls = {};
     const functionVarReturns = {}; // 变量 = 函数() { return {...} }
     const functionDeclarations = {}; // function mixin() { return {...} }
@@ -1293,6 +1295,27 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             }
         }
     });
+    const createIndexShell = () => ({
+        data: new Map(),
+        methods: new Map(),
+        computed: new Map(),
+        mixinData: new Map(),
+        mixinMethods: new Map(),
+        mixinComputed: new Map(),
+        all: new Map(),
+        methodMeta: new Map(),
+        computedMeta: new Map(),
+        version: 0,
+        hash: contentHash,
+        builtAt: Date.now()
+    });
+    const mergeAllMaps = (index) => {
+        for (const m of [index.data, index.computed, index.methods, index.mixinData, index.mixinComputed, index.mixinMethods]) {
+            m.forEach((loc, k) => { if (!index.all.has(k)) {
+                index.all.set(k, loc);
+            } });
+        }
+    };
     const extractData = (node, lineOffset, target) => {
         if (!node) {
             return;
@@ -1353,7 +1376,164 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             }
         }
     };
-    const extractMethods = (node, lineOffset, target) => {
+    const normalizeComment = (value) => {
+        const lines = value.split(/\r?\n/).map(line => line.replace(/^\s*\*? ?/, '').trimEnd());
+        return lines.join('\n').trim();
+    };
+    const formatJSDoc = (value) => {
+        const rawLines = normalizeComment(value).split(/\r?\n/).map(line => line.trim());
+        if (rawLines.length === 0) {
+            return undefined;
+        }
+        const summaryLines = [];
+        const params = [];
+        let returns = null;
+        const extraLines = [];
+        let inExample = false;
+        const exampleLines = [];
+        for (const line of rawLines) {
+            if (!line) {
+                if (inExample) {
+                    exampleLines.push('');
+                }
+                continue;
+            }
+            if (line.startsWith('@example')) {
+                inExample = true;
+                const rest = line.replace('@example', '').trim();
+                if (rest) {
+                    exampleLines.push(rest);
+                }
+                continue;
+            }
+            if (inExample) {
+                exampleLines.push(line);
+                continue;
+            }
+            if (line.startsWith('@param')) {
+                const match = /@param\s+(?:\{([^}]+)\}\s+)?([^\s]+)?\s*(.*)/.exec(line);
+                if (match) {
+                    params.push({
+                        type: match[1],
+                        name: match[2] || 'param',
+                        desc: match[3]?.trim()
+                    });
+                }
+                continue;
+            }
+            if (line.startsWith('@returns') || line.startsWith('@return')) {
+                const match = /@returns?\s+(?:\{([^}]+)\}\s+)?(.*)/.exec(line);
+                if (match) {
+                    returns = {
+                        type: match[1],
+                        desc: match[2]?.trim()
+                    };
+                }
+                continue;
+            }
+            if (line.startsWith('@')) {
+                extraLines.push(line);
+                continue;
+            }
+            summaryLines.push(line);
+        }
+        const parts = [];
+        if (summaryLines.length > 0) {
+            parts.push(summaryLines.join('\n'));
+        }
+        if (params.length > 0) {
+            const paramLines = params.map(param => {
+                const typeText = param.type ? ` (${param.type})` : '';
+                const descText = param.desc ? ` - ${param.desc}` : '';
+                return `- \`${param.name}\`${typeText}${descText}`;
+            });
+            parts.push(`**Parameters**\n${paramLines.join('\n')}`);
+        }
+        if (returns) {
+            const typeText = returns.type ? `(${returns.type}) ` : '';
+            const descText = returns.desc ? `${returns.desc}` : '';
+            const line = `- ${typeText}${descText}`.trim();
+            parts.push(`**Returns**\n${line}`);
+        }
+        if (exampleLines.length > 0) {
+            parts.push(`**Example**\n\`\`\`js\n${exampleLines.join('\n')}\n\`\`\``);
+        }
+        if (extraLines.length > 0) {
+            parts.push(extraLines.join('\n'));
+        }
+        const result = parts.join('\n\n').trim();
+        return result || undefined;
+    };
+    const formatLineComments = (comments) => {
+        const lines = comments.map(comment => comment.value.trim()).filter(Boolean);
+        if (lines.length === 0) {
+            return undefined;
+        }
+        return lines.join('\n');
+    };
+    const getDocFromComments = (comments) => {
+        if (!comments || comments.length === 0) {
+            return undefined;
+        }
+        const tailLineComments = [];
+        for (let i = comments.length - 1; i >= 0; i--) {
+            const comment = comments[i];
+            if (comment.type === 'CommentLine') {
+                tailLineComments.unshift(comment);
+            }
+            else {
+                break;
+            }
+        }
+        if (tailLineComments.length > 0) {
+            return formatLineComments(tailLineComments);
+        }
+        const last = comments[comments.length - 1];
+        if (last.type === 'CommentBlock') {
+            const trimmed = last.value.trim();
+            if (trimmed.startsWith('*') || trimmed.includes('@')) {
+                return formatJSDoc(last.value);
+            }
+            const text = normalizeComment(last.value || '');
+            return text || undefined;
+        }
+        return undefined;
+    };
+    const getDocFromProp = (prop) => {
+        if (prop.leadingComments && prop.leadingComments.length > 0) {
+            return getDocFromComments(prop.leadingComments);
+        }
+        if (t.isObjectProperty(prop) && prop.value?.leadingComments) {
+            return getDocFromComments(prop.value.leadingComments);
+        }
+        return undefined;
+    };
+    const paramToString = (param) => {
+        if (t.isIdentifier(param)) {
+            return param.name;
+        }
+        if (t.isRestElement(param)) {
+            return `...${paramToString(param.argument)}`;
+        }
+        if (t.isAssignmentPattern(param)) {
+            return `${paramToString(param.left)}=?`;
+        }
+        if (t.isObjectPattern(param)) {
+            return '{...}';
+        }
+        if (t.isArrayPattern(param)) {
+            return '[...]';
+        }
+        return 'param';
+    };
+    const extractParams = (params) => params.map(paramToString);
+    const recordFunctionMeta = (name, params, doc, target) => {
+        if (!target || target.has(name)) {
+            return;
+        }
+        target.set(name, { params: extractParams(params), doc });
+    };
+    const extractMethods = (node, lineOffset, target, metaTarget) => {
         if (!node || !t.isObjectExpression(node)) {
             return;
         }
@@ -1361,14 +1541,16 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
                 const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
                 target.set(prop.key.name, loc);
+                recordFunctionMeta(prop.key.name, prop.params, getDocFromProp(prop), metaTarget);
             }
             else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc && (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value))) {
                 const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
                 target.set(prop.key.name, loc);
+                recordFunctionMeta(prop.key.name, prop.value.params, getDocFromProp(prop), metaTarget);
             }
         }
     };
-    const extractComputed = (node, lineOffset, target) => {
+    const extractComputed = (node, lineOffset, target, metaTarget) => {
         if (!node || !t.isObjectExpression(node)) {
             return;
         }
@@ -1379,12 +1561,14 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                 if (!target.has(prop.key.name)) {
                     target.set(prop.key.name, loc);
                 }
+                recordFunctionMeta(prop.key.name, prop.params, getDocFromProp(prop), metaTarget);
             }
             else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
                 const val = prop.value;
                 if (t.isFunctionExpression(val) || t.isArrowFunctionExpression(val)) {
                     const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
                     target.set(prop.key.name, loc);
+                    recordFunctionMeta(prop.key.name, val.params, getDocFromProp(prop), metaTarget);
                 }
                 else if (t.isObjectExpression(val)) {
                     // 形如 someProp: { get(){}, set(){} }
@@ -1392,10 +1576,204 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                     if (hasGetter) {
                         const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
                         target.set(prop.key.name, loc);
+                        const getter = val.properties.find(p => t.isObjectMethod(p) && p.kind === 'get');
+                        if (getter) {
+                            const doc = getDocFromProp(getter) || getDocFromProp(prop);
+                            recordFunctionMeta(prop.key.name, getter.params, doc, metaTarget);
+                        }
                     }
                 }
             }
         }
+    };
+    const getPropertyName = (key) => {
+        if (!key) {
+            return null;
+        }
+        if (t.isIdentifier(key)) {
+            return key.name;
+        }
+        if (t.isStringLiteral(key)) {
+            return key.value;
+        }
+        return null;
+    };
+    const resolveObjectExpression = (node) => {
+        if (!node) {
+            return null;
+        }
+        if (t.isObjectExpression(node)) {
+            return node;
+        }
+        if (t.isIdentifier(node)) {
+            const name = node.name;
+            return objectVarDecls[name] || functionVarReturns[name] || functionDeclarations[name] || null;
+        }
+        return null;
+    };
+    const extractTemplateIdFromNode = (node) => {
+        if (!node) {
+            return null;
+        }
+        if (t.isStringLiteral(node)) {
+            const value = node.value.trim();
+            return value.startsWith('#') ? value.slice(1) : null;
+        }
+        if (t.isTemplateLiteral(node) && node.expressions.length === 0) {
+            const value = node.quasis[0]?.value.cooked?.trim() || '';
+            return value.startsWith('#') ? value.slice(1) : null;
+        }
+        if (t.isMemberExpression(node) && t.isIdentifier(node.property, { name: 'innerHTML' })) {
+            return extractTemplateIdFromNode(node.object);
+        }
+        if (t.isCallExpression(node) && t.isMemberExpression(node.callee)) {
+            const callee = node.callee;
+            if (t.isIdentifier(callee.object, { name: 'document' }) && t.isIdentifier(callee.property)) {
+                const calleeName = callee.property.name;
+                const arg = node.arguments[0];
+                const readArg = (value) => {
+                    if (calleeName === 'getElementById') {
+                        return value;
+                    }
+                    if (calleeName === 'querySelector' || calleeName === 'querySelectorAll') {
+                        return value.startsWith('#') ? value.slice(1) : null;
+                    }
+                    return null;
+                };
+                if (t.isStringLiteral(arg)) {
+                    return readArg(arg.value.trim());
+                }
+                if (t.isTemplateLiteral(arg) && arg.expressions.length === 0) {
+                    return readArg(arg.quasis[0]?.value.cooked?.trim() || '');
+                }
+            }
+        }
+        return null;
+    };
+    const extractTemplateIdFromOptions = (options) => {
+        for (const prop of options.properties) {
+            if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) {
+                continue;
+            }
+            const name = getPropertyName(prop.key);
+            if (name !== 'template') {
+                continue;
+            }
+            if (t.isObjectMethod(prop)) {
+                return null;
+            }
+            return extractTemplateIdFromNode(prop.value);
+        }
+        return null;
+    };
+    const applyMixinsToIndex = (index, mixinObjects, lineOffset) => {
+        for (const obj of mixinObjects) {
+            for (const prop of obj.properties) {
+                if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) {
+                    continue;
+                }
+                const name = getPropertyName(prop.key);
+                if (name === 'data') {
+                    extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), lineOffset, index.mixinData);
+                }
+                else if (name === 'methods') {
+                    extractMethods(prop.value ?? prop, lineOffset, index.mixinMethods, index.methodMeta);
+                }
+                else if (name === 'computed') {
+                    extractComputed(prop.value ?? prop, lineOffset, index.mixinComputed, index.computedMeta);
+                }
+            }
+        }
+    };
+    const populateIndexFromOptions = (index, options, lineOffset) => {
+        const mixinVars = [];
+        const mixinObjects = [];
+        for (const prop of options.properties) {
+            if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) {
+                continue;
+            }
+            const name = getPropertyName(prop.key);
+            if (!name) {
+                continue;
+            }
+            if (name === 'data') {
+                extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), lineOffset, index.data);
+            }
+            else if (name === 'methods') {
+                extractMethods(prop.value ?? prop, lineOffset, index.methods, index.methodMeta);
+            }
+            else if (name === 'computed') {
+                extractComputed(prop.value ?? prop, lineOffset, index.computed, index.computedMeta);
+            }
+            else if (name === 'mixins') {
+                const value = prop.value;
+                if (value && t.isArrayExpression(value)) {
+                    value.elements.forEach(el => {
+                        if (t.isIdentifier(el)) {
+                            mixinVars.push(el.name);
+                        }
+                        else if (t.isObjectExpression(el)) {
+                            mixinObjects.push(el);
+                        }
+                    });
+                }
+            }
+        }
+        for (const mixinVar of mixinVars) {
+            const obj = objectVarDecls[mixinVar] || functionVarReturns[mixinVar] || functionDeclarations[mixinVar];
+            if (obj) {
+                mixinObjects.push(obj);
+            }
+        }
+        if (mixinObjects.length > 0) {
+            applyMixinsToIndex(index, mixinObjects, lineOffset);
+        }
+        mergeAllMaps(index);
+    };
+    const collectComponentsFromOptions = (options, lineOffset) => {
+        for (const prop of options.properties) {
+            if (!t.isObjectProperty(prop)) {
+                continue;
+            }
+            const name = getPropertyName(prop.key);
+            if (name !== 'components') {
+                continue;
+            }
+            const compsObj = resolveObjectExpression(prop.value);
+            if (!compsObj) {
+                continue;
+            }
+            for (const compProp of compsObj.properties) {
+                if (!t.isObjectProperty(compProp)) {
+                    continue;
+                }
+                const compOptions = resolveObjectExpression(compProp.value) || (t.isObjectExpression(compProp.value) ? compProp.value : null);
+                if (!compOptions) {
+                    continue;
+                }
+                const templateId = extractTemplateIdFromOptions(compOptions);
+                if (!templateId || componentsByTemplateId.has(templateId)) {
+                    continue;
+                }
+                const compIndex = createIndexShell();
+                populateIndexFromOptions(compIndex, compOptions, lineOffset);
+                componentsByTemplateId.set(templateId, compIndex);
+            }
+        }
+    };
+    const rootIndex = {
+        data,
+        methods,
+        computed,
+        mixinData,
+        mixinMethods,
+        mixinComputed,
+        all: new Map(),
+        methodMeta,
+        computedMeta,
+        version: 0,
+        hash: contentHash,
+        builtAt: Date.now()
     };
     // 解析 new Vue({...}) 结构
     (0, traverse_1.default)(ast, {
@@ -1403,61 +1781,33 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             if (t.isIdentifier(p.node.callee) && p.node.callee.name === 'Vue') {
                 const first = p.node.arguments[0];
                 if (first && t.isObjectExpression(first)) {
-                    for (const prop of first.properties) {
-                        if (!t.isObjectProperty(prop) && !t.isObjectMethod(prop)) {
-                            continue;
-                        }
-                        const key = prop.key; // unify
-                        if (!t.isIdentifier(key)) {
-                            continue;
-                        }
-                        const name = key.name;
-                        if (name === 'data') {
-                            // 统一把 prop 传进去, extractData 会处理多种形式
-                            extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), baseLine, data);
-                        }
-                        else if (name === 'methods') {
-                            extractMethods(prop.value ?? prop, baseLine, methods);
-                        }
-                        else if (name === 'computed') {
-                            extractComputed(prop.value ?? prop, baseLine, computed);
-                        }
-                        else if (name === 'mixins') {
-                            // mixins: [mixinA, mixinB]
-                            const value = prop.value;
-                            if (value && t.isArrayExpression(value)) {
-                                value.elements.forEach(el => { if (t.isIdentifier(el)) {
-                                    mixinVars.push(el.name);
-                                } });
-                            }
-                        }
-                    }
+                    populateIndexFromOptions(rootIndex, first, baseLine);
+                    collectComponentsFromOptions(first, baseLine);
                 }
             }
         }
     });
-    // 解析 mixin 变量对象
-    for (const mixinVar of mixinVars) {
-        const obj = objectVarDecls[mixinVar] || functionVarReturns[mixinVar] || functionDeclarations[mixinVar];
-        if (!obj) {
-            continue;
-        }
-        // mixin 对象自身可能直接包含 data/methods
-        for (const prop of obj.properties) {
-            if (t.isObjectProperty(prop) && t.isIdentifier(prop.key)) {
-                const name = prop.key.name;
-                if (name === 'data') {
-                    extractData(prop.value ?? (t.isObjectMethod(prop) ? prop : prop.value), baseLine, mixinData);
-                }
-                else if (name === 'methods') {
-                    extractMethods(prop.value, baseLine, mixinMethods);
-                }
-                else if (name === 'computed') {
-                    extractComputed(prop.value, baseLine, mixinComputed);
-                }
+    // 解析 Vue.component(...) 对应的 x-template
+    (0, traverse_1.default)(ast, {
+        CallExpression(p) {
+            const callee = p.node.callee;
+            if (!t.isMemberExpression(callee) || !t.isIdentifier(callee.object, { name: 'Vue' }) || !t.isIdentifier(callee.property, { name: 'component' })) {
+                return;
             }
+            const optionsArg = p.node.arguments[1];
+            const optionsObj = resolveObjectExpression(optionsArg);
+            if (!optionsObj) {
+                return;
+            }
+            const templateId = extractTemplateIdFromOptions(optionsObj);
+            if (!templateId || componentsByTemplateId.has(templateId)) {
+                return;
+            }
+            const compIndex = createIndexShell();
+            populateIndexFromOptions(compIndex, optionsObj, baseLine);
+            componentsByTemplateId.set(templateId, compIndex);
         }
-    }
+    });
     const all = new Map();
     for (const m of [data, computed, methods, mixinData, mixinComputed, mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) {
@@ -1466,9 +1816,12 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
     }
     return {
         data, methods, computed, mixinData, mixinMethods, mixinComputed, all,
+        methodMeta,
+        computedMeta,
         version: 0,
-        hash: fastHash(jsContent),
-        builtAt: Date.now()
+        hash: contentHash,
+        builtAt: Date.now(),
+        componentsByTemplateId: componentsByTemplateId.size > 0 ? componentsByTemplateId : undefined
     };
 }
 /**
@@ -1516,6 +1869,18 @@ async function parseDocument(document) {
         const variables = [];
         const methods = [];
         const thisReferences = new Map();
+        const applyFunctionMeta = (item, name, typeLabel, metaMap) => {
+            const meta = metaMap.get(name);
+            if (meta && meta.params.length > 0) {
+                item.detail = `${typeLabel} ${name}(${meta.params.join(', ')}) (雷动三千)`;
+            }
+            else {
+                item.detail = `${typeLabel} ${name}() (雷动三千)`;
+            }
+            if (meta?.doc) {
+                item.documentation = new vscode.MarkdownString(meta.doc);
+            }
+        };
         index.data.forEach((_loc, name) => {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
             item.detail = 'data 属性 (雷动三千)';
@@ -1524,14 +1889,14 @@ async function parseDocument(document) {
         });
         index.methods.forEach((_loc, name) => {
             const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
-            item.detail = 'methods 方法 (雷动三千)';
+            applyFunctionMeta(item, name, 'methods', index.methodMeta);
             methods.push(item);
             thisReferences.set(name, item);
         });
         index.computed.forEach((_loc, name) => {
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
-                item.detail = 'computed 属性 (雷动三千)';
+                applyFunctionMeta(item, name, 'computed', index.computedMeta);
                 variables.push(item);
                 thisReferences.set(name, item);
             }
@@ -1547,7 +1912,7 @@ async function parseDocument(document) {
         index.mixinComputed.forEach((_loc, name) => {
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
-                item.detail = 'mixin computed (雷动三千)';
+                applyFunctionMeta(item, name, 'mixin computed', index.computedMeta);
                 variables.push(item);
                 thisReferences.set(name, item);
             }
@@ -1555,7 +1920,7 @@ async function parseDocument(document) {
         index.mixinMethods.forEach((_loc, name) => {
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
-                item.detail = 'mixin method (雷动三千)';
+                applyFunctionMeta(item, name, 'mixin method', index.methodMeta);
                 methods.push(item);
                 thisReferences.set(name, item);
             }
@@ -1568,6 +1933,46 @@ async function parseDocument(document) {
     }
 }
 const externalFileCache = new Map();
+const htmlScriptCache = new Map();
+const HTML_SCRIPT_CACHE_TTL_MS = 30 * 1000;
+function findExternalDevScriptPath(htmlPath) {
+    const cached = htmlScriptCache.get(htmlPath);
+    const now = Date.now();
+    if (cached && now - cached.checkedAt < HTML_SCRIPT_CACHE_TTL_MS) {
+        if (cached.scriptPath && fs.existsSync(cached.scriptPath)) {
+            return cached.scriptPath;
+        }
+        if (!cached.scriptPath) {
+            return null;
+        }
+    }
+    const dir = path.dirname(htmlPath);
+    const base = path.basename(htmlPath, path.extname(htmlPath));
+    const jsRoot = path.join(dir, 'js');
+    const targetFileName = `${base}.dev.js`;
+    if (fs.existsSync(jsRoot)) {
+        const stack = [jsRoot];
+        while (stack.length) {
+            const current = stack.pop();
+            try {
+                const entries = fs.readdirSync(current, { withFileTypes: true });
+                for (const ent of entries) {
+                    const full = path.join(current, ent.name);
+                    if (ent.isDirectory()) {
+                        stack.push(full);
+                    }
+                    else if (ent.isFile() && ent.name === targetFileName) {
+                        htmlScriptCache.set(htmlPath, { scriptPath: full, checkedAt: now });
+                        return full;
+                    }
+                }
+            }
+            catch (e) { /* ignore directory read errors */ }
+        }
+    }
+    htmlScriptCache.set(htmlPath, { scriptPath: null, checkedAt: now });
+    return null;
+}
 function getExternalFileIndex(fullPath) {
     try {
         const stat = fs.statSync(fullPath);
@@ -1592,33 +1997,13 @@ function getExternalFileIndex(fullPath) {
 }
 function resolveVueIndexForHtml(document) {
     const htmlPath = document.uri.fsPath;
-    const dir = path.dirname(htmlPath);
-    const base = path.basename(htmlPath, path.extname(htmlPath));
-    // 递归搜索 js/**/同名.dev.js (深度优先, 首个匹配即返回)
-    const jsRoot = path.join(dir, 'js');
-    const targetFileName = `${base}.dev.js`;
-    if (fs.existsSync(jsRoot)) {
-        const stack = [jsRoot];
-        while (stack.length) {
-            const current = stack.pop();
-            try {
-                const entries = fs.readdirSync(current, { withFileTypes: true });
-                for (const ent of entries) {
-                    const full = path.join(current, ent.name);
-                    if (ent.isDirectory()) {
-                        stack.push(full);
-                    }
-                    else if (ent.isFile() && ent.name === targetFileName) {
-                        const extIdx = getExternalFileIndex(full);
-                        if (extIdx) {
-                            return extIdx;
-                        }
-                        return null;
-                    }
-                }
-            }
-            catch (e) { /* ignore directory read errors */ }
+    const externalPath = findExternalDevScriptPath(htmlPath);
+    if (externalPath) {
+        const extIdx = getExternalFileIndex(externalPath);
+        if (extIdx) {
+            return extIdx;
         }
+        return null;
     }
     // 查找内联 <script> new Vue({...})
     const text = document.getText();
@@ -47446,25 +47831,31 @@ const config_1 = __webpack_require__(5);
  * 注册所有 Language Providers
  */
 function registerProviders(context, fileWatchManager) {
-    // 注册 HTML Vue 定义提供器 
+    // 注册 HTML/JS Vue 定义提供器 
     // 确保只注册一次
     if (!context.subscriptions.some(sub => sub.constructor.name === 'DefinitionProviderRegistration')) {
-        context.subscriptions.push(vscode.languages.registerDefinitionProvider({ scheme: 'file', language: 'html' }, new definitionProvider_1.VueHtmlDefinitionProvider()));
+        context.subscriptions.push(vscode.languages.registerDefinitionProvider([
+            { scheme: 'file', language: 'html' },
+            { scheme: 'file', language: 'javascript' },
+            { scheme: 'file', language: 'typescript' }
+        ], new definitionProvider_1.VueHtmlDefinitionProvider()));
     }
     // 注册悬停提供器
     context.subscriptions.push(vscode.languages.registerHoverProvider([
         { scheme: 'file', language: 'html' },
         { scheme: 'file', language: 'javascript' },
         { scheme: 'file', language: 'typescript' }
-    ], new hoverProvider_1.VueHoverProvider())); // 注册 JavaScript 补全提供器
+    ], new hoverProvider_1.VueHoverProvider()));
+    // 注册 JavaScript 补全提供器
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT_ONLY, new completionProvider_1.JavaScriptCompletionProvider(), '.'));
+    // 注册 HTML 模板补全提供器
+    context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.HTML, new completionProvider_1.HtmlVueCompletionProvider(), '.', ':', '@', '{'));
     // 注册快速日志补全提供器 (重写版，使用 command 模式)
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT, new completionProvider_1.QuickLogCompletionProvider(), '.'));
     // 注册 Von 代码片段补全提供器 - 支持所有文件类型
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider([
         { scheme: 'file', language: 'javascript' },
         { scheme: 'file', language: 'typescript' },
-        { scheme: 'file', language: 'vue' },
         { scheme: 'file', language: 'html' },
         { scheme: 'file', language: 'css' },
         { scheme: 'file', language: 'json' },
@@ -47568,6 +47959,7 @@ const performanceMonitor_1 = __webpack_require__(6);
 const jsSymbolParser_1 = __webpack_require__(183);
 const parseDocument_1 = __webpack_require__(8);
 const templateIndexer_1 = __webpack_require__(178);
+const templateContext_1 = __webpack_require__(191);
 const HTML_ATTR_BLACKLIST = new Set([
     'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'type', 'value', 'name', 'placeholder', 'rel', 'for', 'aria-label'
 ]);
@@ -47595,7 +47987,7 @@ class EnhancedDefinitionLogic {
             }
             // JS/TS 文件：优先使用新解析器
             if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                return await this.handleJavaScriptFile(document, word, fullChain, contextType);
+                return await this.handleJavaScriptFile(document, position, word, fullChain, contextType);
             }
             // HTML 文件：尝试外部 JS 或内联脚本
             if (document.languageId === 'html') {
@@ -47611,16 +48003,20 @@ class EnhancedDefinitionLogic {
     /**
      * 处理 JavaScript 文件
      */
-    async handleJavaScriptFile(document, word, fullChain, contextType) {
+    async handleJavaScriptFile(document, position, word, fullChain, contextType) {
         if (this.shouldLog()) {
             console.log(`[enhanced-jump][js] word=${word} chain=${fullChain || ''} context=${contextType}`);
         }
         try {
             // 1. 尝试新解析器
             const parseResult = await jsSymbolParser_1.jsSymbolParser.parse(document);
+            const chainRoot = fullChain ? fullChain.split('.')[0] : word;
+            const thisRoot = fullChain && (contextType === 'this' || contextType === 'that' || contextType === 'alias')
+                ? fullChain.split('.')[1] || word
+                : word;
             // 如果是 this.xxx 或 that.xxx，查找 Vue 实例成员
             if (contextType === 'this' || contextType === 'that' || contextType === 'alias') {
-                const symbol = parseResult.thisReferences.get(word);
+                const symbol = parseResult.thisReferences.get(thisRoot) || parseResult.thisReferences.get(word);
                 if (symbol) {
                     const location = new vscode.Location(document.uri, symbol.selectionRange);
                     if (this.shouldLog()) {
@@ -47629,17 +48025,27 @@ class EnhancedDefinitionLogic {
                     return location;
                 }
             }
+            if (contextType === 'plain') {
+                const localSymbol = await jsSymbolParser_1.jsSymbolParser.findLocalSymbol(document, position, chainRoot);
+                if (localSymbol) {
+                    const location = new vscode.Location(document.uri, localSymbol.selectionRange);
+                    if (this.shouldLog()) {
+                        console.log(`[enhanced-jump][js][local-hit] ${chainRoot} -> ${document.uri.fsPath}:${localSymbol.range.start.line + 1}`);
+                    }
+                    return location;
+                }
+            }
             // 普通变量/函数/类查找
             let symbol;
             // 先查找变量
-            symbol = parseResult.variables.get(word);
+            symbol = parseResult.variables.get(chainRoot);
             // 再查找函数
             if (!symbol) {
-                symbol = parseResult.functions.get(word);
+                symbol = parseResult.functions.get(chainRoot);
             }
             // 最后查找类
             if (!symbol) {
-                symbol = parseResult.classes.get(word);
+                symbol = parseResult.classes.get(chainRoot);
             }
             if (symbol) {
                 const location = new vscode.Location(document.uri, symbol.selectionRange);
@@ -47690,9 +48096,13 @@ class EnhancedDefinitionLogic {
             return templateHit;
         }
         // 解析 HTML 中的 Vue 索引（外部 JS 或内联 script）
-        const index = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+        let index = (0, parseDocument_1.resolveVueIndexForHtml)(document);
         if (!index) {
             return null;
+        }
+        const templateId = (0, templateContext_1.getXTemplateIdAtPosition)(document, position);
+        if (templateId && index.componentsByTemplateId && index.componentsByTemplateId.has(templateId)) {
+            index = index.componentsByTemplateId.get(templateId);
         }
         if (this.shouldLog()) {
             console.log(`[enhanced-jump][html] word=${word} chain=${fullChain || ''}`);
@@ -47988,25 +48398,55 @@ class JSSymbolParser {
                 });
             },
             // 函数声明
-            FunctionDeclaration: (path) => {
-                if (path.node.id && path.node.id.loc && path.node.loc) {
-                    const symbol = this.createSymbol(path.node.id.name, SymbolType.Function, path.node.loc, uri, path.node.id.loc, baseLine);
-                    // 添加参数信息
+            FunctionDeclaration: {
+                enter: (path) => {
+                    if (path.node.id && path.node.id.loc && path.node.loc) {
+                        const symbol = this.createSymbol(path.node.id.name, SymbolType.Function, path.node.loc, uri, path.node.id.loc, baseLine);
+                        // 添加参数信息
+                        symbol.detail = this.getFunctionSignature(path.node);
+                        this.addParamSymbols(symbol, path.node.params, uri, baseLine);
+                        if (scopeStack.length > 0) {
+                            this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
+                        }
+                        else {
+                            symbols.push(symbol);
+                            result.functions.set(symbol.name, symbol);
+                        }
+                        // 进入函数作用域
+                        scopeStack.push(symbol);
+                    }
+                },
+                exit: () => {
+                    // 退出函数作用域
+                    if (scopeStack.length > 0) {
+                        const last = scopeStack[scopeStack.length - 1];
+                        if (last.kind === SymbolType.Function || last.kind === SymbolType.Method) {
+                            scopeStack.pop();
+                        }
+                    }
+                }
+            },
+            // 函数表达式 / 箭头函数
+            'FunctionExpression|ArrowFunctionExpression': {
+                enter: (path) => {
+                    if (!path.node.loc) {
+                        return;
+                    }
+                    const name = t.isFunctionExpression(path.node) && path.node.id && path.node.id.name
+                        ? path.node.id.name
+                        : '<anonymous>';
+                    const symbol = this.createSymbol(name, SymbolType.Function, path.node.loc, uri, path.node.loc, baseLine);
                     symbol.detail = this.getFunctionSignature(path.node);
+                    this.addParamSymbols(symbol, path.node.params, uri, baseLine);
                     if (scopeStack.length > 0) {
                         this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
                     }
                     else {
                         symbols.push(symbol);
-                        result.functions.set(symbol.name, symbol);
                     }
-                    // 进入函数作用域
                     scopeStack.push(symbol);
-                }
-            },
-            'FunctionDeclaration|FunctionExpression|ArrowFunctionExpression': {
+                },
                 exit: (path) => {
-                    // 退出函数作用域
                     if (scopeStack.length > 0) {
                         const last = scopeStack[scopeStack.length - 1];
                         if (last.kind === SymbolType.Function || last.kind === SymbolType.Method) {
@@ -48039,6 +48479,7 @@ class JSSymbolParser {
                     if (t.isIdentifier(path.node.key) && path.node.key.loc && path.node.loc) {
                         const symbol = this.createSymbol(path.node.key.name, SymbolType.Method, path.node.loc, uri, path.node.key.loc, baseLine);
                         symbol.detail = this.getFunctionSignature(path.node);
+                        this.addParamSymbols(symbol, path.node.params, uri, baseLine);
                         if (scopeStack.length > 0) {
                             this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
                         }
@@ -48069,12 +48510,27 @@ class JSSymbolParser {
                 }
             },
             // 对象方法（简写形式）
-            ObjectMethod: (path) => {
-                if (t.isIdentifier(path.node.key) && path.node.key.loc && path.node.loc) {
-                    if (this.isInVueContext(path)) {
+            ObjectMethod: {
+                enter: (path) => {
+                    if (t.isIdentifier(path.node.key) && path.node.key.loc && path.node.loc) {
                         const symbol = this.createSymbol(path.node.key.name, SymbolType.Method, path.node.loc, uri, path.node.key.loc, baseLine);
                         symbol.detail = this.getFunctionSignature(path.node);
-                        result.thisReferences.set(symbol.name, symbol);
+                        this.addParamSymbols(symbol, path.node.params, uri, baseLine);
+                        if (this.isInVueContext(path)) {
+                            result.thisReferences.set(symbol.name, symbol);
+                        }
+                        if (scopeStack.length > 0) {
+                            this.addChildToScope(scopeStack[scopeStack.length - 1], symbol);
+                        }
+                        else {
+                            symbols.push(symbol);
+                        }
+                        scopeStack.push(symbol);
+                    }
+                },
+                exit: () => {
+                    if (scopeStack.length > 0 && scopeStack[scopeStack.length - 1].kind === SymbolType.Method) {
+                        scopeStack.pop();
                     }
                 }
             },
@@ -48107,6 +48563,50 @@ class JSSymbolParser {
         }
         parent.children.push(child);
     }
+    addParamSymbols(parent, params, uri, baseLine) {
+        const identifiers = [];
+        params.forEach(param => this.collectParamIdentifiers(param, identifiers));
+        identifiers.forEach(id => {
+            if (!id.loc) {
+                return;
+            }
+            const symbol = this.createSymbol(id.name, SymbolType.Variable, id.loc, uri, id.loc, baseLine);
+            this.addChildToScope(parent, symbol);
+        });
+    }
+    collectParamIdentifiers(node, out) {
+        if (t.isIdentifier(node)) {
+            out.push(node);
+            return;
+        }
+        if (t.isRestElement(node)) {
+            this.collectParamIdentifiers(node.argument, out);
+            return;
+        }
+        if (t.isAssignmentPattern(node)) {
+            this.collectParamIdentifiers(node.left, out);
+            return;
+        }
+        if (t.isObjectPattern(node)) {
+            node.properties.forEach(prop => {
+                if (t.isRestElement(prop)) {
+                    this.collectParamIdentifiers(prop.argument, out);
+                }
+                else if (t.isObjectProperty(prop)) {
+                    const value = prop.value;
+                    this.collectParamIdentifiers(value, out);
+                }
+            });
+            return;
+        }
+        if (t.isArrayPattern(node)) {
+            node.elements.forEach(el => {
+                if (el) {
+                    this.collectParamIdentifiers(el, out);
+                }
+            });
+        }
+    }
     /**
      * 获取函数签名
      */
@@ -48124,6 +48624,59 @@ class JSSymbolParser {
             return '...';
         }).join(', ');
         return `(${params})`;
+    }
+    async findLocalSymbol(document, position, name) {
+        const result = await this.parse(document);
+        const scopeStack = this.findScopeStack(result.symbols, position);
+        for (let i = scopeStack.length - 1; i >= 0; i--) {
+            const scope = scopeStack[i];
+            const hit = this.findChildByName(scope, name, position);
+            if (hit) {
+                return hit;
+            }
+        }
+        return null;
+    }
+    findScopeStack(symbols, position) {
+        let best = [];
+        const walk = (symbol, stack) => {
+            if (!symbol.range.contains(position)) {
+                return;
+            }
+            const next = [...stack, symbol];
+            let matched = false;
+            if (symbol.children) {
+                for (const child of symbol.children) {
+                    if (child.range.contains(position)) {
+                        walk(child, next);
+                        matched = true;
+                    }
+                }
+            }
+            if (!matched && next.length > best.length) {
+                best = next;
+            }
+        };
+        symbols.forEach(symbol => walk(symbol, []));
+        return best;
+    }
+    findChildByName(scope, name, position) {
+        if (!scope.children) {
+            return null;
+        }
+        let best = null;
+        for (const child of scope.children) {
+            if (child.name !== name) {
+                continue;
+            }
+            if (!child.range.start.isBeforeOrEqual(position)) {
+                continue;
+            }
+            if (!best || child.range.start.isAfter(best.range.start)) {
+                best = child;
+            }
+        }
+        return best;
     }
     /**
      * 检查是否在 Vue 上下文中
@@ -48847,6 +49400,7 @@ exports.VueHoverProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(8);
 const templateIndexer_1 = __webpack_require__(178);
+const templateContext_1 = __webpack_require__(191);
 class VueHoverProvider {
     constructor() {
         this.hoverTimeout = null;
@@ -48883,19 +49437,44 @@ class VueHoverProvider {
             return null;
         }
         const word = document.getText(wordRange);
-        const line = document.lineAt(position.line).text;
+        const buildVueHover = (def, vueIndex) => {
+            if (!vueIndex) {
+                return null;
+            }
+            const methodMeta = vueIndex.methodMeta.get(word);
+            const computedMeta = vueIndex.computedMeta.get(word);
+            const isMethod = vueIndex.methods.has(word) || vueIndex.mixinMethods.has(word) || !!methodMeta;
+            const isComputed = vueIndex.computed.has(word) || vueIndex.mixinComputed.has(word) || !!computedMeta;
+            const label = isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : 'Vue Variable';
+            const meta = methodMeta || computedMeta;
+            const params = meta?.params?.length ? `(${meta.params.join(', ')})` : isMethod ? '()' : '';
+            const header = `**${label}**: ${word}${params}`;
+            const parts = [header];
+            if (meta?.doc) {
+                parts.push(meta.doc);
+            }
+            parts.push(`Defined at ${def.uri.fsPath}:${def.range.start.line + 1}`);
+            return new vscode.Hover(new vscode.MarkdownString(parts.join('\n\n')), wordRange);
+        };
         // 检查是否在模板中
         if (document.languageId === 'html') {
             const templateVar = (0, templateIndexer_1.findTemplateVar)(document, position, word);
             if (templateVar) {
-                return new vscode.Hover(`**Template Variable**: ${word}\n\nDefined at line ${templateVar.range.start.line + 1}`, wordRange);
+                return new vscode.Hover(new vscode.MarkdownString(`**Template Variable**: ${word}\n\nDefined at line ${templateVar.range.start.line + 1}`), wordRange);
             }
             // 检查Vue索引
-            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            let vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            const templateId = (0, templateContext_1.getXTemplateIdAtPosition)(document, position);
+            if (templateId && vueIndex?.componentsByTemplateId?.has(templateId)) {
+                vueIndex = vueIndex.componentsByTemplateId.get(templateId);
+            }
             if (vueIndex) {
                 const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
                 if (def) {
-                    return new vscode.Hover(`**Vue Variable**: ${word}\n\nDefined at ${def.uri.fsPath}:${def.range.start.line + 1}`, wordRange);
+                    const hover = buildVueHover(def, vueIndex);
+                    if (hover) {
+                        return hover;
+                    }
                 }
             }
         }
@@ -48905,7 +49484,10 @@ class VueHoverProvider {
             if (vueIndex) {
                 const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
                 if (def) {
-                    return new vscode.Hover(`**Vue Variable**: ${word}\n\nDefined at ${def.uri.fsPath}:${def.range.start.line + 1}`, wordRange);
+                    const hover = buildVueHover(def, vueIndex);
+                    if (hover) {
+                        return hover;
+                    }
                 }
             }
         }
@@ -48955,7 +49537,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.QuickLogCompletionProvider = void 0;
+exports.VonCompletionProvider = exports.HtmlVueCompletionProvider = exports.JavaScriptCompletionProvider = exports.QuickLogCompletionProvider = void 0;
 /**
  * 自动补全提供器
  *
@@ -48964,6 +49546,7 @@ exports.VonCompletionProvider = exports.JavaScriptCompletionProvider = exports.Q
  */
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(8);
+const templateContext_1 = __webpack_require__(191);
 /**
  * 快速日志补全提供器 (重写版)
  * 参考 jaluik/dot-log 实现，使用命令替换文本
@@ -49118,6 +49701,116 @@ class JavaScriptCompletionProvider {
     }
 }
 exports.JavaScriptCompletionProvider = JavaScriptCompletionProvider;
+/**
+ * HTML 模板变量与方法补全提供器
+ */
+class HtmlVueCompletionProvider {
+    constructor() {
+        this.completionCache = new Map();
+    }
+    async provideCompletionItems(document, position, _token, _context) {
+        const linePrefix = document.lineAt(position).text.substring(0, position.character);
+        if (!this.isTemplateContext(linePrefix)) {
+            return [];
+        }
+        const rootIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+        if (!rootIndex) {
+            return [];
+        }
+        const templateId = (0, templateContext_1.getXTemplateIdAtPosition)(document, position);
+        const targetIndex = templateId && rootIndex.componentsByTemplateId?.has(templateId)
+            ? rootIndex.componentsByTemplateId.get(templateId)
+            : rootIndex;
+        const cacheKey = `${targetIndex.hash}:${templateId || 'root'}`;
+        let cached = this.completionCache.get(cacheKey);
+        if (!cached) {
+            cached = this.buildCompletionItems(targetIndex);
+            this.completionCache.set(cacheKey, cached);
+        }
+        const completionItems = [...cached.variables, ...cached.methods];
+        completionItems.forEach((item, index) => {
+            item.sortText = `0000${index.toString().padStart(4, '0')}`;
+            item.preselect = false;
+            if (!item.detail?.includes('(雷动三千)')) {
+                item.detail = `${item.detail || ''} (雷动三千)`;
+            }
+        });
+        return new vscode.CompletionList(completionItems, false);
+    }
+    buildCompletionItems(index) {
+        const variables = [];
+        const methods = [];
+        const thisReferences = new Map();
+        const applyFunctionMeta = (item, name, typeLabel, metaMap) => {
+            const meta = metaMap.get(name);
+            if (meta && meta.params.length > 0) {
+                item.detail = `${typeLabel} ${name}(${meta.params.join(', ')})`;
+            }
+            else {
+                item.detail = `${typeLabel} ${name}()`;
+            }
+            if (meta?.doc) {
+                item.documentation = new vscode.MarkdownString(meta.doc);
+            }
+        };
+        index.data.forEach((_loc, name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'data 属性 (雷动三千)';
+            variables.push(item);
+            thisReferences.set(name, item);
+        });
+        index.methods.forEach((_loc, name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+            applyFunctionMeta(item, name, 'methods', index.methodMeta);
+            methods.push(item);
+            thisReferences.set(name, item);
+        });
+        index.computed.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                applyFunctionMeta(item, name, 'computed', index.computedMeta);
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinData.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = 'mixin data (雷动三千)';
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinComputed.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                applyFunctionMeta(item, name, 'mixin computed', index.computedMeta);
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinMethods.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+                applyFunctionMeta(item, name, 'mixin method', index.methodMeta);
+                methods.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        return { variables, methods, timestamp: Date.now(), thisReferences };
+    }
+    isTemplateContext(linePrefix) {
+        if (/\{\{[^}]*$/.test(linePrefix)) {
+            return true;
+        }
+        const inTag = linePrefix.lastIndexOf('<') > linePrefix.lastIndexOf('>');
+        if (!inTag) {
+            return false;
+        }
+        return /(v-bind:|:|v-on:|@|v-if|v-else-if|v-show|v-model|v-for|v-slot|slot-scope)\S*\s*=\s*["'][^"']*$/.test(linePrefix);
+    }
+}
+exports.HtmlVueCompletionProvider = HtmlVueCompletionProvider;
 /**
  * Von 代码片段补全提供器
  */
@@ -49768,12 +50461,11 @@ function registerIndexLifecycle(context) {
             return;
         }
         const doc = editor.document;
-        if (doc.languageId === 'html') {
+        if (doc.languageId === 'html' && !(0, templateIndexer_1.getTemplateIndex)(doc)) {
             (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
         }
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            // 强制重建 JS index for current file
-            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0);
         }
     };
     disposables.push(vscode.window.onDidChangeVisibleTextEditors((editors) => {
@@ -49782,11 +50474,11 @@ function registerIndexLifecycle(context) {
     }));
     disposables.push(vscode.workspace.onDidOpenTextDocument((doc) => {
         // 打开文件时建立索引
-        if (doc.languageId === 'html') {
+        if (doc.languageId === 'html' && !(0, templateIndexer_1.getTemplateIndex)(doc)) {
             (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
         }
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0);
         }
     }));
     // 在保存时（可配置）触发重建索引
@@ -49798,7 +50490,7 @@ function registerIndexLifecycle(context) {
             (0, templateIndexer_1.buildAndCacheTemplateIndex)(doc);
         }
         if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0, true);
+            (0, parseDocument_1.getOrCreateVueIndexFromContent)(doc.getText(), doc.uri, 0);
         }
     }));
     disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {
@@ -49810,6 +50502,59 @@ function registerIndexLifecycle(context) {
     const pruneInterval = setInterval(() => { (0, templateIndexer_1.pruneTemplateIndex)(); (0, parseDocument_1.pruneVueIndexCache)(); }, 1000 * 60 * 10);
     context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
     disposables.forEach(d => context.subscriptions.push(d));
+}
+
+
+/***/ }),
+/* 191 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getXTemplateIdAtPosition = getXTemplateIdAtPosition;
+function isXTemplateScriptTag(tag) {
+    return /type\s*=\s*(["']?)text\/x-template\1/i.test(tag);
+}
+function extractIdFromTag(tag) {
+    const quoted = /id\s*=\s*(['"])([^'"]+)\1/i.exec(tag);
+    if (quoted) {
+        return quoted[2];
+    }
+    const unquoted = /id\s*=\s*([^\s>]+)/i.exec(tag);
+    return unquoted ? unquoted[1] : null;
+}
+function getXTemplateIdAtPosition(document, position) {
+    if (document.languageId !== 'html') {
+        return null;
+    }
+    const text = document.getText();
+    const offset = document.offsetAt(position);
+    const scriptOpenRegex = /<script\b[^>]*>/gi;
+    let match;
+    while ((match = scriptOpenRegex.exec(text)) !== null) {
+        const openStart = match.index;
+        const openEnd = match.index + match[0].length;
+        if (openStart > offset) {
+            break;
+        }
+        const tag = match[0];
+        if (!isXTemplateScriptTag(tag)) {
+            continue;
+        }
+        const templateId = extractIdFromTag(tag);
+        if (!templateId) {
+            continue;
+        }
+        const closeIndex = text.indexOf('</script>', openEnd);
+        if (closeIndex === -1) {
+            continue;
+        }
+        if (offset >= openEnd && offset <= closeIndex) {
+            return templateId;
+        }
+    }
+    return null;
 }
 
 

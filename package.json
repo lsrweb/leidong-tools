@@ -40,7 +40,6 @@
     "onLanguage:html",
     "onLanguage:javascript",
     "onLanguage:typescript",
-    "onLanguage:vue",
     "onLanguage:json",
     "onLanguage:css"
   ],

@@ -7,7 +7,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheItem } from '../types';
-import { parseDocument } from '../parsers/parseDocument';
+import { parseDocument, resolveVueIndexForHtml } from '../parsers/parseDocument';
+import type { VueIndex } from '../parsers/parseDocument';
+import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 
 /**
  * 日志配置项接口
@@ -200,6 +202,129 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
     private cacheParseResult(document: vscode.TextDocument, result: CacheItem) {
         const uri = document.uri.toString();
         this.parseCache.set(uri, result);
+    }
+}
+
+/**
+ * HTML 模板变量与方法补全提供器
+ */
+export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider {
+    private completionCache = new Map<string, CacheItem>();
+
+    async provideCompletionItems(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        _token: vscode.CancellationToken,
+        _context: vscode.CompletionContext
+    ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
+        const linePrefix = document.lineAt(position).text.substring(0, position.character);
+        if (!this.isTemplateContext(linePrefix)) {
+            return [];
+        }
+
+        const rootIndex = resolveVueIndexForHtml(document);
+        if (!rootIndex) {
+            return [];
+        }
+
+        const templateId = getXTemplateIdAtPosition(document, position);
+        const targetIndex = templateId && rootIndex.componentsByTemplateId?.has(templateId)
+            ? rootIndex.componentsByTemplateId.get(templateId)!
+            : rootIndex;
+
+        const cacheKey = `${targetIndex.hash}:${templateId || 'root'}`;
+        let cached = this.completionCache.get(cacheKey);
+        if (!cached) {
+            cached = this.buildCompletionItems(targetIndex);
+            this.completionCache.set(cacheKey, cached);
+        }
+
+        const completionItems = [...cached.variables, ...cached.methods];
+        completionItems.forEach((item, index) => {
+            item.sortText = `0000${index.toString().padStart(4, '0')}`;
+            item.preselect = false;
+            if (!item.detail?.includes('(雷动三千)')) {
+                item.detail = `${item.detail || ''} (雷动三千)`;
+            }
+        });
+
+        return new vscode.CompletionList(completionItems, false);
+    }
+
+    private buildCompletionItems(index: VueIndex): CacheItem {
+        const variables: vscode.CompletionItem[] = [];
+        const methods: vscode.CompletionItem[] = [];
+        const thisReferences: Map<string, vscode.CompletionItem> = new Map();
+        const applyFunctionMeta = (
+            item: vscode.CompletionItem,
+            name: string,
+            typeLabel: string,
+            metaMap: Map<string, { params: string[]; doc?: string }>
+        ) => {
+            const meta = metaMap.get(name);
+            if (meta && meta.params.length > 0) {
+                item.detail = `${typeLabel} ${name}(${meta.params.join(', ')})`;
+            } else {
+                item.detail = `${typeLabel} ${name}()`;
+            }
+            if (meta?.doc) {
+                item.documentation = new vscode.MarkdownString(meta.doc);
+            }
+        };
+
+        index.data.forEach((_loc, name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+            item.detail = 'data 属性 (雷动三千)';
+            variables.push(item);
+            thisReferences.set(name, item);
+        });
+        index.methods.forEach((_loc, name) => {
+            const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+            applyFunctionMeta(item, name, 'methods', index.methodMeta);
+            methods.push(item);
+            thisReferences.set(name, item);
+        });
+        index.computed.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                applyFunctionMeta(item, name, 'computed', index.computedMeta);
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinData.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = 'mixin data (雷动三千)';
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinComputed.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                applyFunctionMeta(item, name, 'mixin computed', index.computedMeta);
+                variables.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        index.mixinMethods.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+                applyFunctionMeta(item, name, 'mixin method', index.methodMeta);
+                methods.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+
+        return { variables, methods, timestamp: Date.now(), thisReferences };
+    }
+
+    private isTemplateContext(linePrefix: string): boolean {
+        if (/\{\{[^}]*$/.test(linePrefix)) { return true; }
+        const inTag = linePrefix.lastIndexOf('<') > linePrefix.lastIndexOf('>');
+        if (!inTag) { return false; }
+        return /(v-bind:|:|v-on:|@|v-if|v-else-if|v-show|v-model|v-for|v-slot|slot-scope)\S*\s*=\s*["'][^"']*$/.test(linePrefix);
     }
 }
 

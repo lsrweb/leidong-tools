@@ -13,6 +13,7 @@ import {
     findChainedRootDefinition 
 } from '../parsers/parseDocument';
 import { findTemplateVar } from './templateIndexer';
+import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 
 const HTML_ATTR_BLACKLIST = new Set([
     'class','id','style','src','href','alt','title','width','height','type','value','name','placeholder','rel','for','aria-label'
@@ -49,7 +50,7 @@ export class EnhancedDefinitionLogic {
 
             // JS/TS 文件：优先使用新解析器
             if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                return await this.handleJavaScriptFile(document, word, fullChain, contextType);
+                return await this.handleJavaScriptFile(document, position, word, fullChain, contextType);
             }
 
             // HTML 文件：尝试外部 JS 或内联脚本
@@ -69,6 +70,7 @@ export class EnhancedDefinitionLogic {
      */
     private async handleJavaScriptFile(
         document: vscode.TextDocument,
+        position: vscode.Position,
         word: string,
         fullChain: string | undefined,
         contextType: 'this' | 'that' | 'plain' | 'alias'
@@ -81,9 +83,14 @@ export class EnhancedDefinitionLogic {
             // 1. 尝试新解析器
             const parseResult = await jsSymbolParser.parse(document);
             
+            const chainRoot = fullChain ? fullChain.split('.')[0] : word;
+            const thisRoot = fullChain && (contextType === 'this' || contextType === 'that' || contextType === 'alias')
+                ? fullChain.split('.')[1] || word
+                : word;
+
             // 如果是 this.xxx 或 that.xxx，查找 Vue 实例成员
             if (contextType === 'this' || contextType === 'that' || contextType === 'alias') {
-                const symbol = parseResult.thisReferences.get(word);
+                const symbol = parseResult.thisReferences.get(thisRoot) || parseResult.thisReferences.get(word);
                 if (symbol) {
                     const location = new vscode.Location(document.uri, symbol.selectionRange);
                     if (this.shouldLog()) {
@@ -93,20 +100,31 @@ export class EnhancedDefinitionLogic {
                 }
             }
 
+            if (contextType === 'plain') {
+                const localSymbol = await jsSymbolParser.findLocalSymbol(document, position, chainRoot);
+                if (localSymbol) {
+                    const location = new vscode.Location(document.uri, localSymbol.selectionRange);
+                    if (this.shouldLog()) {
+                        console.log(`[enhanced-jump][js][local-hit] ${chainRoot} -> ${document.uri.fsPath}:${localSymbol.range.start.line + 1}`);
+                    }
+                    return location;
+                }
+            }
+
             // 普通变量/函数/类查找
             let symbol: SymbolInfo | undefined;
             
             // 先查找变量
-            symbol = parseResult.variables.get(word);
+            symbol = parseResult.variables.get(chainRoot);
             
             // 再查找函数
             if (!symbol) {
-                symbol = parseResult.functions.get(word);
+                symbol = parseResult.functions.get(chainRoot);
             }
             
             // 最后查找类
             if (!symbol) {
-                symbol = parseResult.classes.get(word);
+                symbol = parseResult.classes.get(chainRoot);
             }
 
             if (symbol) {
@@ -171,9 +189,13 @@ export class EnhancedDefinitionLogic {
         }
 
         // 解析 HTML 中的 Vue 索引（外部 JS 或内联 script）
-        const index = resolveVueIndexForHtml(document);
+        let index = resolveVueIndexForHtml(document);
         if (!index) {
             return null;
+        }
+        const templateId = getXTemplateIdAtPosition(document, position);
+        if (templateId && index.componentsByTemplateId && index.componentsByTemplateId.has(templateId)) {
+            index = index.componentsByTemplateId.get(templateId)!;
         }
 
         if (this.shouldLog()) {
