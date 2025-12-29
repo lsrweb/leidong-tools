@@ -74,51 +74,51 @@ export class DiagnosticsWebviewProvider implements vscode.WebviewViewProvider {
         );
 
         return `<!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline';">
     <link href="${styleUri}" rel="stylesheet">
-    <title>Diagnostics</title>
+    <title>诊断面板</title>
 </head>
 <body>
     <div class="app">
         <header class="header">
             <div>
-                <div class="eyebrow">Diagnostics</div>
-                <h1>Index and Cache Status</h1>
-                <div class="subtitle" id="lastUpdated">Last update: --</div>
+                <div class="eyebrow">诊断面板</div>
+                <h1>索引与缓存状态</h1>
+                <div class="subtitle" id="lastUpdated">最后更新: --</div>
             </div>
-            <button id="refreshBtn" class="refresh-btn" title="Refresh">Refresh</button>
+            <button id="refreshBtn" class="refresh-btn" title="刷新">刷新</button>
         </header>
 
         <section class="grid">
             <div class="card">
-                <div class="card-title">Vue Index</div>
+                <div class="card-title">Vue 索引 (Vue Index)</div>
                 <div class="card-body">
-                    <div class="metric"><span>Entries</span><strong id="vueIndexSize">0</strong></div>
-                    <div class="metric"><span>Last build</span><strong id="vueIndexBuilt">--</strong></div>
-                    <div class="metric"><span>External build</span><strong id="vueIndexExternal">--</strong></div>
-                    <div class="metric"><span>External cache</span><strong id="vueIndexExternalSize">0</strong></div>
+                    <div class="metric"><span>条目数</span><strong id="vueIndexSize">0</strong></div>
+                    <div class="metric"><span>最后构建</span><strong id="vueIndexBuilt">--</strong></div>
+                    <div class="metric"><span>外部构建</span><strong id="vueIndexExternal">--</strong></div>
+                    <div class="metric"><span>外部缓存</span><strong id="vueIndexExternalSize">0</strong></div>
                 </div>
             </div>
 
             <div class="card">
-                <div class="card-title">Template Index</div>
+                <div class="card-title">模板索引 (Template Index)</div>
                 <div class="card-body">
-                    <div class="metric"><span>Entries</span><strong id="templateIndexSize">0</strong></div>
-                    <div class="metric"><span>Last build</span><strong id="templateIndexBuilt">--</strong></div>
+                    <div class="metric"><span>条目数</span><strong id="templateIndexSize">0</strong></div>
+                    <div class="metric"><span>最后构建</span><strong id="templateIndexBuilt">--</strong></div>
                 </div>
             </div>
 
             <div class="card full">
-                <div class="card-title">Document Parse Cache</div>
+                <div class="card-title">文档解析缓存 (Document Parse Cache)</div>
                 <div class="card-body">
-                    <div class="metric"><span>Entries</span><strong id="documentParseSize">0</strong></div>
-                    <div class="metric"><span>Max size</span><strong id="documentParseMax">0</strong></div>
-                    <div class="metric"><span>Total access</span><strong id="documentParseAccess">0</strong></div>
-                    <div class="metric"><span>Avg access</span><strong id="documentParseAvg">0</strong></div>
+                    <div class="metric"><span>条目数</span><strong id="documentParseSize">0</strong></div>
+                    <div class="metric"><span>最大容量</span><strong id="documentParseMax">0</strong></div>
+                    <div class="metric"><span>总访问量</span><strong id="documentParseAccess">0</strong></div>
+                    <div class="metric"><span>平均访问</span><strong id="documentParseAvg">0</strong></div>
                 </div>
             </div>
         </section>

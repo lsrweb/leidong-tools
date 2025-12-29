@@ -66,6 +66,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const ast = parser.parse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'], errorRecovery: true });
 
     const contentHash = fastHash(jsContent);
+    const sourceLines = jsContent.split(/\r?\n/);
     const data = new Map<string, vscode.Location>();
     const methods = new Map<string, vscode.Location>();
     const computed = new Map<string, vscode.Location>();
@@ -182,7 +183,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                 if (!name) { continue; }
                 const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
                 target.set(name, loc);
-                const doc = getDocFromProp(prop);
+                const doc = getDocForDataProperty(prop);
                 if (doc && metaTarget && !metaTarget.has(name)) {
                     metaTarget.set(name, { doc });
                 }
@@ -309,6 +310,53 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         return undefined;
     };
 
+    const findLineCommentIndex = (line: string, startIndex = 0): number => {
+        let inSingle = false;
+        let inDouble = false;
+        let inTemplate = false;
+        let escaped = false;
+
+        for (let i = 0; i < line.length - 1; i++) {
+            const ch = line[i];
+            const next = line[i + 1];
+
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (inSingle) {
+                if (ch === '\\') { escaped = true; }
+                else if (ch === '\'') { inSingle = false; }
+                continue;
+            }
+            if (inDouble) {
+                if (ch === '\\') { escaped = true; }
+                else if (ch === '"') { inDouble = false; }
+                continue;
+            }
+            if (inTemplate) {
+                if (ch === '\\') { escaped = true; }
+                else if (ch === '`') { inTemplate = false; }
+                continue;
+            }
+
+            if (ch === '\'') { inSingle = true; continue; }
+            if (ch === '"') { inDouble = true; continue; }
+            if (ch === '`') { inTemplate = true; continue; }
+            if (ch === '/' && next === '/' && i >= startIndex) {
+                return i;
+            }
+        }
+        return -1;
+    };
+
+    const getInlineLineComment = (line: string, startIndex = 0): string | undefined => {
+        const idx = findLineCommentIndex(line, startIndex);
+        if (idx < 0) { return undefined; }
+        const text = line.slice(idx + 2).trim();
+        return text || undefined;
+    };
+
     const getDocFromProp = (prop: t.ObjectMethod | t.ObjectProperty): string | undefined => {
         const readComments = (comments?: t.Comment[] | null): string | undefined => {
             if (!comments || comments.length === 0) { return undefined; }
@@ -320,6 +368,16 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         const trailing = readComments(prop.trailingComments)
             || (t.isObjectProperty(prop) ? readComments((prop.value as any)?.trailingComments) : undefined);
         return trailing;
+    };
+
+    const getDocForDataProperty = (prop: t.ObjectProperty): string | undefined => {
+        if (prop.loc) {
+            const lineIndex = prop.loc.start.line - 1;
+            const line = sourceLines[lineIndex] || '';
+            const inlineDoc = getInlineLineComment(line, prop.loc.start.column);
+            if (inlineDoc) { return inlineDoc; }
+        }
+        return undefined;
     };
 
     const paramToString = (param: t.Node): string => {
