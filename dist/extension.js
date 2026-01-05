@@ -815,11 +815,29 @@ function fastHash(str) {
     }
     return h.toString(16);
 }
+function maskInjectedTemplate(match) {
+    let replaced = false;
+    const chars = match.split('');
+    for (let i = 0; i < chars.length; i++) {
+        const ch = chars[i];
+        if (ch === '\r' || ch === '\n') {
+            continue;
+        }
+        if (!replaced) {
+            chars[i] = '0';
+            replaced = true;
+        }
+        else {
+            chars[i] = ' ';
+        }
+    }
+    return replaced ? chars.join('') : match;
+}
 // 清理 PHP 等干扰项
 function sanitizeContent(raw) {
     return raw
-        .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => ' '.repeat(m.length))
-        .replace(/\{\{[\s\S]*?\}\}/g, m => ' '.repeat(m.length));
+        .replace(/<\?(=|php)?[\s\S]*?\?>/g, maskInjectedTemplate)
+        .replace(/\{\{[\s\S]*?\}\}/g, maskInjectedTemplate);
 }
 /**
  * 解析一个 JS 源（外部或内联）生成 VueIndex
@@ -49249,9 +49267,27 @@ class JSSymbolParser {
     cleanTemplates(content) {
         return content
             // 移除 PHP 标签
-            .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => ' '.repeat(m.length))
+            .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => this.maskInjectedTemplate(m))
             // 移除 Layui/Vue 模板
-            .replace(/\{\{[\s\S]*?\}\}/g, m => `''/*${' '.repeat(m.length - 5)}*/`);
+            .replace(/\{\{[\s\S]*?\}\}/g, m => this.maskInjectedTemplate(m));
+    }
+    maskInjectedTemplate(match) {
+        let replaced = false;
+        const chars = match.split('');
+        for (let i = 0; i < chars.length; i++) {
+            const ch = chars[i];
+            if (ch === '\r' || ch === '\n') {
+                continue;
+            }
+            if (!replaced) {
+                chars[i] = '0';
+                replaced = true;
+            }
+            else {
+                chars[i] = ' ';
+            }
+        }
+        return replaced ? chars.join('') : match;
     }
     /**
      * 快速哈希函数

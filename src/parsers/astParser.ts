@@ -181,9 +181,27 @@ export class AstParser {
     private cleanupPhpAndOtherTemplates(content: string): string {
         return content
             // 移除 <?php ... ?> 和 <?= ... ?>
-            .replace(/<\?(=|php)?([\s\S]*?)\?>/g, (match) => ' '.repeat(match.length))
+            .replace(/<\?(=|php)?[\s\S]*?\?>/g, (match) => this.maskInjectedTemplate(match))
             // 移除 Layui 的 {{ ... }} 风格模板
-            .replace(/\{\{([\s\S]*?)\}\}/g, (match) => `''/*${' '.repeat(match.length-5)}*/`);
+            .replace(/\{\{[\s\S]*?\}\}/g, (match) => this.maskInjectedTemplate(match));
+    }
+
+    private maskInjectedTemplate(match: string): string {
+        let replaced = false;
+        const chars = match.split('');
+        for (let i = 0; i < chars.length; i++) {
+            const ch = chars[i];
+            if (ch === '\r' || ch === '\n') {
+                continue;
+            }
+            if (!replaced) {
+                chars[i] = '0';
+                replaced = true;
+            } else {
+                chars[i] = ' ';
+            }
+        }
+        return replaced ? chars.join('') : match;
     }
 }
 

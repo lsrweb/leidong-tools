@@ -631,9 +631,27 @@ export class JSSymbolParser {
     private cleanTemplates(content: string): string {
         return content
             // 移除 PHP 标签
-            .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => ' '.repeat(m.length))
+            .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => this.maskInjectedTemplate(m))
             // 移除 Layui/Vue 模板
-            .replace(/\{\{[\s\S]*?\}\}/g, m => `''/*${' '.repeat(m.length-5)}*/`);
+            .replace(/\{\{[\s\S]*?\}\}/g, m => this.maskInjectedTemplate(m));
+    }
+
+    private maskInjectedTemplate(match: string): string {
+        let replaced = false;
+        const chars = match.split('');
+        for (let i = 0; i < chars.length; i++) {
+            const ch = chars[i];
+            if (ch === '\r' || ch === '\n') {
+                continue;
+            }
+            if (!replaced) {
+                chars[i] = '0';
+                replaced = true;
+            } else {
+                chars[i] = ' ';
+            }
+        }
+        return replaced ? chars.join('') : match;
     }
 
     /**
