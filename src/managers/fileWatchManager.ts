@@ -17,6 +17,8 @@ interface WatchItem {
     fileExtensions: string[];      // 监听的文件扩展名
     isPaused: boolean;             // 是否暂停中
     savedWatcher?: vscode.FileSystemWatcher | null;  // 暂停时保存的 watcher（用于恢复）
+    mappedHtmlFile?: string;       // 未发现 index.html 时，用户指定的 HTML 文件
+    mappedJsFile?: string;         // 未发现 index.html 时，用户指定的 JS 文件
 }
 
 /**
@@ -172,21 +174,35 @@ export class FileWatchManager {
             return;
         }
 
+        const mapping = await this.resolveHtmlJsMappingIfNeeded(watchDirPath, projectName);
+        if (mapping === undefined) {
+            return;
+        }
+
+        const mappedHtmlFile = mapping?.mappedHtmlFile;
+        const mappedJsFile = mapping?.mappedJsFile;
+
         // 在后台异步创建监听器
         return new Promise((resolve) => {
             setImmediate(() => {
-                const pattern = new vscode.RelativePattern(
-                    watchDirPath,
-                    `**/*.{${fileExtensions.join(',')}}`
-                );
+                const pattern = mappedHtmlFile
+                    ? new vscode.RelativePattern(
+                        path.dirname(mappedHtmlFile),
+                        path.basename(mappedHtmlFile)
+                    )
+                    : new vscode.RelativePattern(
+                        watchDirPath,
+                        `**/*.{${fileExtensions.join(',')}}`
+                    );
+
                 const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
                 // 监听文件变化 (异步处理)
                 watcher.onDidChange(uri => {
-                    setImmediate(() => this.handleFileChange(uri, projectName));
+                    setImmediate(() => this.handleFileChange(uri, watchId));
                 });
                 watcher.onDidCreate(uri => {
-                    setImmediate(() => this.handleFileChange(uri, projectName));
+                    setImmediate(() => this.handleFileChange(uri, watchId));
                 });
 
                 // 保存监听项
@@ -196,14 +212,18 @@ export class FileWatchManager {
                     projectName,
                     watcher,
                     fileExtensions,
-                    isPaused: false  // 初始状态：未暂停
+                    isPaused: false,  // 初始状态：未暂停
+                    mappedHtmlFile,
+                    mappedJsFile
                 };
 
                 this.watchItems.set(watchId, watchItem);
                 this.updateStatusBar();
 
                 vscode.window.showInformationMessage(
-                    `✅ 已启动监听: ${projectName}/dev (${fileExtensions.join(', ')})`
+                    mappedHtmlFile && mappedJsFile
+                        ? `✅ 已启动监听: ${projectName}/dev（指定映射）`
+                        : `✅ 已启动监听: ${projectName}/dev (${fileExtensions.join(', ')})`
                 );
 
                 console.log(`[FileWatch] 启动监听: ${watchDirPath}`);
@@ -308,18 +328,23 @@ export class FileWatchManager {
 
         // 异步重建 watcher
         setImmediate(() => {
-            const pattern = new vscode.RelativePattern(
-                watchItem.directory,
-                `**/*.{${watchItem.fileExtensions.join(',')}}`
-            );
+            const pattern = watchItem.mappedHtmlFile
+                ? new vscode.RelativePattern(
+                    path.dirname(watchItem.mappedHtmlFile),
+                    path.basename(watchItem.mappedHtmlFile)
+                )
+                : new vscode.RelativePattern(
+                    watchItem.directory,
+                    `**/*.{${watchItem.fileExtensions.join(',')}}`
+                );
             const watcher = vscode.workspace.createFileSystemWatcher(pattern);
 
             // 监听文件变化
             watcher.onDidChange(uri => {
-                setImmediate(() => this.handleFileChange(uri, watchItem.projectName));
+                setImmediate(() => this.handleFileChange(uri, watchId));
             });
             watcher.onDidCreate(uri => {
-                setImmediate(() => this.handleFileChange(uri, watchItem.projectName));
+                setImmediate(() => this.handleFileChange(uri, watchId));
             });
 
             watchItem.watcher = watcher;
@@ -463,11 +488,21 @@ export class FileWatchManager {
     /**
      * 处理文件变化 (异步执行, 不阻塞主线程)
      */
-    private async handleFileChange(uri: vscode.Uri, projectName: string) {
+    private async handleFileChange(uri: vscode.Uri, watchId: string) {
         // 在后台异步处理文件变化
         setImmediate(async () => {
+            const watchItem = this.watchItems.get(watchId);
+            if (!watchItem) {
+                return;
+            }
+
+            const { projectName, mappedHtmlFile, mappedJsFile } = watchItem;
             const filePath = uri.fsPath;
             console.log(`[${projectName}] 检测到文件变化: ${filePath}`);
+
+            if (mappedHtmlFile && !this.isSameFilePath(mappedHtmlFile, filePath)) {
+                return;
+            }
 
             try {
                 // 使用异步读取 (避免阻塞)
@@ -485,7 +520,12 @@ export class FileWatchManager {
                 console.log(`[${projectName}] 成功处理HTML内容，长度: ${processedHtml.length} 字符`);
 
                 // 异步更新 JS 文件
-                const updateCount = await this.updateJsFilesAsync(filePath, processedHtml, projectName);
+                const updateCount = await this.updateJsFilesAsync(
+                    filePath,
+                    processedHtml,
+                    projectName,
+                    mappedJsFile
+                );
 
                 if (updateCount > 0) {
                     vscode.window.showInformationMessage(
@@ -520,44 +560,69 @@ export class FileWatchManager {
     private async updateJsFilesAsync(
         htmlFilePath: string,
         processedHtml: string,
-        projectName: string
+        projectName: string,
+        mappedJsFile?: string
     ): Promise<number> {
         return new Promise((resolve) => {
             setImmediate(() => {
-                const devDirPath = path.dirname(htmlFilePath);
                 let updateCount = 0;
+                const variableName = this.getWatchVariableName();
+                const variableRegex = this.getWatchVariableRegex(variableName);
 
                 try {
-                    const jsFiles = fs.readdirSync(devDirPath)
-                        .filter(file => file.endsWith('.js'))
-                        .map(file => path.join(devDirPath, file));
+                    const jsFiles = mappedJsFile
+                        ? [mappedJsFile]
+                        : fs.readdirSync(path.dirname(htmlFilePath))
+                            .filter(file => file.endsWith('.js'))
+                            .map(file => path.join(path.dirname(htmlFilePath), file));
 
                     for (const jsFile of jsFiles) {
                         try {
+                            if (!fs.existsSync(jsFile)) {
+                                continue;
+                            }
+
                             let content = fs.readFileSync(jsFile, 'utf8');
 
-                            if (content.includes("var html =")) {
-                                const lines = content.split('\n');
-                                let foundHtmlLine = false;
-                                const updatedLines: string[] = [];
+                            const lines = content.split('\n');
+                            let foundHtmlLine = false;
+                            let skippingOriginalBlock = false;
+                            const updatedLines: string[] = [];
 
-                                for (let i = 0; i < lines.length; i++) {
-                                    const line = lines[i];
-                                    if (!foundHtmlLine && line.trim().startsWith('var html =')) {
-                                        foundHtmlLine = true;
-                                        updatedLines.push(`var html = '${processedHtml}';`);
-                                    } else {
-                                        updatedLines.push(line);
+                            for (let i = 0; i < lines.length; i++) {
+                                const line = lines[i];
+                                const match = !foundHtmlLine && !skippingOriginalBlock ? line.match(variableRegex) : null;
+
+                                if (match) {
+                                    foundHtmlLine = true;
+                                    skippingOriginalBlock = true;
+                                    const prefix = match[1]
+                                        ? match[1].trimEnd()
+                                        : `var ${variableName} =`;
+                                    updatedLines.push(`${prefix} '${processedHtml}';`);
+
+                                    if (line.trim().endsWith(';')) {
+                                        skippingOriginalBlock = false;
                                     }
+                                    continue;
                                 }
 
-                                if (foundHtmlLine) {
-                                    // 使用 join 而不是逐行添加 \n，避免文末添加空行
-                                    const updatedContent = updatedLines.join('\n');
-                                    fs.writeFileSync(jsFile, updatedContent, 'utf8');
-                                    console.log(`[${projectName}] 已更新: ${path.basename(jsFile)}`);
-                                    updateCount++;
+                                if (skippingOriginalBlock) {
+                                    if (line.trim().endsWith(';')) {
+                                        skippingOriginalBlock = false;
+                                    }
+                                    continue;
                                 }
+
+                                updatedLines.push(line);
+                            }
+
+                            if (foundHtmlLine) {
+                                // 使用 join 而不是逐行添加 \n，避免文末添加空行
+                                const updatedContent = updatedLines.join('\n');
+                                fs.writeFileSync(jsFile, updatedContent, 'utf8');
+                                console.log(`[${projectName}] 已更新: ${path.basename(jsFile)}`);
+                                updateCount++;
                             }
                         } catch (err) {
                             console.error(`[${projectName}] 处理文件出错:`, err);
@@ -573,22 +638,83 @@ export class FileWatchManager {
     }
 
     /**
+     * 无 index.html 时，让用户选择 HTML 并映射到指定 JS
+     * - 返回 null：无需映射（目录下存在 index.html）
+     * - 返回 undefined：用户取消
+     */
+    private async resolveHtmlJsMappingIfNeeded(
+        watchDirPath: string,
+        projectName: string
+    ): Promise<{ mappedHtmlFile: string; mappedJsFile: string } | null | undefined> {
+        const indexPath = path.join(watchDirPath, 'index.html');
+
+        if (fs.existsSync(indexPath)) {
+            return null;
+        }
+
+        const chooseHtml = await vscode.window.showOpenDialog({
+            title: `未发现 index.html，请选择要监听的 HTML（${projectName}）`,
+            canSelectFolders: false,
+            canSelectFiles: true,
+            canSelectMany: false,
+            defaultUri: vscode.Uri.file(watchDirPath),
+            filters: { 'HTML Files': ['html', 'htm'] }
+        });
+
+        if (!chooseHtml || chooseHtml.length === 0) {
+            return undefined;
+        }
+
+        const htmlFile = chooseHtml[0].fsPath;
+
+        const chooseJs = await vscode.window.showOpenDialog({
+            title: `请选择要替换的 JS 文件（${projectName}）`,
+            canSelectFolders: false,
+            canSelectFiles: true,
+            canSelectMany: false,
+            defaultUri: vscode.Uri.file(watchDirPath),
+            filters: { 'JavaScript Files': ['js'] }
+        });
+
+        if (!chooseJs || chooseJs.length === 0) {
+            return undefined;
+        }
+
+        const jsFile = chooseJs[0].fsPath;
+
+        return {
+            mappedHtmlFile: htmlFile,
+            mappedJsFile: jsFile
+        };
+    }
+
+    /**
+     * 比较两个文件路径是否一致（跨平台大小写处理）
+     */
+    private isSameFilePath(a: string, b: string): boolean {
+        return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+    }
+
+    /**
      * 处理 HTML 内容
      */
     private processHtmlContent(html: string): string {
         let extractedHtml = '';
 
-        // 方案一：提取两个指定注释之间的内容
-        const startMarker = `<!-- 这部分要以字符串放在js中，注意里边的单引号需要替换为\\' -->`;
-        const endMarker = `<!-- 这部分要以字符串放在js中，注意里边的单引号需要替换为\\' -->`;
+        // 方案一：提取两个注释标记之间的内容（支持“以字符串的方式放在js中”等变体）
+        const markerRegex = /<!--\s*这部分要以字符串[\s\S]*?放在js中[\s\S]*?-->/gi;
+        const markers = Array.from(html.matchAll(markerRegex));
 
-        const regex = new RegExp(`${startMarker}\\s*([\\s\\S]*?)\\s*${endMarker}`, 'i');
-        const match = html.match(regex);
+        if (markers.length >= 2) {
+            const startIndex = (markers[0].index ?? 0) + markers[0][0].length;
+            const endIndex = markers[1].index ?? startIndex;
+            if (endIndex > startIndex) {
+                extractedHtml = html.substring(startIndex, endIndex);
+                console.log('使用方案一：从注释标记提取内容');
+            }
+        }
 
-        if (match) {
-            extractedHtml = match[1];
-            console.log('使用方案一：从注释标记提取内容');
-        } else {
+        if (!extractedHtml) {
             // 方案二：提取 id="vm" 的 div
             const openTagPattern = /<div\s+[^>]*id\s*=\s*(['"])vm\1[^>]*>/i;
             const openTagMatch = html.match(openTagPattern);
@@ -634,6 +760,44 @@ export class FileWatchManager {
         const compressedHtml = escapedHtml.replace(/\s*\n\s*/g, '');
 
         return compressedHtml;
+    }
+
+    /**
+     * 获取替换变量名（可配置）
+     */
+    private getWatchVariableName(): string {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        const name = cfg.get<string>('watchHtmlVariableName', 'html');
+        const trimmed = (name || '').trim();
+        return trimmed.length > 0 ? trimmed : 'html';
+    }
+
+    /**
+     * 获取替换变量的匹配正则
+     */
+    private getWatchVariableRegex(variableName: string): RegExp {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        const customPattern = cfg.get<string>('watchHtmlVariablePattern', '').trim();
+
+        if (customPattern) {
+            try {
+                return new RegExp(customPattern);
+            } catch (err) {
+                console.error('[FileWatch] 自定义匹配正则无效，已回退到默认规则:', err);
+            }
+        }
+
+        return new RegExp(
+            `^(\\s*(?:var|let|const)?\\s*${this.escapeRegExp(variableName)}\\s*=)`,
+            'm'
+        );
+    }
+
+    /**
+     * 转义正则特殊字符
+     */
+    private escapeRegExp(value: string): string {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     /**

@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.1.8",
+  "version": "2.1.9",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -199,6 +199,16 @@
             "type": "string"
           },
           "description": "自定义 HTML 对应 dev.js 的匹配路径（支持 ${dir} ${base}），可配置多个。为空时会回退到 js/ 同名.dev.js 的自动查找。"
+        },
+        "leidong-tools.watchHtmlVariableName": {
+          "type": "string",
+          "default": "html",
+          "description": "HTML→JS 监听替换的变量名（例如 html / dom）。"
+        },
+        "leidong-tools.watchHtmlVariablePattern": {
+          "type": "string",
+          "default": "",
+          "description": "HTML→JS 监听替换的自定义匹配正则（可选）。有值时优先使用。建议用分组捕获左侧赋值前缀，如 ^(\\s*(?:var|let|const)?\\s*dom\\s*=)"
         },
         "leidong-tools.hoverDelay": {
           "type": "number",
