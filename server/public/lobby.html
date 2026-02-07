@@ -504,7 +504,11 @@ body {
 <script>
 // ─── 配置 ───
 const CONFIG = window.__SERVER_CONFIG__ || {};
-const WS_URL = CONFIG.wsUrl || `ws://${location.hostname}:8089`;
+const WS_URL = CONFIG.wsUrl || (
+    location.port
+        ? `ws://${location.hostname}:8089`
+        : `ws://${location.host}/ws`
+);
 const THEME = CONFIG.theme || 'dark';
 const SOURCE = CONFIG.source || 'browser';
 

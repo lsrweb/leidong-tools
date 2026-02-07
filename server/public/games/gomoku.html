@@ -369,7 +369,11 @@ canvas#board {
 // ─── 配置读取 ───
 const CONFIG = window.__SERVER_CONFIG__ || {};
 const urlParams = new URLSearchParams(location.search);
-const WS_URL = urlParams.get('wsUrl') || CONFIG.wsUrl || `ws://${location.hostname}:8089`;
+const WS_URL = urlParams.get('wsUrl') || CONFIG.wsUrl || (
+    location.port
+        ? `ws://${location.hostname}:8089`
+        : `ws://${location.host}/ws`
+);
 const THEME = urlParams.get('theme') || CONFIG.theme || 'dark';
 const PLAYER_NAME = urlParams.get('playerName') || CONFIG.playerName || '玩家';
 const PLAYER_UID = urlParams.get('uid') || CONFIG.uid || '';

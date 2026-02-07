@@ -233,8 +233,8 @@
         },
         "leidong-tools.gameServerUrl": {
           "type": "string",
-          "default": "http://localhost:8088",
-          "description": "小游戏服务器 HTTP 地址。所有游戏页面由服务端提供，更新游戏无需更新扩展。"
+          "default": "http://gserver.srliforever.ltd",
+          "description": "小游戏服务器 HTTP 地址。所有游戏页面由服务端提供，更新游戏无需更新扩展。开发环境设为 http://localhost:8088"
         }
       }
     },

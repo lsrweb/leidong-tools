@@ -28,17 +28,16 @@ use App\Logger;
 
 // 加载配置
 $config = require __DIR__ . '/config/config.php';
-$isDev = in_array('--dev', $argv ?? []);
+$isDev = ($config['env'] ?? 'production') === 'dev';
 
-if ($isDev) {
-    $config['log']['level'] = 'debug';
-}
+// 日志级别已在 config.php 中根据环境自动设置
 
 // 初始化日志
 Logger::init($config['log']);
 
 Logger::info("========================================");
 Logger::info("  🎮 雷动三千小游戏服务器");
+Logger::info("  环境: " . ($isDev ? '开发模式' : '生产模式'));
 Logger::info("========================================");
 
 // 创建事件循环
@@ -98,7 +97,12 @@ $loop->addPeriodicTimer($config['room']['cleanup_interval'], function () use ($r
 
 Logger::info("----------------------------------------");
 Logger::info("📡 服务器已就绪，等待连接...");
-Logger::info("   VS Code 扩展配置: http://{$config['bind_address']}:{$config['http_port']}");
+if ($isDev) {
+    Logger::info("   VS Code 扩展配置: http://{$config['bind_address']}:{$config['http_port']}");
+} else {
+    Logger::info("   生产域名: http://{$config['domain']}");
+    Logger::info("   NGINX 反代: 127.0.0.1:{$config['http_port']} (HTTP) + 127.0.0.1:{$config['ws_port']} (WS)");
+}
 Logger::info("----------------------------------------");
 
 // 启动事件循环

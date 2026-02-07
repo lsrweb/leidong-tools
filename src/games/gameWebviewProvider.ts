@@ -190,7 +190,7 @@ export class GameSidebarProvider implements vscode.WebviewViewProvider {
             <span class="status-dot offline" id="statusDot"></span>
             <span id="statusText">未检测</span>
         </div>
-        <input type="text" id="serverUrl" value="${this._serverUrl}" placeholder="http://localhost:8088" />
+        <input type="text" id="serverUrl" value="${this._serverUrl}" placeholder="http://gserver.srliforever.ltd" />
         <button class="btn secondary" onclick="checkServer()">🔍 检测服务器</button>
         <div id="serverGuide" class="tip" style="display:none;margin-top:4px;border-color:var(--vscode-editorWarning-foreground)">
             ⚠️ 服务器未启动，请在终端运行：<br>

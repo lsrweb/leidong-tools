@@ -16,6 +16,6 @@ export interface GameServerConfig {
 
 /** 默认服务器配置 */
 export const DEFAULT_SERVER_CONFIG: GameServerConfig = {
-    httpUrl: 'http://localhost:8088',
-    wsUrl: 'ws://localhost:8089',
+    httpUrl: 'http://gserver.srliforever.ltd',
+    wsUrl: 'ws://gserver.srliforever.ltd/ws',
 };
