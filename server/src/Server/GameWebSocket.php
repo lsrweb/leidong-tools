@@ -56,6 +56,8 @@ class GameWebSocket implements MessageComponentInterface
                 'gameMove'      => $this->handleGameMove($from, $data),
                 'gameRestart'   => $this->handleGameRestart($from),
                 'chat'          => $this->handleChat($from, $data),
+                'lobbyChat'     => $this->handleLobbyChat($from, $data),
+                'onlinePlayers' => $this->handleOnlinePlayers($from),
                 'pong'          => $this->handlePong($from),
                 default         => $this->send($from, ['type' => 'error', 'message' => "未知消息类型: {$data['type']}"]),
             };
@@ -106,6 +108,16 @@ class GameWebSocket implements MessageComponentInterface
 
         $this->roomManager->removePlayer($conn);
         Logger::info("WebSocket 连接关闭: conn={$connId} ({$playerName})");
+
+        // 广播更新在线玩家列表
+        $allConns = $this->roomManager->getAllPlayerConnections();
+        $onlinePlayers = $this->roomManager->getOnlinePlayers();
+        foreach ($allConns as $c) {
+            $this->send($c, [
+                'type'    => 'onlinePlayers',
+                'players' => $onlinePlayers,
+            ]);
+        }
     }
 
     public function onError(ConnectionInterface $conn, \Exception $e): void
@@ -170,7 +182,22 @@ class GameWebSocket implements MessageComponentInterface
             $response['stats'] = $db->getPlayerStats($player['uid']);
         }
 
+        // 附带在线玩家列表
+        $response['onlinePlayers'] = $this->roomManager->getOnlinePlayers();
+
         $this->send($conn, $response);
+
+        // 广播给其他玩家：有新玩家上线
+        $allConns = $this->roomManager->getAllPlayerConnections();
+        $onlinePlayers = $this->roomManager->getOnlinePlayers();
+        foreach ($allConns as $c) {
+            if ($c->resourceId !== $conn->resourceId) {
+                $this->send($c, [
+                    'type'    => 'onlinePlayers',
+                    'players' => $onlinePlayers,
+                ]);
+            }
+        }
     }
 
     // ─── 房间操作 ───
@@ -404,12 +431,12 @@ class GameWebSocket implements MessageComponentInterface
             $moveData['winner'] = $result['winner'];
             $moveData['winLine'] = $result['winLine'];
             $this->roomManager->updateRoomStatus($roomId, 'finished');
-            $this->saveGameRecord($roomId, $result['winner'], false);
+            $this->saveGameRecord($roomId, $result['winner'], false, $this->games[$roomId]);
         }
         if ($result['isDraw']) {
             $moveData['isDraw'] = true;
             $this->roomManager->updateRoomStatus($roomId, 'finished');
-            $this->saveGameRecord($roomId, null, true);
+            $this->saveGameRecord($roomId, null, true, $this->games[$roomId]);
         }
 
         foreach ($connections as $conn) {
@@ -467,27 +494,65 @@ class GameWebSocket implements MessageComponentInterface
         }
     }
 
+    // ─── 大厅聊天 ───
+
+    private function handleLobbyChat(ConnectionInterface $from, array $data): void
+    {
+        $connId = $from->resourceId;
+        $player = $this->roomManager->getPlayer($connId);
+        if (!$player) return;
+
+        $message = trim($data['message'] ?? '');
+        if (!$message) return;
+        $message = mb_substr($message, 0, 200);
+
+        // 广播给所有在线玩家
+        $allConns = $this->roomManager->getAllPlayerConnections();
+        foreach ($allConns as $conn) {
+            $this->send($conn, [
+                'type'       => 'lobbyChat',
+                'playerName' => $player['name'],
+                'uid'        => $player['uid'] ?? '',
+                'message'    => $message,
+                'time'       => date('H:i:s'),
+            ]);
+        }
+    }
+
+    private function handleOnlinePlayers(ConnectionInterface $from): void
+    {
+        $players = $this->roomManager->getOnlinePlayers();
+        $this->send($from, [
+            'type'    => 'onlinePlayers',
+            'players' => $players,
+        ]);
+    }
+
     // ─── 游戏记录 ───
 
     /**
      * 保存游戏记录到数据库
      */
-    private function saveGameRecord(string $roomId, ?string $winnerConnId, bool $isDraw): void
+    private function saveGameRecord(string $roomId, ?string $winnerColor, bool $isDraw, ?Gomoku $game = null): void
     {
         try {
             $room = $this->roomManager->getRoom($roomId);
             if (!$room || count($room['players']) < 2) return;
 
-            $game = $this->games[$roomId] ?? null;
+            if (!$game) $game = $this->games[$roomId] ?? null;
 
             $p1 = $this->roomManager->getPlayer($room['players'][0]);
             $p2 = $this->roomManager->getPlayer($room['players'][1]);
             if (!$p1 || !$p2) return;
 
             $winnerUid = null;
-            if ($winnerConnId && !$isDraw) {
-                $winner = $this->roomManager->getPlayer((int)$winnerConnId);
-                $winnerUid = $winner['uid'] ?? null;
+            if ($winnerColor && !$isDraw && $game) {
+                // winnerColor 是 'black' 或 'white'，通过 Gomoku 反查 connId → uid
+                $winnerConnId = $game->getConnIdByColorName($winnerColor);
+                if ($winnerConnId !== null) {
+                    $winner = $this->roomManager->getPlayer($winnerConnId);
+                    $winnerUid = $winner['uid'] ?? null;
+                }
             }
 
             $db = $this->roomManager->getDatabase();

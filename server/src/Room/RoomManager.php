@@ -413,6 +413,52 @@ class RoomManager
         ];
     }
 
+    /**
+     * 获取所有在线玩家列表（用于大厅显示）
+     * @return array 玩家名称和状态
+     */
+    public function getOnlinePlayers(): array
+    {
+        $list = [];
+        foreach ($this->players as $connId => $player) {
+            $roomId = $this->connectionRooms[$connId] ?? null;
+            $status = 'idle'; // 在大厅
+            if ($roomId) {
+                $room = $this->rooms[$roomId] ?? null;
+                if ($room) {
+                    if ($this->isSpectator($roomId, $connId)) {
+                        $status = 'spectating';
+                    } elseif ($room['status'] === 'playing') {
+                        $status = 'playing';
+                    } else {
+                        $status = 'waiting';
+                    }
+                }
+            }
+            $list[] = [
+                'name'   => $player['name'],
+                'uid'    => $player['uid'] ?? '',
+                'status' => $status,
+            ];
+        }
+        return $list;
+    }
+
+    /**
+     * 获取所有已注册连接（用于大厅广播）
+     * @return ConnectionInterface[]
+     */
+    public function getAllPlayerConnections(): array
+    {
+        $conns = [];
+        foreach ($this->players as $player) {
+            if ($player['conn']) {
+                $conns[] = $player['conn'];
+            }
+        }
+        return $conns;
+    }
+
     private function generateRoomId(): string
     {
         return substr(md5(uniqid((string)mt_rand(), true)), 0, 8);

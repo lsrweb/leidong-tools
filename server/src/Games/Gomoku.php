@@ -76,6 +76,18 @@ class Gomoku
     }
 
     /**
+     * 根据颜色名获取 connId
+     */
+    public function getConnIdByColorName(string $colorName): ?int
+    {
+        $target = $colorName === 'black' ? self::BLACK : self::WHITE;
+        foreach ($this->playerMap as $connId => $color) {
+            if ($color === $target) return $connId;
+        }
+        return null;
+    }
+
+    /**
      * 落子
      */
     public function makeMove(int $connId, int $row, int $col): array

@@ -288,6 +288,119 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
 .hidden { display: none !important; }
+
+/* ─── 聊天+在线玩家面板 ─── */
+.social-panel {
+    width: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.social-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.social-card-header {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    padding: 10px 12px 6px;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+.online-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 8px 8px;
+    font-size: 12px;
+}
+.online-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-radius: 4px;
+}
+.online-item:hover { background: var(--bg-hover); }
+.online-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+}
+.online-dot.idle { background: var(--success); }
+.online-dot.playing { background: var(--warning); }
+.online-dot.waiting { background: var(--accent); }
+.online-dot.spectating { background: #9c27b0; }
+.online-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.online-status {
+    font-size: 10px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+.lobby-chat {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.lobby-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 8px;
+    font-size: 12px;
+    min-height: 80px;
+}
+.lobby-chat-messages .chat-msg { padding: 2px 0; line-height: 1.5; word-break: break-all; }
+.lobby-chat-messages .chat-msg .name { color: var(--accent); font-weight: 500; }
+.lobby-chat-messages .chat-msg .time { color: var(--text-secondary); font-size: 10px; margin-right: 4px; opacity: 0.7; }
+.lobby-chat-messages .chat-msg .sys { color: var(--text-secondary); font-style: italic; }
+.lobby-chat-input {
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.lobby-chat-input input {
+    flex: 1;
+    padding: 5px 8px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+}
+.lobby-chat-input input:focus { border-color: var(--accent); }
+.lobby-emoji-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1px;
+    padding: 4px 8px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+}
+.lobby-emoji-picker.open { max-height: 100px; }
+.lobby-emoji-btn {
+    width: 24px; height: 24px;
+    border: none; background: none;
+    cursor: pointer; font-size: 14px;
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+}
+.lobby-emoji-btn:hover { background: var(--bg-hover); }
+.lobby-emoji-toggle {
+    background: none; border: none; cursor: pointer;
+    font-size: 14px; padding: 3px 5px; color: var(--text-secondary);
+}
+.lobby-emoji-toggle:hover { background: var(--bg-hover); border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -345,6 +458,28 @@ body {
             </div>
         </div>
     </div>
+
+    <!-- 聊天+在线玩家 -->
+    <div class="social-panel">
+        <!-- 在线玩家 -->
+        <div class="social-card" style="max-height:180px">
+            <div class="social-card-header">👥 在线玩家 <span id="onlineCount" style="color:var(--accent)"></span></div>
+            <div class="online-list" id="onlineList">
+                <div style="color:var(--text-secondary);padding:8px">加载中...</div>
+            </div>
+        </div>
+        <!-- 大厅聊天 -->
+        <div class="social-card lobby-chat" style="flex:1">
+            <div class="social-card-header">💬 大厅聊天</div>
+            <div class="lobby-chat-messages" id="lobbyChatMessages"></div>
+            <div class="lobby-emoji-picker" id="lobbyEmojiPicker"></div>
+            <div class="lobby-chat-input">
+                <button class="lobby-emoji-toggle" onclick="toggleLobbyEmoji()" title="表情">😊</button>
+                <input type="text" id="lobbyChatInput" placeholder="说点什么..." maxlength="200">
+                <button class="btn btn-primary btn-sm" onclick="sendLobbyChat()">发送</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <!-- 底栏 -->
@@ -379,9 +514,9 @@ if (THEME === 'light' || THEME === 'vscode-light') {
 
 // ─── 状态 ───
 let ws = null;
-let playerName = CONFIG.playerName || '';
-let playerUid = CONFIG.uid || '';
-let deviceHash = CONFIG.deviceHash || '';
+let playerName = CONFIG.playerName || localStorage.getItem('ld_playerName') || '';
+let playerUid = CONFIG.uid || localStorage.getItem('ld_playerUid') || '';
+let deviceHash = CONFIG.deviceHash || localStorage.getItem('ld_deviceHash') || '';
 let selectedGame = 'gomoku';
 let rooms = [];
 let reconnectTimer = null;
@@ -441,12 +576,10 @@ function updateHeaderInfo() {
     }
 }
 
-// 如果从 VS Code 进入且有昵称，跳过注册面板
-if (playerName && SOURCE === 'vscode') {
+// 如果已有昵称（从游戏页返回或从 VS Code 进入），自动跳过注册面板
+if (playerName) {
     document.getElementById('nameInput').value = playerName;
     register();
-} else if (playerName) {
-    document.getElementById('nameInput').value = playerName;
 }
 
 document.getElementById('nameInput').addEventListener('keydown', e => {
@@ -536,6 +669,10 @@ function handleMessage(data) {
         case 'registered':
             playerName = data.playerName;
             if (data.uid) playerUid = data.uid;
+            // 持久化到 localStorage
+            localStorage.setItem('ld_playerName', playerName);
+            localStorage.setItem('ld_playerUid', playerUid);
+            if (deviceHash) localStorage.setItem('ld_deviceHash', deviceHash);
             updateHeaderInfo();
             refreshRooms();
             // 处理 uid 冲突
@@ -551,6 +688,10 @@ function handleMessage(data) {
             if (data.stats) {
                 showPlayerStats(data.stats);
             }
+            // 显示在线玩家
+            if (data.onlinePlayers) {
+                renderOnlinePlayers(data.onlinePlayers);
+            }
             break;
 
         case 'roomList':
@@ -560,6 +701,14 @@ function handleMessage(data) {
                 document.getElementById('statsInfo').textContent =
                     `在线: ${data.stats.totalPlayers} | 房间: ${data.stats.totalRooms}`;
             }
+            break;
+
+        case 'onlinePlayers':
+            renderOnlinePlayers(data.players || []);
+            break;
+
+        case 'lobbyChat':
+            addLobbyChatMsg(data.playerName, data.message, data.time);
             break;
 
         case 'roomCreated':
@@ -722,6 +871,83 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// ─── 在线玩家 ───
+function renderOnlinePlayers(players) {
+    const el = document.getElementById('onlineList');
+    const countEl = document.getElementById('onlineCount');
+    if (!el) return;
+    countEl.textContent = `(${players.length})`;
+
+    if (players.length === 0) {
+        el.innerHTML = '<div style="color:var(--text-secondary);padding:8px;font-size:12px">暂无在线玩家</div>';
+        return;
+    }
+
+    const statusLabel = { idle: '大厅', playing: '游戏中', waiting: '等待中', spectating: '观战中' };
+    el.innerHTML = players.map(p => `
+        <div class="online-item">
+            <div class="online-dot ${p.status}"></div>
+            <span class="online-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+            <span class="online-status">${statusLabel[p.status] || ''}</span>
+        </div>
+    `).join('');
+}
+
+// ─── 大厅聊天 ───
+const LOBBY_EMOJIS = [
+    '😄','😂','😊','😎','🤔','😅','😤','😢','🤣','😈',
+    '👍','👏','🎉','🔥','💪','🏆','👀','🎯','💀','❤️',
+    '🙏','😍','🥳','😜','🤗','😱','🥺','😏','🤩','🫡',
+    '✌️','👋','🤝','💯','🎮','⚡','🌟','🍀','🫠','🤯',
+    '😇','🐱','🐶','🦊','🐼','🐸','🌈','☀️','🌙','🍕'
+];
+
+function initLobbyEmoji() {
+    const picker = document.getElementById('lobbyEmojiPicker');
+    if (!picker) return;
+    picker.innerHTML = LOBBY_EMOJIS.map(e =>
+        `<button class="lobby-emoji-btn" onclick="sendLobbyEmoji('${e}')">${e}</button>`
+    ).join('');
+}
+
+function toggleLobbyEmoji() {
+    document.getElementById('lobbyEmojiPicker').classList.toggle('open');
+}
+
+function sendLobbyEmoji(emoji) {
+    sendMsg({ type: 'lobbyChat', message: emoji });
+    document.getElementById('lobbyEmojiPicker').classList.remove('open');
+}
+
+function addLobbyChatMsg(name, msg, time) {
+    const el = document.getElementById('lobbyChatMessages');
+    if (!el) return;
+    const timeStr = time || new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const isMe = name === playerName;
+    el.innerHTML += `<div class="chat-msg"><span class="time">${timeStr}</span><span class="name" style="${isMe ? 'color:var(--success)' : ''}">${escapeHtml(name)}</span>: ${escapeHtml(msg)}</div>`;
+    el.scrollTop = el.scrollHeight;
+}
+
+function addLobbySystemChat(msg) {
+    const el = document.getElementById('lobbyChatMessages');
+    if (!el) return;
+    const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML += `<div class="chat-msg"><span class="time">${time}</span><span class="sys">${escapeHtml(msg)}</span></div>`;
+    el.scrollTop = el.scrollHeight;
+}
+
+function sendLobbyChat() {
+    const input = document.getElementById('lobbyChatInput');
+    const msg = input.value.trim();
+    if (!msg) return;
+    sendMsg({ type: 'lobbyChat', message: msg });
+    input.value = '';
+}
+
+document.getElementById('lobbyChatInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendLobbyChat();
+});
+
 // ─── 定时刷新 ───
 setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -730,6 +956,7 @@ setInterval(() => {
 }, 5000);
 
 // ─── 初始化 ───
+initLobbyEmoji();
 renderGameList();
 </script>
 </body>
