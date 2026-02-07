@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>五子棋 - 雷动三千</title>
+<style>
+:root {
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #252526;
+    --bg-hover: #2a2d2e;
+    --text-primary: #cccccc;
+    --text-secondary: #969696;
+    --accent: #0078d4;
+    --success: #4caf50;
+    --warning: #ff9800;
+    --danger: #f44336;
+    --border: #3c3c3c;
+    --radius: 6px;
+    --board-bg: #dcb468;
+    --board-line: #8b6914;
+    --board-star: #5a4510;
+}
+.theme-light {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f3f3f3;
+    --bg-hover: #e8e8e8;
+    --text-primary: #333333;
+    --text-secondary: #666666;
+    --border: #d4d4d4;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+}
+
+/* ─── 顶栏 ─── */
+.header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+.header-left {
+    display: flex; align-items: center; gap: 12px;
+}
+.back-btn {
+    background: none; border: none; color: var(--text-primary);
+    cursor: pointer; font-size: 16px; padding: 4px;
+}
+.back-btn:hover { color: var(--accent); }
+.header h2 { font-size: 15px; font-weight: 600; }
+.header-right {
+    display: flex; align-items: center; gap: 12px; font-size: 13px;
+}
+.color-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 10px; font-size: 12px;
+}
+.color-badge.black { background: #333; color: #fff; }
+.color-badge.white { background: #eee; color: #333; }
+
+/* ─── 主体 ─── */
+.game-area {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 12px;
+    overflow: hidden;
+}
+
+/* ─── 棋盘 ─── */
+.board-wrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+canvas#board {
+    border-radius: var(--radius);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    cursor: pointer;
+}
+
+/* ─── 信息面板 ─── */
+.info-panel {
+    width: 220px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex-shrink: 0;
+    height: 100%;
+    max-height: 560px;
+}
+.panel-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+}
+.panel-card h4 {
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+/* 玩家信息 */
+.player-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0;
+}
+.player-stone {
+    width: 18px; height: 18px; border-radius: 50%;
+    flex-shrink: 0;
+}
+.player-stone.black { background: radial-gradient(circle at 35% 35%, #555, #000); }
+.player-stone.white { background: radial-gradient(circle at 35% 35%, #fff, #ccc); border: 1px solid #999; }
+.player-name-text { font-size: 13px; flex: 1; }
+.player-turn { color: var(--accent); font-size: 12px; font-weight: 600; }
+
+/* 状态 */
+.status-text {
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    padding: 8px;
+    border-radius: var(--radius);
+    background: var(--bg-hover);
+}
+.status-text.your-turn { color: var(--success); }
+.status-text.waiting { color: var(--warning); }
+.status-text.win { color: var(--success); }
+.status-text.lose { color: var(--danger); }
+.status-text.draw { color: var(--text-secondary); }
+
+/* 聊天 */
+.chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+    font-size: 12px;
+    min-height: 80px;
+}
+.chat-msg { padding: 2px 0; line-height: 1.5; word-break: break-all; }
+.chat-msg .name { color: var(--accent); font-weight: 500; }
+.chat-msg .sys { color: var(--text-secondary); font-style: italic; }
+.chat-input-row {
+    display: flex; gap: 4px; margin-top: 6px;
+}
+.chat-input-row input {
+    flex: 1;
+    padding: 6px 8px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 12px;
+    outline: none;
+}
+.chat-input-row input:focus { border-color: var(--accent); }
+
+/* 按钮 */
+.btn {
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { opacity: 0.85; }
+.btn-secondary { background: var(--bg-hover); color: var(--text-primary); border: 1px solid var(--border); }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-sm { padding: 4px 10px; }
+
+/* 胜负弹窗 */
+.result-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+}
+.result-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 40px;
+    text-align: center;
+}
+.result-card .emoji { font-size: 56px; margin-bottom: 12px; }
+.result-card h2 { font-size: 22px; margin-bottom: 8px; }
+.result-card p { color: var(--text-secondary); margin-bottom: 20px; font-size: 14px; }
+.result-actions { display: flex; justify-content: center; gap: 10px; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.hidden { display: none !important; }
+
+/* 观战标识 */
+.color-badge.spectator { background: rgba(255,152,0,0.2); color: var(--warning); }
+
+/* 表情选择器 */
+.emoji-picker {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 4px 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease;
+}
+.emoji-picker.open { max-height: 80px; }
+.emoji-btn {
+    width: 28px; height: 28px;
+    border: none; background: none;
+    cursor: pointer; font-size: 16px;
+    border-radius: 4px;
+    transition: background 0.15s;
+    display: flex; align-items: center; justify-content: center;
+}
+.emoji-btn:hover { background: var(--bg-hover); }
+.emoji-toggle {
+    background: none; border: none; cursor: pointer;
+    font-size: 16px; padding: 4px 6px; border-radius: var(--radius);
+    color: var(--text-secondary);
+    transition: background 0.15s;
+}
+.emoji-toggle:hover { background: var(--bg-hover); }
+
+/* 增强聊天消息 */
+.chat-msg .time { color: var(--text-secondary); font-size: 11px; margin-right: 4px; opacity: 0.7; }
+.chat-msg .role-spectator { color: var(--warning); }
+.chat-msg .role-player { color: var(--accent); }
+
+/* 房间关闭弹窗 */
+.room-closed-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 200;
+}
+.room-closed-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 40px;
+    text-align: center;
+    max-width: 340px;
+}
+.room-closed-card .emoji { font-size: 56px; margin-bottom: 12px; }
+.room-closed-card h2 { font-size: 20px; margin-bottom: 8px; }
+.room-closed-card p { color: var(--text-secondary); margin-bottom: 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<div class="header">
+    <div class="header-left">
+        <button class="back-btn" onclick="goBack()" title="返回大厅">← 返回</button>
+        <h2>⚫ 五子棋</h2>
+    </div>
+    <div class="header-right">
+        <span id="myColorBadge" class="color-badge black">
+            <span id="myColorDot">●</span> <span id="myColorText">黑子</span>
+        </span>
+        <span id="playerNameDisplay" style="color:var(--text-secondary)"></span>
+    </div>
+</div>
+
+<!-- 主体 -->
+<div class="game-area">
+    <!-- 棋盘 -->
+    <div class="board-wrapper">
+        <canvas id="board" width="560" height="560"></canvas>
+    </div>
+
+    <!-- 信息面板 -->
+    <div class="info-panel">
+        <!-- 状态 -->
+        <div id="statusCard" class="status-text your-turn">等待连接...</div>
+
+        <!-- 玩家 -->
+        <div class="panel-card">
+            <h4>玩家</h4>
+            <div id="playersInfo">
+                <div class="player-row">
+                    <div class="player-stone black"></div>
+                    <span class="player-name-text">-</span>
+                </div>
+                <div class="player-row">
+                    <div class="player-stone white"></div>
+                    <span class="player-name-text">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作 -->
+        <div class="panel-card">
+            <h4>操作</h4>
+            <div style="display:flex;flex-direction:column;gap:6px">
+                <button class="btn btn-primary" onclick="requestRestart()">🔄 再来一局</button>
+                <button class="btn btn-danger" onclick="leaveGame()">🚪 离开房间</button>
+            </div>
+        </div>
+
+        <!-- 聊天 -->
+        <div class="panel-card chat-area">
+            <h4>聊天</h4>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="emoji-picker" id="emojiPicker"></div>
+            <div class="chat-input-row">
+                <button class="emoji-toggle" onclick="toggleEmoji()" title="表情">😊</button>
+                <input type="text" id="chatInput" placeholder="说点什么..." maxlength="200">
+                <button class="btn btn-primary btn-sm" onclick="sendChat()">发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 胜负弹窗 -->
+<div class="result-overlay hidden" id="resultOverlay">
+    <div class="result-card">
+        <div class="emoji" id="resultEmoji">🏆</div>
+        <h2 id="resultTitle">你赢了！</h2>
+        <p id="resultDesc">五子连珠</p>
+        <div class="result-actions">
+            <button class="btn btn-primary" id="restartBtn" onclick="requestRestart()">再来一局</button>
+            <button class="btn btn-secondary" onclick="goBack()">返回大厅</button>
+        </div>
+    </div>
+</div>
+
+<!-- 房间关闭弹窗 -->
+<div class="room-closed-overlay hidden" id="roomClosedOverlay">
+    <div class="room-closed-card">
+        <div class="emoji">🚪</div>
+        <h2 id="roomClosedTitle">对手已离开</h2>
+        <p id="roomClosedDesc">房间已关闭</p>
+        <button class="btn btn-primary" onclick="goBack()">返回大厅</button>
+    </div>
+</div>
+
+<script>
+// ─── 配置读取 ───
+const CONFIG = window.__SERVER_CONFIG__ || {};
+const urlParams = new URLSearchParams(location.search);
+const WS_URL = urlParams.get('wsUrl') || CONFIG.wsUrl || `ws://${location.hostname}:8089`;
+const THEME = urlParams.get('theme') || CONFIG.theme || 'dark';
+const PLAYER_NAME = urlParams.get('playerName') || CONFIG.playerName || '玩家';
+const PLAYER_UID = urlParams.get('uid') || CONFIG.uid || '';
+const DEVICE_HASH = urlParams.get('deviceHash') || CONFIG.deviceHash || '';
+const IS_SPECTATOR = urlParams.get('spectate') === 'true';
+const SPECTATE_ROOM_ID = urlParams.get('roomId') || '';
+
+if (THEME === 'light' || THEME === 'vscode-light') {
+    document.body.classList.add('theme-light');
+}
+
+// 从 sessionStorage 获取游戏初始数据
+let gameData = {};
+try {
+    gameData = JSON.parse(sessionStorage.getItem('gameData') || '{}');
+} catch(e) {}
+
+// ─── 游戏状态 ───
+const BOARD_SIZE = 15;
+const CELL_SIZE = 36;
+const PADDING = 20;
+const STONE_RADIUS = 15;
+const CANVAS_SIZE = PADDING * 2 + CELL_SIZE * (BOARD_SIZE - 1);
+
+let board = [];
+let myColor = gameData.yourColor || 'black';
+let myUid = gameData.uid || PLAYER_UID;
+let currentTurn = 'black';
+let gameFinished = false;
+let lastMove = null;
+let winLine = null;
+let ws = null;
+let hoverPos = null;
+
+// 初始化棋盘
+for (let i = 0; i < BOARD_SIZE; i++) {
+    board[i] = new Array(BOARD_SIZE).fill(0);
+}
+
+// ─── Canvas ───
+const canvas = document.getElementById('board');
+canvas.width = CANVAS_SIZE;
+canvas.height = CANVAS_SIZE;
+const ctx = canvas.getContext('2d');
+
+function drawBoard() {
+    // 棋盘底色
+    ctx.fillStyle = '#dcb468';
+    ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+    // 绘制网格线
+    ctx.strokeStyle = '#8b6914';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < BOARD_SIZE; i++) {
+        const pos = PADDING + i * CELL_SIZE;
+        // 水平线
+        ctx.beginPath();
+        ctx.moveTo(PADDING, pos);
+        ctx.lineTo(PADDING + (BOARD_SIZE - 1) * CELL_SIZE, pos);
+        ctx.stroke();
+        // 垂直线
+        ctx.beginPath();
+        ctx.moveTo(pos, PADDING);
+        ctx.lineTo(pos, PADDING + (BOARD_SIZE - 1) * CELL_SIZE);
+        ctx.stroke();
+    }
+
+    // 星位
+    const stars = [3, 7, 11];
+    ctx.fillStyle = '#5a4510';
+    for (const r of stars) {
+        for (const c of stars) {
+            ctx.beginPath();
+            ctx.arc(PADDING + c * CELL_SIZE, PADDING + r * CELL_SIZE, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // 绘制棋子
+    for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+            if (board[r][c] !== 0) {
+                drawStone(r, c, board[r][c] === 1 ? 'black' : 'white');
+            }
+        }
+    }
+
+    // 最后一手标记
+    if (lastMove) {
+        const x = PADDING + lastMove.col * CELL_SIZE;
+        const y = PADDING + lastMove.row * CELL_SIZE;
+        ctx.strokeStyle = '#f44336';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    // 胜负连线
+    if (winLine && winLine.length > 0) {
+        ctx.strokeStyle = 'rgba(244, 67, 54, 0.7)';
+        ctx.lineWidth = 3;
+        // 排序找两端
+        const sorted = [...winLine].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        const first = sorted[0];
+        const last = sorted[sorted.length - 1];
+        ctx.beginPath();
+        ctx.moveTo(PADDING + first[1] * CELL_SIZE, PADDING + first[0] * CELL_SIZE);
+        ctx.lineTo(PADDING + last[1] * CELL_SIZE, PADDING + last[0] * CELL_SIZE);
+        ctx.stroke();
+    }
+
+    // 悬停预览
+    if (hoverPos && !gameFinished && !IS_SPECTATOR && currentTurn === myColor) {
+        const { row, col } = hoverPos;
+        if (row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE && board[row][col] === 0) {
+            drawStone(row, col, myColor, 0.4);
+        }
+    }
+}
+
+function drawStone(row, col, color, alpha = 1) {
+    const x = PADDING + col * CELL_SIZE;
+    const y = PADDING + row * CELL_SIZE;
+
+    ctx.globalAlpha = alpha;
+
+    if (color === 'black') {
+        const gradient = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, STONE_RADIUS);
+        gradient.addColorStop(0, '#555');
+        gradient.addColorStop(1, '#000');
+        ctx.fillStyle = gradient;
+    } else {
+        const gradient = ctx.createRadialGradient(x - 4, y - 4, 2, x, y, STONE_RADIUS);
+        gradient.addColorStop(0, '#fff');
+        gradient.addColorStop(1, '#ccc');
+        ctx.fillStyle = gradient;
+    }
+
+    ctx.beginPath();
+    ctx.arc(x, y, STONE_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (color === 'white') {
+        ctx.strokeStyle = '#999';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+}
+
+// ─── 鼠标交互 ───
+canvas.addEventListener('click', (e) => {
+    if (IS_SPECTATOR) return;
+    if (gameFinished) return;
+    if (currentTurn !== myColor) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_SIZE / rect.width;
+    const scaleY = CANVAS_SIZE / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const my = (e.clientY - rect.top) * scaleY;
+
+    const col = Math.round((mx - PADDING) / CELL_SIZE);
+    const row = Math.round((my - PADDING) / CELL_SIZE);
+
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return;
+    if (board[row][col] !== 0) return;
+
+    // 发送落子
+    sendMsg({ type: 'gameMove', row, col });
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = CANVAS_SIZE / rect.width;
+    const scaleY = CANVAS_SIZE / rect.height;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const my = (e.clientY - rect.top) * scaleY;
+
+    const col = Math.round((mx - PADDING) / CELL_SIZE);
+    const row = Math.round((my - PADDING) / CELL_SIZE);
+
+    hoverPos = { row, col };
+    drawBoard();
+});
+
+canvas.addEventListener('mouseleave', () => {
+    hoverPos = null;
+    drawBoard();
+});
+
+// ─── UI 更新 ───
+function updateUI() {
+    // 颜色标识
+    const badge = document.getElementById('myColorBadge');
+    if (IS_SPECTATOR) {
+        badge.className = 'color-badge spectator';
+        document.getElementById('myColorText').textContent = '观战中';
+        document.getElementById('myColorDot').textContent = '👁';
+        canvas.style.cursor = 'default';
+    } else {
+        badge.className = `color-badge ${myColor}`;
+        document.getElementById('myColorText').textContent = myColor === 'black' ? '黑子' : '白子';
+    }
+    document.getElementById('playerNameDisplay').textContent = PLAYER_NAME;
+
+    // 状态文字
+    updateStatus();
+    drawBoard();
+}
+
+function updateStatus() {
+    const el = document.getElementById('statusCard');
+    el.className = 'status-text';
+
+    if (gameFinished) {
+        return; // 结果弹窗处理
+    }
+
+    if (IS_SPECTATOR) {
+        el.textContent = currentTurn === 'black' ? '黑方回合' : '白方回合';
+        el.classList.add('waiting');
+        return;
+    }
+
+    if (currentTurn === myColor) {
+        el.textContent = '轮到你了！';
+        el.classList.add('your-turn');
+    } else {
+        el.textContent = '等待对手...';
+        el.classList.add('waiting');
+    }
+}
+
+function updatePlayersInfo(state) {
+    if (!state || !state.playerMap) return;
+    // playerMap: { connId: 'black'|'white' }
+    // 我们只能从颜色推断
+    const info = document.getElementById('playersInfo');
+    info.innerHTML = `
+        <div class="player-row">
+            <div class="player-stone black"></div>
+            <span class="player-name-text">黑方${myColor === 'black' ? ' (你)' : ''}</span>
+            ${currentTurn === 'black' && !gameFinished ? '<span class="player-turn">◀</span>' : ''}
+        </div>
+        <div class="player-row">
+            <div class="player-stone white"></div>
+            <span class="player-name-text">白方${myColor === 'white' ? ' (你)' : ''}</span>
+            ${currentTurn === 'white' && !gameFinished ? '<span class="player-turn">◀</span>' : ''}
+        </div>
+    `;
+}
+
+// ─── WebSocket ───
+function connectWS() {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+        addSystemChat('已连接服务器');
+        // 注册
+        ws.send(JSON.stringify({ type: 'register', playerName: PLAYER_NAME, uid: myUid, deviceHash: DEVICE_HASH }));
+    };
+
+    ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        handleMessage(data);
+    };
+
+    ws.onclose = () => {
+        addSystemChat('连接断开');
+        // 尝试重连（观战模式也重连）
+        setTimeout(connectWS, 3000);
+    };
+}
+
+function sendMsg(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+    }
+}
+
+// ─── 消息处理 ───
+function handleMessage(data) {
+    switch (data.type) {
+        case 'registered':
+            addSystemChat(`注册成功: ${data.playerName}`);
+            if (IS_SPECTATOR && SPECTATE_ROOM_ID) {
+                // 观战模式：发送观战请求
+                sendMsg({ type: 'spectateRoom', roomId: SPECTATE_ROOM_ID });
+            } else if (gameData.roomId) {
+                sendMsg({ type: 'joinRoom', roomId: gameData.roomId });
+            }
+            break;
+
+        case 'spectateJoined':
+            // 观战者成功加入
+            addSystemChat('已进入观战模式');
+            if (data.gameState) {
+                syncState(data.gameState);
+            }
+            gameFinished = !data.isPlaying;
+            updateUI();
+            break;
+
+        case 'spectatorJoined':
+            addSystemChat(`👁 ${data.playerName} 加入观战 (${data.spectatorCount}人观战)`);
+            break;
+
+        case 'gameStart':
+            if (IS_SPECTATOR) {
+                myColor = 'spectator';
+            } else {
+                myColor = data.yourColor;
+            }
+            syncState(data.state);
+            gameFinished = false;
+            winLine = null;
+            lastMove = null;
+            document.getElementById('resultOverlay').classList.add('hidden');
+            document.getElementById('roomClosedOverlay').classList.add('hidden');
+            if (IS_SPECTATOR) {
+                addSystemChat('游戏开始！观战中...');
+            } else {
+                addSystemChat(`游戏开始！你执${myColor === 'black' ? '黑' : '白'}子`);
+            }
+            updateUI();
+            break;
+
+        case 'gameMove':
+            // 更新棋盘
+            const colorVal = data.color === 'black' ? 1 : 2;
+            board[data.row][data.col] = colorVal;
+            lastMove = { row: data.row, col: data.col };
+            syncState(data.state);
+
+            if (data.winner) {
+                gameFinished = true;
+                winLine = data.winLine;
+                if (IS_SPECTATOR) {
+                    showResult(data.winner === 'black' ? 'spectate-black' : 'spectate-white');
+                } else {
+                    showResult(data.winner);
+                }
+            }
+            if (data.isDraw) {
+                gameFinished = true;
+                showResult('draw');
+            }
+
+            updateUI();
+            break;
+
+        case 'moveRejected':
+            addSystemChat(`⚠ ${data.error}`);
+            break;
+
+        case 'gameOver':
+            gameFinished = true;
+            if (data.roomClosed) {
+                // 玩家离开导致房间关闭 - 显示专用弹窗
+                showRoomClosed(data.message || '对手已离开');
+            } else {
+                addSystemChat(`游戏结束: ${data.message || data.reason}`);
+                showResult('disconnect', data.message);
+            }
+            break;
+
+        case 'playerLeft':
+            if (data.isPlayer) {
+                addSystemChat(`⚠ ${data.playerName} 离开了房间`);
+            } else {
+                addSystemChat(`👁 ${data.playerName} 离开了观战`);
+            }
+            break;
+
+        case 'chat':
+            addChatMsg(data.playerName, data.message, data.time, data.role);
+            break;
+
+        case 'ping':
+            sendMsg({ type: 'pong' });
+            break;
+
+        case 'error':
+            addSystemChat(`❌ ${data.message}`);
+            break;
+    }
+}
+
+function syncState(state) {
+    if (!state) return;
+    // 同步棋盘
+    if (state.board) {
+        for (let r = 0; r < BOARD_SIZE; r++) {
+            for (let c = 0; c < BOARD_SIZE; c++) {
+                board[r][c] = state.board[r][c];
+            }
+        }
+    }
+    currentTurn = state.currentPlayer || 'black';
+    updatePlayersInfo(state);
+}
+
+// ─── 结果弹窗 ───
+function showRoomClosed(message) {
+    document.getElementById('roomClosedTitle').textContent = '对手已离开';
+    document.getElementById('roomClosedDesc').textContent = message + '，房间已关闭';
+    document.getElementById('roomClosedOverlay').classList.remove('hidden');
+    // 隐藏普通结果弹窗
+    document.getElementById('resultOverlay').classList.add('hidden');
+    addSystemChat(`🚪 ${message}，房间已关闭`);
+}
+
+function showResult(winner, message) {
+    const overlay = document.getElementById('resultOverlay');
+    const emoji = document.getElementById('resultEmoji');
+    const title = document.getElementById('resultTitle');
+    const desc = document.getElementById('resultDesc');
+
+    const statusEl = document.getElementById('statusCard');
+
+    if (winner === 'draw') {
+        emoji.textContent = '🤝';
+        title.textContent = '平局！';
+        desc.textContent = '棋盘已满，势均力敌';
+        statusEl.textContent = '平局';
+        statusEl.className = 'status-text draw';
+    } else if (winner === 'disconnect') {
+        emoji.textContent = '🏃';
+        title.textContent = '对手离开';
+        desc.textContent = message || '对手断开连接';
+        statusEl.textContent = '对手离开';
+        statusEl.className = 'status-text win';
+    } else if (winner.startsWith('spectate-')) {
+        const winColor = winner === 'spectate-black' ? '黑方' : '白方';
+        emoji.textContent = '🏁';
+        title.textContent = `${winColor}获胜！`;
+        desc.textContent = '五子连珠';
+        statusEl.textContent = `${winColor}获胜`;
+        statusEl.className = 'status-text draw';
+    } else if (winner === myColor) {
+        emoji.textContent = '🏆';
+        title.textContent = '你赢了！';
+        desc.textContent = '五子连珠，恭喜！';
+        statusEl.textContent = '你赢了！';
+        statusEl.className = 'status-text win';
+    } else {
+        emoji.textContent = '😔';
+        title.textContent = '你输了';
+        desc.textContent = '再接再厉！';
+        statusEl.textContent = '你输了';
+        statusEl.className = 'status-text lose';
+    }
+
+    overlay.classList.remove('hidden');
+}
+
+// ─── 操作 ───
+function requestRestart() {
+    document.getElementById('resultOverlay').classList.add('hidden');
+    sendMsg({ type: 'gameRestart' });
+    addSystemChat('请求重新开始...');
+}
+
+function leaveGame() {
+    sendMsg({ type: 'leaveRoom' });
+    goBack();
+}
+
+function goBack() {
+    const lobbyUrl = `/lobby.html?wsUrl=${encodeURIComponent(WS_URL)}&playerName=${encodeURIComponent(PLAYER_NAME)}&uid=${encodeURIComponent(myUid)}&deviceHash=${encodeURIComponent(DEVICE_HASH)}&theme=${THEME}`;
+    window.location.href = lobbyUrl;
+}
+
+// ─── 聊天 ───
+const EMOJI_LIST = ['😄','😂','👍','👏','🎉','😎','🤔','😅','😤','🏆','👀','🔥','💪','🤣','😢','🎯','💀','❤️','🙏','😈'];
+
+function initEmojiPicker() {
+    const picker = document.getElementById('emojiPicker');
+    picker.innerHTML = EMOJI_LIST.map(e =>
+        `<button class="emoji-btn" onclick="sendEmoji('${e}')">${e}</button>`
+    ).join('');
+}
+
+function toggleEmoji() {
+    document.getElementById('emojiPicker').classList.toggle('open');
+}
+
+function sendEmoji(emoji) {
+    sendMsg({ type: 'chat', message: emoji });
+    document.getElementById('emojiPicker').classList.remove('open');
+}
+
+function addChatMsg(name, msg, time, role) {
+    const el = document.getElementById('chatMessages');
+    const timeStr = time || new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const roleClass = role === 'spectator' ? 'role-spectator' : 'role-player';
+    const roleTag = role === 'spectator' ? ' [观战]' : '';
+    el.innerHTML += `<div class="chat-msg"><span class="time">${timeStr}</span><span class="name ${roleClass}">${escapeHtml(name)}${roleTag}</span>: ${escapeHtml(msg)}</div>`;
+    el.scrollTop = el.scrollHeight;
+}
+
+function addSystemChat(msg) {
+    const el = document.getElementById('chatMessages');
+    const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    el.innerHTML += `<div class="chat-msg"><span class="time">${time}</span><span class="sys">${escapeHtml(msg)}</span></div>`;
+    el.scrollTop = el.scrollHeight;
+}
+
+function sendChat() {
+    const input = document.getElementById('chatInput');
+    const msg = input.value.trim();
+    if (!msg) return;
+    sendMsg({ type: 'chat', message: msg });
+    input.value = '';
+}
+
+document.getElementById('chatInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendChat();
+});
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// ─── 初始化 ───
+// 如果有初始状态，恢复
+if (gameData.state) {
+    myColor = gameData.yourColor || 'black';
+    syncState(gameData.state);
+}
+
+// 观战模式隐藏操作按钮
+if (IS_SPECTATOR) {
+    const btns = document.querySelectorAll('.panel-card h4');
+    btns.forEach(h => {
+        if (h.textContent === '操作') h.parentElement.classList.add('hidden');
+    });
+    const restartBtn = document.getElementById('restartBtn');
+    if (restartBtn) restartBtn.classList.add('hidden');
+}
+
+initEmojiPicker();
+updateUI();
+connectWS();
+</script>
+</body>
+</html>

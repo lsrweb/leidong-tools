@@ -162,6 +162,22 @@
         "title": "恢复全部监听",
         "category": "雷动三千工具集",
         "icon": "$(debug-continue)"
+      },
+      {
+        "command": "leidong-tools.openGameLobby",
+        "title": "打开小游戏大厅",
+        "category": "雷动三千工具集",
+        "icon": "$(game)"
+      },
+      {
+        "command": "leidong-tools.setGameServerUrl",
+        "title": "设置游戏服务器地址",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.changeGameNickname",
+        "title": "修改游戏昵称",
+        "category": "雷动三千工具集"
       }
     ],
     "configuration": {
@@ -214,6 +230,11 @@
           "type": "number",
           "default": 300,
           "description": "鼠标悬停在变量上后延迟多少毫秒开始检测（默认300ms）。"
+        },
+        "leidong-tools.gameServerUrl": {
+          "type": "string",
+          "default": "http://localhost:8088",
+          "description": "小游戏服务器 HTTP 地址。所有游戏页面由服务端提供，更新游戏无需更新扩展。"
         }
       }
     },
@@ -285,6 +306,13 @@
           "name": "监听服务",
           "icon": "$(eye)",
           "contextualTitle": "文件监听服务"
+        },
+        {
+          "id": "leidong-tools.gameSidebar",
+          "name": "小游戏",
+          "type": "webview",
+          "icon": "$(game)",
+          "contextualTitle": "小游戏大厅"
         }
       ]
     },

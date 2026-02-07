@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>雷动三千 - 小游戏大厅</title>
+<style>
+:root {
+    --bg-primary: #1e1e1e;
+    --bg-secondary: #252526;
+    --bg-hover: #2a2d2e;
+    --text-primary: #cccccc;
+    --text-secondary: #969696;
+    --accent: #0078d4;
+    --accent-hover: #1a8ae8;
+    --success: #4caf50;
+    --warning: #ff9800;
+    --danger: #f44336;
+    --border: #3c3c3c;
+    --radius: 6px;
+}
+
+.theme-light {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f3f3f3;
+    --bg-hover: #e8e8e8;
+    --text-primary: #333333;
+    --text-secondary: #666666;
+    --accent: #0078d4;
+    --border: #d4d4d4;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ─── 顶栏 ─── */
+.header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+.header h1 {
+    font-size: 18px;
+    font-weight: 600;
+}
+.header h1 span { font-size: 14px; color: var(--text-secondary); margin-left: 8px; }
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--danger);
+    transition: background 0.3s;
+}
+.status-dot.connected { background: var(--success); }
+.player-name {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* ─── 注册面板 ─── */
+.register-panel {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.register-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    width: 340px;
+    text-align: center;
+}
+.register-card h2 {
+    font-size: 20px;
+    margin-bottom: 8px;
+}
+.register-card p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+}
+.register-card input {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 16px;
+}
+.register-card input:focus {
+    border-color: var(--accent);
+}
+
+/* ─── 主体 ─── */
+.main {
+    flex: 1;
+    display: flex;
+    padding: 20px;
+    gap: 20px;
+    overflow: hidden;
+}
+
+/* ─── 游戏选择 ─── */
+.game-list {
+    width: 240px;
+    flex-shrink: 0;
+}
+.section-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    letter-spacing: 0.5px;
+}
+.game-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    margin-bottom: 8px;
+}
+.game-card:hover { background: var(--bg-hover); }
+.game-card.active { border-color: var(--accent); }
+.game-card .icon { font-size: 24px; margin-bottom: 6px; }
+.game-card .name { font-size: 14px; font-weight: 500; }
+.game-card .desc { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+/* ─── 房间列表 ─── */
+.room-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.room-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+.room-list {
+    flex: 1;
+    overflow-y: auto;
+}
+.room-item {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: background 0.2s;
+}
+.room-item:hover { background: var(--bg-hover); }
+.room-info .room-name { font-size: 14px; font-weight: 500; }
+.room-info .room-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.room-status {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    margin-right: 8px;
+}
+.room-status.waiting { background: rgba(76,175,80,0.15); color: var(--success); }
+.room-status.playing { background: rgba(255,152,0,0.15); color: var(--warning); }
+.room-status.finished { background: rgba(150,150,150,0.15); color: var(--text-secondary); }
+
+.empty-state {
+    text-align: center;
+    padding: 40px 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+.empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+
+/* ─── 按钮 ─── */
+.btn {
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+.btn-primary {
+    background: var(--accent);
+    color: #fff;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+.btn-secondary:hover { background: var(--border); }
+.btn-sm { padding: 5px 12px; font-size: 12px; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { opacity: 0.85; }
+
+/* ─── 创建房间弹窗 ─── */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+}
+.modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    width: 360px;
+}
+.modal h3 { margin-bottom: 16px; font-size: 16px; }
+.modal label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    display: block;
+    margin-bottom: 6px;
+}
+.modal input {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    margin-bottom: 16px;
+}
+.modal input:focus { border-color: var(--accent); }
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* ─── 底栏 ─── */
+.footer {
+    background: var(--bg-secondary);
+    border-top: 1px solid var(--border);
+    padding: 6px 20px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+    flex-shrink: 0;
+}
+
+/* ─── 滚动条 ─── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- 注册面板 -->
+<div class="register-panel" id="registerPanel">
+    <div class="register-card">
+        <h2>🎮 雷动三千</h2>
+        <p>小游戏大厅 · 输入昵称开始</p>
+        <input type="text" id="nameInput" placeholder="你的昵称" maxlength="20" autocomplete="off">
+        <button class="btn btn-primary" style="width:100%" onclick="register()">进 入</button>
+    </div>
+</div>
+
+<!-- 顶栏 -->
+<div class="header">
+    <h1>🎮 雷动三千 <span>小游戏大厅</span></h1>
+    <div class="header-right">
+        <div class="status-dot" id="statusDot" title="服务器连接状态"></div>
+        <span class="player-name" id="playerNameDisplay"></span>
+        <span class="player-name" id="playerUidDisplay" style="font-size:10px;opacity:0.5"></span>
+        <span style="font-size:12px;cursor:pointer;color:var(--accent)" onclick="changeNickname()" title="修改昵称">✏️</span>
+    </div>
+</div>
+
+<!-- 主体 -->
+<div class="main">
+    <!-- 游戏选择 -->
+    <div class="game-list">
+        <div class="section-title">可选游戏</div>
+        <div id="gameList"></div>
+        <div style="margin-top:16px">
+            <div class="section-title">🏆 我的战绩</div>
+            <div id="playerStatsPanel" style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius);padding:12px;font-size:12px;color:var(--text-secondary)">
+                加载中...
+            </div>
+        </div>
+    </div>
+
+    <!-- 房间列表 -->
+    <div class="room-panel">
+        <div class="room-toolbar">
+            <div class="section-title" style="margin-bottom:0">
+                房间列表 <span id="roomCount" style="color:var(--accent)"></span>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-secondary btn-sm" onclick="refreshRooms()">🔄 刷新</button>
+                <button class="btn btn-primary btn-sm" onclick="showCreateModal()">➕ 创建房间</button>
+            </div>
+        </div>
+        <div class="room-list" id="roomList">
+            <div class="empty-state">
+                <div class="icon">🏠</div>
+                <div>暂无房间，创建一个吧</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 底栏 -->
+<div class="footer">
+    <span>雷动三千 · 小游戏平台 v1.1</span>
+    <span id="statsInfo">在线: 0 | 房间: 0</span>
+</div>
+
+<!-- 创建房间弹窗 -->
+<div class="modal-overlay hidden" id="createModal">
+    <div class="modal">
+        <h3>创建游戏房间</h3>
+        <label>房间名称</label>
+        <input type="text" id="roomNameInput" placeholder="可选，留空使用默认" maxlength="20">
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="hideCreateModal()">取消</button>
+            <button class="btn btn-primary" onclick="createRoom()">创建</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ─── 配置 ───
+const CONFIG = window.__SERVER_CONFIG__ || {};
+const WS_URL = CONFIG.wsUrl || `ws://${location.hostname}:8089`;
+const THEME = CONFIG.theme || 'dark';
+const SOURCE = CONFIG.source || 'browser';
+
+if (THEME === 'light' || THEME === 'vscode-light') {
+    document.body.classList.add('theme-light');
+}
+
+// ─── 状态 ───
+let ws = null;
+let playerName = CONFIG.playerName || '';
+let playerUid = CONFIG.uid || '';
+let deviceHash = CONFIG.deviceHash || '';
+let selectedGame = 'gomoku';
+let rooms = [];
+let reconnectTimer = null;
+let reconnectAttempts = 0;
+
+// ─── 游戏列表 ───
+const GAMES = [
+    { id: 'gomoku', name: '五子棋', icon: '⚫', desc: '经典双人对弈，五子连珠获胜' }
+];
+
+function showPlayerStats(stats) {
+    const el = document.getElementById('playerStatsPanel');
+    if (!el || !stats) return;
+    el.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 12px">
+            <div>总局数: <strong style="color:var(--text-primary)">${stats.total_games || 0}</strong></div>
+            <div>胜率: <strong style="color:var(--success)">${stats.win_rate || 0}%</strong></div>
+            <div>胜: <strong style="color:var(--success)">${stats.total_wins || 0}</strong></div>
+            <div>负: <strong style="color:var(--danger)">${stats.total_losses || 0}</strong></div>
+            <div>平: <strong>${stats.total_draws || 0}</strong></div>
+        </div>
+    `;
+}
+
+function renderGameList() {
+    const container = document.getElementById('gameList');
+    container.innerHTML = GAMES.map(g => `
+        <div class="game-card ${g.id === selectedGame ? 'active' : ''}" onclick="selectGame('${g.id}')">
+            <div class="icon">${g.icon}</div>
+            <div class="name">${g.name}</div>
+            <div class="desc">${g.desc}</div>
+        </div>
+    `).join('');
+}
+
+function selectGame(id) {
+    selectedGame = id;
+    renderGameList();
+    refreshRooms();
+}
+
+// ─── 注册 ───
+function register() {
+    const input = document.getElementById('nameInput');
+    const name = input.value.trim();
+    if (!name) { input.focus(); return; }
+    playerName = name;
+    document.getElementById('registerPanel').classList.add('hidden');
+    updateHeaderInfo();
+    connectWS();
+}
+
+function updateHeaderInfo() {
+    document.getElementById('playerNameDisplay').textContent = playerName;
+    if (playerUid) {
+        document.getElementById('playerUidDisplay').textContent = 'UID:' + playerUid.substring(0, 8);
+    }
+}
+
+// 如果从 VS Code 进入且有昵称，跳过注册面板
+if (playerName && SOURCE === 'vscode') {
+    document.getElementById('nameInput').value = playerName;
+    register();
+} else if (playerName) {
+    document.getElementById('nameInput').value = playerName;
+}
+
+document.getElementById('nameInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') register();
+});
+
+// ─── 修改昵称 ───
+function changeNickname() {
+    // 如果在 VS Code WebView iframe 内，通知父级扩展处理
+    if (SOURCE === 'vscode' && window.parent !== window) {
+        window.parent.postMessage({ target: 'vscode', command: 'changeNickname' }, '*');
+        return;
+    }
+    // 纯浏览器模式：弹出输入框
+    const newName = prompt('输入新昵称:', playerName);
+    if (newName && newName.trim()) {
+        playerName = newName.trim();
+        updateHeaderInfo();
+        // 重新注册（uid 不变，只更新昵称）
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'register', playerName, uid: playerUid, deviceHash }));
+        }
+    }
+}
+
+// 监听来自 VS Code 父级的消息（昵称变更）
+window.addEventListener('message', (event) => {
+    const msg = event.data;
+    if (msg && msg.command === 'nicknameChanged' && msg.nickname) {
+        playerName = msg.nickname;
+        if (msg.uid) playerUid = msg.uid;
+        updateHeaderInfo();
+        // 重新注册到 WebSocket
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'register', playerName, uid: playerUid, deviceHash }));
+        }
+    }
+});
+
+// ─── WebSocket ───
+function connectWS() {
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+        reconnectAttempts = 0;
+        document.getElementById('statusDot').classList.add('connected');
+        // 注册（携带 uid 和 deviceHash）
+        ws.send(JSON.stringify({ type: 'register', playerName, uid: playerUid, deviceHash }));
+    };
+
+    ws.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        handleMessage(data);
+    };
+
+    ws.onclose = () => {
+        document.getElementById('statusDot').classList.remove('connected');
+        scheduleReconnect();
+    };
+
+    ws.onerror = () => {
+        // onclose 会接着触发
+    };
+}
+
+function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 30000);
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWS();
+    }, delay);
+}
+
+function sendMsg(data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+    }
+}
+
+// ─── 消息处理 ───
+function handleMessage(data) {
+    switch (data.type) {
+        case 'registered':
+            playerName = data.playerName;
+            if (data.uid) playerUid = data.uid;
+            updateHeaderInfo();
+            refreshRooms();
+            // 处理 uid 冲突
+            if (data.uidConflict && data.newUid) {
+                playerUid = data.newUid;
+                updateHeaderInfo();
+                // 通知 VS Code 扩展缓存新 uid
+                if (SOURCE === 'vscode' && window.parent !== window) {
+                    window.parent.postMessage({ target: 'vscode', command: 'uidConflict', newUid: data.newUid }, '*');
+                }
+            }
+            // 显示战绩
+            if (data.stats) {
+                showPlayerStats(data.stats);
+            }
+            break;
+
+        case 'roomList':
+            rooms = data.rooms || [];
+            renderRooms();
+            if (data.stats) {
+                document.getElementById('statsInfo').textContent =
+                    `在线: ${data.stats.totalPlayers} | 房间: ${data.stats.totalRooms}`;
+            }
+            break;
+
+        case 'roomCreated':
+            refreshRooms();
+            // 自动进入已创建的房间（等待对手）
+            showWaiting(data.room);
+            break;
+
+        case 'roomJoined':
+            // 加入了房间，等待游戏开始
+            showWaiting(data.room);
+            break;
+
+        case 'playerJoined':
+            // 有人加入我的房间
+            break;
+
+        case 'gameStart':
+            // 跳转到游戏页面
+            goToGame(data);
+            break;
+
+        case 'ping':
+            sendMsg({ type: 'pong' });
+            break;
+
+        case 'error':
+            alert(data.message);
+            break;
+    }
+}
+
+// ─── 房间操作 ───
+function refreshRooms() {
+    sendMsg({ type: 'roomList', gameType: selectedGame });
+}
+
+function getPlayerNames(players) {
+    // players 可能是 [{name, uid}, ...] 或 ["名字", ...]
+    if (!players || players.length === 0) return '空';
+    return players.map(p => typeof p === 'object' ? escapeHtml(p.name) : escapeHtml(p)).join(', ');
+}
+
+function renderRooms() {
+    const container = document.getElementById('roomList');
+    const filtered = rooms.filter(r => !selectedGame || r.gameType === selectedGame);
+    document.getElementById('roomCount').textContent = `(${filtered.length})`;
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">🏠</div>
+                <div>暂无房间，创建一个吧</div>
+            </div>`;
+        return;
+    }
+
+    container.innerHTML = filtered.map(room => `
+        <div class="room-item">
+            <div class="room-info">
+                <div class="room-name">${escapeHtml(room.name)}</div>
+                <div class="room-meta">
+                    ${GAMES.find(g => g.id === room.gameType)?.icon || '🎮'} ${room.gameType}
+                    · ${getPlayerNames(room.players)}
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+                <span class="room-status ${room.status}">${
+                    room.status === 'waiting' ? '等待中' :
+                    room.status === 'playing' ? '游戏中' : '已结束'
+                }</span>
+                <span style="font-size:13px;color:var(--text-secondary)">${room.playerCount}/${room.maxPlayers}${room.spectatorCount ? ' 👁' + room.spectatorCount : ''}</span>
+                ${room.status === 'waiting' && room.playerCount < room.maxPlayers
+                    ? `<button class="btn btn-primary btn-sm" onclick="joinRoom('${room.id}')">加入</button>`
+                    : ''
+                }
+                ${room.status === 'playing'
+                    ? `<button class="btn btn-sm" style="background:rgba(255,152,0,0.15);color:var(--warning);border:1px solid var(--warning);cursor:pointer;padding:4px 10px;border-radius:4px;font-size:12px" onclick="spectateRoom('${room.id}')">👁 观战</button>`
+                    : ''
+                }
+            </div>
+        </div>
+    `).join('');
+}
+
+function showCreateModal() {
+    document.getElementById('createModal').classList.remove('hidden');
+    document.getElementById('roomNameInput').focus();
+}
+
+function hideCreateModal() {
+    document.getElementById('createModal').classList.add('hidden');
+}
+
+function createRoom() {
+    const name = document.getElementById('roomNameInput').value.trim();
+    sendMsg({
+        type: 'createRoom',
+        gameType: selectedGame,
+        roomName: name
+    });
+    hideCreateModal();
+}
+
+function joinRoom(roomId) {
+    sendMsg({ type: 'joinRoom', roomId });
+}
+
+function spectateRoom(roomId) {
+    // 以观战模式跳转到游戏页面
+    const gameUrl = `/games/gomoku.html?wsUrl=${encodeURIComponent(WS_URL)}&playerName=${encodeURIComponent(playerName)}&uid=${encodeURIComponent(playerUid)}&deviceHash=${encodeURIComponent(deviceHash)}&theme=${THEME}&spectate=true&roomId=${encodeURIComponent(roomId)}`;
+    window.location.href = gameUrl;
+}
+
+// ─── 等待页面 ───
+function showWaiting(room) {
+    document.querySelector('.main').innerHTML = `
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column">
+            <div style="font-size:48px;margin-bottom:16px">⏳</div>
+            <h2 style="margin-bottom:8px">${escapeHtml(room.name)}</h2>
+            <p style="color:var(--text-secondary);margin-bottom:24px">
+                等待对手加入... (${room.playerCount}/${room.maxPlayers})
+            </p>
+            <p style="color:var(--text-secondary);font-size:12px;margin-bottom:24px">
+                房间ID: ${room.id}
+            </p>
+            <button class="btn btn-danger btn-sm" onclick="leaveRoom()">离开房间</button>
+        </div>
+    `;
+}
+
+function leaveRoom() {
+    sendMsg({ type: 'leaveRoom' });
+    location.reload();
+}
+
+// ─── 跳转游戏 ───
+function goToGame(data) {
+    // 将游戏信息存入 sessionStorage，然后跳转
+    sessionStorage.setItem('gameData', JSON.stringify({
+        roomId: data.roomId,
+        yourColor: data.yourColor,
+        state: data.state,
+        wsUrl: WS_URL,
+        playerName: playerName,
+        uid: playerUid,
+        deviceHash: deviceHash,
+        theme: THEME,
+    }));
+
+    // 跳转到游戏页面
+    const gameUrl = `/games/${data.gameType}.html?wsUrl=${encodeURIComponent(WS_URL)}&playerName=${encodeURIComponent(playerName)}&uid=${encodeURIComponent(playerUid)}&deviceHash=${encodeURIComponent(deviceHash)}&theme=${THEME}`;
+    window.location.href = gameUrl;
+}
+
+// ─── 工具函数 ───
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+// ─── 定时刷新 ───
+setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        refreshRooms();
+    }
+}, 5000);
+
+// ─── 初始化 ───
+renderGameList();
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ import {
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
+import { GameSidebarProvider } from '../games/gameWebviewProvider';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
 
@@ -122,4 +123,13 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     fileWatchManager.onWatchItemsChanged(() => {
         watchServiceProvider.refresh();
     });
+
+    // 3. 游戏面板 WebView
+    const gameSidebarProvider = new GameSidebarProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            GameSidebarProvider.viewType,
+            gameSidebarProvider
+        )
+    );
 }
