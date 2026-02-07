@@ -101,6 +101,7 @@ if ($isDev) {
     Logger::info("   VS Code 扩展配置: http://{$config['bind_address']}:{$config['http_port']}");
 } else {
     Logger::info("   生产域名: http://{$config['domain']}");
+    Logger::info("   部署路径: " . ($config['deploy_path'] ?? '/www/wwwroot/gserver/leidong-tools'));
     Logger::info("   NGINX 反代: 127.0.0.1:{$config['http_port']} (HTTP) + 127.0.0.1:{$config['ws_port']} (WS)");
 }
 Logger::info("----------------------------------------");

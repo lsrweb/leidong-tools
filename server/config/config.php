@@ -12,6 +12,9 @@ return [
     // 生产环境域名
     'domain' => 'gserver.srliforever.ltd',
 
+    // 部署路径（宝塔面板默认）
+    'deploy_path' => '/www/wwwroot/gserver/leidong-tools',
+
     // HTTP 服务端口（Ratchet 内置 HTTP，生产环境由 NGINX 反代 /api/*）
     'http_port' => 8088,
 
