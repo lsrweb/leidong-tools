@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { jsSymbolParser, SymbolType } from '../parsers/jsSymbolParser';
+import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
+import type { VueIndex } from '../parsers/parseDocument';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -44,6 +46,12 @@ export class TreeItem extends vscode.TreeItem {
                 return new vscode.ThemeIcon('symbol-function');
             case 'watch':
                 return new vscode.ThemeIcon('eye');
+            case 'filter':
+                return new vscode.ThemeIcon('filter');
+            case 'lifecycle':
+                return new vscode.ThemeIcon('clock');
+            case 'prop':
+                return new vscode.ThemeIcon('symbol-field');
             default:
                 return new vscode.ThemeIcon('symbol-variable');
         }
@@ -283,6 +291,16 @@ export class LeidongTreeDataProvider implements vscode.TreeDataProvider<TreeItem
         
         const categories: TreeItem[] = [];
         
+        // 获取 VueIndex（包含 watch/filters/lifecycle）
+        let vueIndex: VueIndex | null = null;
+        try {
+            if (document.languageId === 'html') {
+                vueIndex = resolveVueIndexForHtml(document);
+            } else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+                vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+            }
+        } catch { /* ignore */ }
+        
         // 统计各类型数量
         let dataCount = 0;
         let methodCount = 0;
@@ -294,6 +312,16 @@ export class LeidongTreeDataProvider implements vscode.TreeDataProvider<TreeItem
                 methodCount++;
             }
         });
+        
+        // Props (from VueIndex)
+        if (vueIndex && vueIndex.props.size > 0) {
+            categories.push(new TreeItem(
+                `Props (${vueIndex.props.size})`,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'category',
+                { categoryType: 'props', vueIndex, targetUri }
+            ));
+        }
         
         // Data 属性
         if (dataCount > 0) {
@@ -314,6 +342,46 @@ export class LeidongTreeDataProvider implements vscode.TreeDataProvider<TreeItem
                 { categoryType: 'methods', parseResult, targetUri }
             ));
         }
+
+        // Computed (from VueIndex)
+        if (vueIndex && vueIndex.computed.size > 0) {
+            categories.push(new TreeItem(
+                `Computed (${vueIndex.computed.size})`,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'category',
+                { categoryType: 'computed', vueIndex, targetUri }
+            ));
+        }
+        
+        // Watch (from VueIndex)
+        if (vueIndex && vueIndex.watch.size > 0) {
+            categories.push(new TreeItem(
+                `Watch (${vueIndex.watch.size})`,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'category',
+                { categoryType: 'watch', vueIndex, targetUri }
+            ));
+        }
+        
+        // Filters (from VueIndex)
+        if (vueIndex && vueIndex.filters.size > 0) {
+            categories.push(new TreeItem(
+                `Filters (${vueIndex.filters.size})`,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'category',
+                { categoryType: 'filters', vueIndex, targetUri }
+            ));
+        }
+        
+        // Lifecycle (from VueIndex)
+        if (vueIndex && vueIndex.lifecycle.size > 0) {
+            categories.push(new TreeItem(
+                `Lifecycle (${vueIndex.lifecycle.size})`,
+                vscode.TreeItemCollapsibleState.Collapsed,
+                'category',
+                { categoryType: 'lifecycle', vueIndex, targetUri }
+            ));
+        }
         
         if (categories.length === 0) {
             return [new TreeItem('Vue 实例为空', vscode.TreeItemCollapsibleState.None, 'empty')];
@@ -327,30 +395,88 @@ export class LeidongTreeDataProvider implements vscode.TreeDataProvider<TreeItem
      * 性能优化：按代码行号排序，保持原始顺序
      */
     private getCategoryChildren(element: TreeItem): TreeItem[] {
-        const { categoryType, parseResult, targetUri } = element.data;
+        const { categoryType, parseResult, targetUri, vueIndex } = element.data;
         const items: TreeItem[] = [];
         const fileName = targetUri.fsPath.split(/[\\/]/).pop() || '';
         
-        // 收集所有符号并按行号排序
+        // VueIndex-based categories: props, computed, watch, filters, lifecycle
+        if (vueIndex && ['props', 'computed', 'watch', 'filters', 'lifecycle'].includes(categoryType)) {
+            const sourceMap: Map<string, any> | undefined = (vueIndex as any)[categoryType];
+            if (!sourceMap) { return items; }
+            
+            // 按 key 名排序
+            const sorted = Array.from(sourceMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+            
+            for (const [name, loc] of sorted) {
+                const itemType = categoryType === 'filters' ? 'filter'
+                    : categoryType === 'lifecycle' ? 'lifecycle'
+                    : categoryType === 'props' ? 'prop'
+                    : categoryType === 'watch' ? 'data'  // watch 用 data 图标
+                    : 'data';
+                
+                const item = new TreeItem(
+                    name,
+                    vscode.TreeItemCollapsibleState.None,
+                    'item',
+                    { itemType }
+                );
+                
+                // 附加元信息
+                if (categoryType === 'watch' && vueIndex.watchMeta) {
+                    const meta = vueIndex.watchMeta.get(name);
+                    if (meta) {
+                        const flags: string[] = [];
+                        if (meta.deep) { flags.push('deep'); }
+                        if (meta.immediate) { flags.push('immediate'); }
+                        item.description = flags.length > 0 ? flags.join(', ') : '';
+                    }
+                }
+                if (categoryType === 'filters' && vueIndex.filtersMeta) {
+                    const meta = vueIndex.filtersMeta.get(name);
+                    if (meta) {
+                        item.description = `(${meta.params.join(', ')})`;
+                    }
+                }
+                
+                // 如果 loc 是 vscode.Location，可以跳转
+                if (loc && loc.range) {
+                    const pos = loc.range.start;
+                    item.tooltip = `${fileName} (line ${pos.line + 1})`;
+                    if (!item.description) { item.description = `:${pos.line + 1}`; }
+                    item.command = {
+                        command: 'leidong-tools.jumpToDefinition',
+                        title: 'Jump to Definition',
+                        arguments: [targetUri, new vscode.Position(pos.line, pos.character)]
+                    };
+                }
+                
+                items.push(item);
+            }
+            return items;
+        }
+        
+        // 原始 jsSymbolParser 逻辑: data / methods
         const symbols: Array<{ name: string; symbol: any; line: number }> = [];
         
-        parseResult.thisReferences.forEach((symbol: any, name: string) => {
-            let shouldInclude = false;
-            
-            if (categoryType === 'data' && symbol.kind === SymbolType.Property) {
-                shouldInclude = true;
-            } else if (categoryType === 'methods' && symbol.kind === SymbolType.Method) {
-                shouldInclude = true;
-            }
-            
-            if (shouldInclude) {
-                symbols.push({
-                    name,
-                    symbol,
-                    line: symbol.range.start.line
-                });
-            }
-        });
+        if (parseResult) {
+            parseResult.thisReferences.forEach((symbol: any, name: string) => {
+                let shouldInclude = false;
+                
+                if (categoryType === 'data' && symbol.kind === SymbolType.Property) {
+                    shouldInclude = true;
+                } else if (categoryType === 'methods' && symbol.kind === SymbolType.Method) {
+                    shouldInclude = true;
+                }
+                
+                if (shouldInclude) {
+                    symbols.push({
+                        name,
+                        symbol,
+                        line: symbol.range.start.line
+                    });
+                }
+            });
+        }
         
         // ✅ 按代码行号排序，保持原始顺序
         symbols.sort((a, b) => a.line - b.line);

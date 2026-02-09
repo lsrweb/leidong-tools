@@ -12,6 +12,7 @@ import type { VueIndex } from '../parsers/parseDocument';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { inferObjectProperties } from '../helpers/propertyInference';
 import { getTemplateLiteralAtPosition, isVueTemplateContext } from '../helpers/templateLiteralHelper';
+import { getTemplateRefs } from '../finders/templateIndexer';
 import * as fs from 'fs';
 
 /**
@@ -140,6 +141,17 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
 
             // 检查触发自动完成的字符
             const linePrefix = document.lineAt(position).text.substring(0, position.character);
+
+            // $refs 补全：this.$refs. / that.$refs.
+            if (/(?:this|that|self|vm)\.\$refs\.\s*$/.test(linePrefix)) {
+                return this.provideRefsCompletions();
+            }
+
+            // $emit 事件名补全：this.$emit('
+            if (/(?:this|that|self|vm)\.\$emit\(\s*['"]$/.test(linePrefix)) {
+                return this.provideEmitEventCompletions(document);
+            }
+
             const objectContext = this.getObjectPropertyContext(linePrefix);
             if (objectContext) {
                 const inferredItems = this.getInferredPropertyItems(document, objectContext.root);
@@ -197,6 +209,40 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
             console.error('[JS Completion] Error providing completions:', error);
             return [];
         }
+    }
+
+    // $refs 补全：扫描所有打开的 HTML 文件中的 ref 属性
+    private provideRefsCompletions(): vscode.CompletionList {
+        const items: vscode.CompletionItem[] = [];
+        // 扫描所有可见编辑器中的 HTML 文件
+        for (const editor of vscode.window.visibleTextEditors) {
+            if (editor.document.languageId === 'html') {
+                const refs = getTemplateRefs(editor.document);
+                refs.forEach((_loc, refName) => {
+                    const item = new vscode.CompletionItem(refName, vscode.CompletionItemKind.Reference);
+                    item.detail = `ref="${refName}" (雷动三千)`;
+                    item.sortText = '0000';
+                    items.push(item);
+                });
+            }
+        }
+        return new vscode.CompletionList(items, false);
+    }
+
+    // $emit 事件名补全：从当前文件索引中获取已有的 $emit 事件
+    private provideEmitEventCompletions(document: vscode.TextDocument): vscode.CompletionList {
+        const items: vscode.CompletionItem[] = [];
+        const content = document.getText();
+        const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+        if (index && index.emits.size > 0) {
+            index.emits.forEach((_loc, eventName) => {
+                const item = new vscode.CompletionItem(eventName, vscode.CompletionItemKind.Event);
+                item.detail = `event "${eventName}" (雷动三千)`;
+                item.sortText = '0000';
+                items.push(item);
+            });
+        }
+        return new vscode.CompletionList(items, false);
     }
 
     // 判断是否在 this 上下文中
@@ -328,6 +374,82 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
         _context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
+
+        // 检测 filter 管道上下文：{{ value | 或 {{ value | currency |
+        const isPipeContext = /\{\{[^}]*\|\s*[a-zA-Z_$]*$/.test(linePrefix);
+        if (isPipeContext) {
+            const rootIndex = resolveVueIndexForHtml(document);
+            if (rootIndex && rootIndex.filters.size > 0) {
+                const filterItems: vscode.CompletionItem[] = [];
+                rootIndex.filters.forEach((_loc, name) => {
+                    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
+                    const fMeta = rootIndex.filtersMeta?.get(name);
+                    item.detail = `filter ${name} (雷动三千)`;
+                    if (fMeta?.doc) { item.documentation = new vscode.MarkdownString(fMeta.doc); }
+                    item.sortText = '0000';
+                    filterItems.push(item);
+                });
+                return new vscode.CompletionList(filterItems, false);
+            }
+        }
+
+        // 组件标签补全：<xxx 处触发，建议已注册组件的 kebab-case 名称
+        const tagMatch = /<([a-zA-Z0-9-]*)$/.exec(linePrefix);
+        if (tagMatch) {
+            const rootIndex = resolveVueIndexForHtml(document);
+            if (rootIndex && rootIndex.registeredComponents.size > 0) {
+                const tagItems: vscode.CompletionItem[] = [];
+                rootIndex.registeredComponents.forEach((comp) => {
+                    const item = new vscode.CompletionItem(comp.kebabName, vscode.CompletionItemKind.Class);
+                    item.detail = `component <${comp.kebabName}> (雷动三千)`;
+                    if (comp.props.size > 0) {
+                        const propsList = Array.from(comp.props.entries()).map(([pn, pm]) => {
+                            const typePart = pm.type ? `: ${pm.type}` : '';
+                            const reqPart = pm.required ? ' *' : '';
+                            return `- \`${pn}${typePart}\`${reqPart}`;
+                        }).join('\n');
+                        item.documentation = new vscode.MarkdownString(`**Props:**\n${propsList}`);
+                    }
+                    item.sortText = '0000';
+                    tagItems.push(item);
+                });
+                if (tagItems.length > 0) {
+                    return new vscode.CompletionList(tagItems, false);
+                }
+            }
+        }
+
+        // @event 补全：在组件标签上 @xxx 触发，建议组件 $emit 的事件
+        const eventAttrMatch = /@([a-zA-Z0-9_-]*)$/.exec(linePrefix);
+        if (eventAttrMatch) {
+            const rootIndex = resolveVueIndexForHtml(document);
+            if (rootIndex && rootIndex.emits.size > 0) {
+                const eventItems: vscode.CompletionItem[] = [];
+                rootIndex.emits.forEach((_loc, eventName) => {
+                    const item = new vscode.CompletionItem(eventName, vscode.CompletionItemKind.Event);
+                    item.detail = `event @${eventName} (雷动三千)`;
+                    item.sortText = '0000';
+                    eventItems.push(item);
+                });
+                // 也从子组件中收集
+                if (rootIndex.componentsByTemplateId) {
+                    rootIndex.componentsByTemplateId.forEach((compIndex) => {
+                        compIndex.emits.forEach((_loc, eventName) => {
+                            if (!eventItems.some(i => (i.label as string) === eventName)) {
+                                const item = new vscode.CompletionItem(eventName, vscode.CompletionItemKind.Event);
+                                item.detail = `component event @${eventName} (雷动三千)`;
+                                item.sortText = '0001';
+                                eventItems.push(item);
+                            }
+                        });
+                    });
+                }
+                if (eventItems.length > 0) {
+                    return new vscode.CompletionList(eventItems, false);
+                }
+            }
+        }
+
         if (!this.isTemplateContext(linePrefix)) {
             return [];
         }
@@ -437,6 +559,21 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
             if (!thisReferences.has(name)) {
                 const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
                 applyFunctionMeta(item, name, 'mixin method', index.methodMeta);
+                methods.push(item);
+                thisReferences.set(name, item);
+            }
+        });
+        // filters
+        index.filters.forEach((_loc, name) => {
+            if (!thisReferences.has(name)) {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Function);
+                const fMeta = index.filtersMeta?.get(name);
+                if (fMeta?.params?.length) {
+                    item.detail = `filter ${name}(${fMeta.params.join(', ')}) (雷动三千)`;
+                } else {
+                    item.detail = `filter ${name}() (雷动三千)`;
+                }
+                if (fMeta?.doc) { item.documentation = new vscode.MarkdownString(fMeta.doc); }
                 methods.push(item);
                 thisReferences.set(name, item);
             }

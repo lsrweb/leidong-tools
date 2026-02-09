@@ -53,16 +53,21 @@ export class VueHoverProvider implements vscode.HoverProvider {
             const computedMeta = vueIndex.computedMeta.get(word);
             const dataMeta = vueIndex.dataMeta.get(word);
             const propMeta = vueIndex.propsMeta?.get(word);
+            const watchMetaItem = vueIndex.watchMeta?.get(word);
+            const filterMeta = vueIndex.filtersMeta?.get(word);
             const isMethod = vueIndex.methods.has(word);
             const isComputed = vueIndex.computed.has(word);
             const isData = vueIndex.data.has(word);
             const isProp = vueIndex.props?.has(word) ?? false;
+            const isWatch = vueIndex.watch?.has(word) ?? false;
+            const isFilter = vueIndex.filters?.has(word) ?? false;
+            const isLifecycle = vueIndex.lifecycle?.has(word) ?? false;
             const isMixin = vueIndex.mixinMethods.has(word) || vueIndex.mixinComputed.has(word) || vueIndex.mixinData.has(word);
-            const label = isProp ? 'Vue Prop' : isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : isData ? 'Vue Data' : isMixin ? 'Vue Mixin' : 'Vue Variable';
-            const meta = methodMeta || computedMeta;
-            const params = meta?.params?.length ? `(${meta.params.join(', ')})` : isMethod ? '()' : '';
+            const label = isProp ? 'Vue Prop' : isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : isData ? 'Vue Data' : isFilter ? 'Vue Filter' : isWatch ? 'Vue Watch' : isLifecycle ? 'Vue Lifecycle' : isMixin ? 'Vue Mixin' : 'Vue Variable';
+            const meta = methodMeta || computedMeta || filterMeta;
+            const params = meta?.params?.length ? `(${meta.params.join(', ')})` : isMethod || isFilter ? '()' : '';
             const header = `**${label}**: ${word}${params}`;
-            const scopeLabel = isProp ? 'prop' : isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isMixin ? 'mixin' : 'variable';
+            const scopeLabel = isProp ? 'prop' : isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isFilter ? 'filter' : isWatch ? 'watch' : isLifecycle ? 'lifecycle' : isMixin ? 'mixin' : 'variable';
             const parts: string[] = [header];
             parts.push(`Scope: \`${scopeLabel}\``);
             if (isProp && propMeta) {
@@ -71,6 +76,17 @@ export class VueHoverProvider implements vscode.HoverProvider {
                 if (propMeta.default !== undefined) { propParts.push(`Default: \`${propMeta.default}\``); }
                 if (propMeta.required) { propParts.push(`Required: \`true\``); }
                 if (propParts.length > 0) { parts.push(propParts.join(' | ')); }
+            }
+            if (isWatch && watchMetaItem) {
+                const watchParts: string[] = [];
+                if (watchMetaItem.deep) { watchParts.push(`Deep: \`true\``); }
+                if (watchMetaItem.immediate) { watchParts.push(`Immediate: \`true\``); }
+                if (watchMetaItem.handler) { watchParts.push(`Handler: \`${watchMetaItem.handler}\``); }
+                if (watchParts.length > 0) { parts.push(watchParts.join(' | ')); }
+            }
+            // 如果一个 data 属性被 watch，额外标注
+            if (isData && vueIndex.watch?.has(word)) {
+                parts.push(`👁️ Watched`);
             }
             const doc = meta?.doc || dataMeta?.doc || propMeta?.doc;
             if (doc) {

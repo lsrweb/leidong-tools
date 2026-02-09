@@ -10,6 +10,7 @@ interface TemplateVar {
 
 export interface TemplateIndex {
     vars: TemplateVar[];
+    refs: Map<string, vscode.Location>;  // ref="xxx" -> location
     version: number;
     builtAt: number;
     hash: string;
@@ -39,6 +40,7 @@ function buildTemplateIndex(doc: vscode.TextDocument): TemplateIndex {
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
     const vars: TemplateVar[] = [];
+    const refs = new Map<string, vscode.Location>();
     interface StackItem { tag: string; startLine: number; }
     const stack: StackItem[] = [];
     const tagOpenRegex = /<([a-zA-Z0-9_-]+)([^>]*)>/g;
@@ -96,15 +98,23 @@ function buildTemplateIndex(doc: vscode.TextDocument): TemplateIndex {
                     if (inner.startsWith('{') && inner.endsWith('}')) { inner = inner.slice(1, -1); }
                     inner.split(',').map(s => s.trim()).filter(Boolean).forEach(n => pushVar(n, lineNum));
                 }
+                // ref="xxx" 提取
+                const refMatch = /\bref\s*=\s*"([^"]+)"|\bref\s*=\s*'([^']+)'/.exec(attrStr);
+                if (refMatch) {
+                    const refName = refMatch[1] || refMatch[2];
+                    if (refName && !refs.has(refName)) {
+                        refs.set(refName, new vscode.Location(doc.uri, new vscode.Position(lineNum, 0)));
+                    }
+                }
             }
         }
     }
 
     const contentHash = fastHash(text);
-    if (loggingEnabled()) { console.log(`[template-index][build] ${doc.uri.fsPath} vars=${vars.length} hash=${contentHash}`); }
+    if (loggingEnabled()) { console.log(`[template-index][build] ${doc.uri.fsPath} vars=${vars.length} refs=${refs.size} hash=${contentHash}`); }
     const builtAt = Date.now();
     lastTemplateIndexBuiltAt = builtAt;
-    return { vars, version: doc.version, builtAt, hash: contentHash };
+    return { vars, refs, version: doc.version, builtAt, hash: contentHash };
 }
 
 export function getTemplateIndex(doc: vscode.TextDocument): TemplateIndex | null {
@@ -153,6 +163,12 @@ export function findTemplateVar(document: vscode.TextDocument, position: vscode.
         if (v.name === name && line >= v.scopeStart && line <= v.scopeEnd) { return v.location; }
     }
     return null;
+}
+
+/** 获取模板中所有 ref="xxx" 的名称列表 */
+export function getTemplateRefs(document: vscode.TextDocument): Map<string, vscode.Location> {
+    const idx = getTemplateIndex(document) || buildAndCacheTemplateIndex(document);
+    return idx ? idx.refs : new Map();
 }
 
 export function showTemplateIndexSummary() {

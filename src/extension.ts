@@ -8,6 +8,7 @@ import * as vscode from 'vscode';
 import { registerCommands } from './core/commands';
 import { registerProviders } from './core/providers';
 import { registerIndexLifecycle } from './managers/indexManager';
+import { initVueDiagnostics } from './providers/vueDiagnosticsProvider';
 
 /**
  * Extension activation function
@@ -23,6 +24,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Register index lifecycle manager (build on open/visible, clear on close)
     registerIndexLifecycle(context);
+
+    // Register Vue diagnostics (unused variables, template expression checks)
+    initVueDiagnostics(context);
 
     console.log('✅ All commands and providers registered successfully!');
 }

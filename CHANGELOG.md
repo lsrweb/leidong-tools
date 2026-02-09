@@ -2,6 +2,27 @@
 
 所有重要的变更都将记录在此文件中。
 
+## [2.2.0] - 2026-02-10 Vue 2 深度解析增强
+
+### ✨ 新增
+- **Mixin 递归解析**：深层嵌套 mixin 中的变量/方法也能跳转和补全
+- **Watch 属性索引**：侧边栏展示 watch 列表，支持 deep/immediate 元信息
+- **Filters 索引与跳转**：`{{ value | filterName }}` 管道补全 + 定义跳转
+- **$refs 智能补全**：`this.$refs.` 自动提示 HTML 中 ref="xxx" 的名称
+- **$emit 事件追踪**：`this.$emit('` 补全已知事件名，`@eventName` 在模板中也可补全
+- **组件标签补全**：`<` 触发已注册组件名提示（含 props 文档）
+- **Lifecycle Hook 导航**：侧边栏 Lifecycle 分类，点击跳转至 mounted/created 等钩子
+- **未使用变量检测**：标记 data/methods/computed 中未在模板引用的成员（Hint 级别）
+- **模板表达式诊断**：检测模板中引用但未定义的变量（Warning 级别）
+- **侧边栏增强**：新增 Props / Computed / Watch / Filters / Lifecycle 分类面板
+
+### ⚙️ 配置
+- 新增 `enableVueDiagnostics` 设置：可关闭未使用变量/模板诊断（默认开启）
+
+### 🐛 修复
+- Hover 增强：watch 属性显示 deep/immediate 标记，data 被 watch 时标注 👁️
+- 补全增强：filters 带参数签名，registered components 显示 kebab-case 名称
+
 ## [2.1.12] - 2026-02-09 打包瘦身
 
 ## [2.1.11] - 2026-02-09 文档与反馈优化

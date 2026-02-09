@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.1.12",
+  "version": "2.2.0",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -198,6 +198,11 @@
           "type": "boolean",
           "default": true,
           "description": "启用/关闭索引与跳转调试日志输出（不影响跳转功能本身）"
+        },
+        "leidong-tools.enableVueDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用/关闭 Vue 模板诊断（未使用变量检测、模板表达式未定义变量警告）。关闭后不再显示 Hint 和 Warning 诊断。"
         },
         "leidong-tools.rebuildOnSave": {
           "type": "boolean",

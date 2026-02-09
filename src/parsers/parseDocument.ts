@@ -15,6 +15,12 @@ export interface VueIndex {
     methods: Map<string, vscode.Location>;
     computed: Map<string, vscode.Location>;
     props: Map<string, vscode.Location>;
+    watch: Map<string, vscode.Location>;
+    filters: Map<string, vscode.Location>;
+    lifecycle: Map<string, vscode.Location>;
+    refs: Map<string, vscode.Location>;       // template ref="xxx" 映射
+    emits: Map<string, vscode.Location>;       // this.$emit('event') 映射
+    registeredComponents: Map<string, { name: string; kebabName: string; props: Map<string, { type?: string; default?: string; required?: boolean }> }>;
     mixinData: Map<string, vscode.Location>;
     mixinMethods: Map<string, vscode.Location>;
     mixinComputed: Map<string, vscode.Location>;
@@ -23,6 +29,8 @@ export interface VueIndex {
     methodMeta: Map<string, { params: string[]; doc?: string }>;
     computedMeta: Map<string, { params: string[]; doc?: string }>;
     propsMeta: Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>;
+    watchMeta: Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>;
+    filtersMeta: Map<string, { params: string[]; doc?: string }>;
     version: number; // 文档 version
     hash: string;    // 内容 hash
     builtAt: number;
@@ -91,6 +99,12 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const methods = new Map<string, vscode.Location>();
     const computed = new Map<string, vscode.Location>();
     const props = new Map<string, vscode.Location>();
+    const watch = new Map<string, vscode.Location>();
+    const filters = new Map<string, vscode.Location>();
+    const lifecycle = new Map<string, vscode.Location>();
+    const refs = new Map<string, vscode.Location>();
+    const emits = new Map<string, vscode.Location>();
+    const registeredComponents = new Map<string, { name: string; kebabName: string; props: Map<string, { type?: string; default?: string; required?: boolean }> }>();
     const mixinData = new Map<string, vscode.Location>();
     const mixinMethods = new Map<string, vscode.Location>();
     const mixinComputed = new Map<string, vscode.Location>();
@@ -98,6 +112,8 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const methodMeta = new Map<string, { params: string[]; doc?: string }>();
     const computedMeta = new Map<string, { params: string[]; doc?: string }>();
     const propsMeta = new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>();
+    const watchMeta = new Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>();
+    const filtersMeta = new Map<string, { params: string[]; doc?: string }>();
     const componentsByTemplateId = new Map<string, VueIndex>();
     const objectVarDecls: Record<string, t.ObjectExpression> = {};
     const functionVarReturns: Record<string, t.ObjectExpression> = {}; // 变量 = 函数() { return {...} }
@@ -145,6 +161,12 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         methods: new Map<string, vscode.Location>(),
         computed: new Map<string, vscode.Location>(),
         props: new Map<string, vscode.Location>(),
+        watch: new Map<string, vscode.Location>(),
+        filters: new Map<string, vscode.Location>(),
+        lifecycle: new Map<string, vscode.Location>(),
+        refs: new Map<string, vscode.Location>(),
+        emits: new Map<string, vscode.Location>(),
+        registeredComponents: new Map(),
         mixinData: new Map<string, vscode.Location>(),
         mixinMethods: new Map<string, vscode.Location>(),
         mixinComputed: new Map<string, vscode.Location>(),
@@ -153,13 +175,15 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         methodMeta: new Map<string, { params: string[]; doc?: string }>(),
         computedMeta: new Map<string, { params: string[]; doc?: string }>(),
         propsMeta: new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>(),
+        watchMeta: new Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>(),
+        filtersMeta: new Map<string, { params: string[]; doc?: string }>(),
         version: 0,
         hash: contentHash,
         builtAt: Date.now()
     });
 
     const mergeAllMaps = (index: VueIndex) => {
-        for (const m of [index.props, index.data, index.computed, index.methods, index.mixinData, index.mixinComputed, index.mixinMethods]) {
+        for (const m of [index.props, index.data, index.computed, index.methods, index.filters, index.mixinData, index.mixinComputed, index.mixinMethods]) {
             m.forEach((loc, k) => { if (!index.all.has(k)) { index.all.set(k, loc); } });
         }
     };
@@ -547,6 +571,175 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         }
     };
 
+    // Vue 生命周期钩子列表
+    const LIFECYCLE_HOOKS = new Set([
+        'beforeCreate', 'created', 'beforeMount', 'mounted',
+        'beforeUpdate', 'updated', 'beforeDestroy', 'destroyed',
+        'activated', 'deactivated', 'errorCaptured'
+    ]);
+
+    /**
+     * 提取 watch 属性
+     * watch: { foo(newVal, oldVal) {...}, bar: { handler() {...}, deep: true } }
+     */
+    const extractWatch = (
+        node: t.Node | null | undefined,
+        lineOffset: number,
+        target: Map<string, vscode.Location>,
+        metaTarget?: Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>
+    ) => {
+        if (!node || !t.isObjectExpression(node)) { return; }
+        for (const prop of node.properties) {
+            if (!prop.loc) { continue; }
+            const name = getPropertyName((prop as any).key);
+            if (!name) { continue; }
+            const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+            target.set(name, loc);
+            if (metaTarget && !metaTarget.has(name)) {
+                const meta: { handler?: string; deep?: boolean; immediate?: boolean; doc?: string } = {};
+                meta.doc = getDocFromProp(prop as any);
+                if (t.isObjectProperty(prop) && t.isObjectExpression(prop.value)) {
+                    for (const sub of prop.value.properties) {
+                        if (!t.isObjectProperty(sub) && !t.isObjectMethod(sub)) { continue; }
+                        const subName = getPropertyName((sub as any).key);
+                        if (subName === 'deep' && t.isObjectProperty(sub) && t.isBooleanLiteral(sub.value)) { meta.deep = sub.value.value; }
+                        if (subName === 'immediate' && t.isObjectProperty(sub) && t.isBooleanLiteral(sub.value)) { meta.immediate = sub.value.value; }
+                        if (subName === 'handler' && t.isObjectProperty(sub) && t.isStringLiteral(sub.value)) { meta.handler = sub.value.value; }
+                    }
+                }
+                metaTarget.set(name, meta);
+            }
+        }
+    };
+
+    /**
+     * 提取 filters 属性
+     * filters: { currency(value) { return '$' + value } }
+     */
+    const extractFilters = (
+        node: t.Node | null | undefined,
+        lineOffset: number,
+        target: Map<string, vscode.Location>,
+        metaTarget?: Map<string, { params: string[]; doc?: string }>
+    ) => {
+        if (!node || !t.isObjectExpression(node)) { return; }
+        for (const prop of node.properties) {
+            if (!prop.loc) { continue; }
+            if (t.isObjectMethod(prop) && t.isIdentifier(prop.key)) {
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                target.set(prop.key.name, loc);
+                recordFunctionMeta(prop.key.name, prop.params, getDocFromProp(prop), metaTarget);
+            } else if (t.isObjectProperty(prop) && prop.loc) {
+                const name = getPropertyName(prop.key);
+                if (!name) { continue; }
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                target.set(name, loc);
+                if (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value)) {
+                    recordFunctionMeta(name, prop.value.params, getDocFromProp(prop), metaTarget);
+                }
+            }
+        }
+    };
+
+    /**
+     * 提取生命周期钩子
+     */
+    const extractLifecycle = (
+        options: t.ObjectExpression,
+        lineOffset: number,
+        target: Map<string, vscode.Location>
+    ) => {
+        for (const prop of options.properties) {
+            if (!prop.loc) { continue; }
+            const name = getPropertyName((prop as any).key);
+            if (name && LIFECYCLE_HOOKS.has(name)) {
+                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                target.set(name, loc);
+            }
+        }
+    };
+
+    /**
+     * 提取 this.$emit('eventName') 调用
+     */
+    const extractEmits = (
+        ast: t.File,
+        lineOffset: number,
+        target: Map<string, vscode.Location>
+    ) => {
+        traverse(ast, {
+            CallExpression(p) {
+                const callee = p.node.callee;
+                if (!t.isMemberExpression(callee)) { return; }
+                if (!t.isIdentifier(callee.property, { name: '$emit' })) { return; }
+                // this.$emit('eventName', ...) or that.$emit(...)
+                const obj = callee.object;
+                if (!t.isThisExpression(obj) && !(t.isIdentifier(obj) && (obj.name === 'that' || obj.name === 'self' || obj.name === 'vm'))) { return; }
+                const firstArg = p.node.arguments[0];
+                if (t.isStringLiteral(firstArg) && p.node.loc) {
+                    const eventName = firstArg.value;
+                    if (!target.has(eventName)) {
+                        target.set(eventName, new vscode.Location(uri, new vscode.Position(lineOffset + p.node.loc.start.line - 1, p.node.loc.start.column)));
+                    }
+                }
+            }
+        });
+    };
+
+    /**
+     * 提取 components 注册信息和子组件 props
+     * components: { MyDialog: dialogComponent }
+     */
+    const extractRegisteredComponents = (
+        node: t.Node | null | undefined,
+        lineOffset: number,
+        target: Map<string, { name: string; kebabName: string; props: Map<string, { type?: string; default?: string; required?: boolean }> }>
+    ) => {
+        if (!node || !t.isObjectExpression(node)) { return; }
+        for (const prop of node.properties) {
+            if (!t.isObjectProperty(prop)) { continue; }
+            const name = getPropertyName(prop.key);
+            if (!name) { continue; }
+            // 转换为 kebab-case: MyDialog -> my-dialog
+            const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/([A-Z])([A-Z][a-z])/g, '$1-$2').toLowerCase();
+            const compObj = resolveObjectExpression(prop.value) || (t.isObjectExpression(prop.value) ? prop.value : null);
+            const compProps = new Map<string, { type?: string; default?: string; required?: boolean }>();
+            if (compObj) {
+                // 从组件对象中提取 props
+                for (const compProp of compObj.properties) {
+                    if (!t.isObjectProperty(compProp) && !t.isObjectMethod(compProp)) { continue; }
+                    const pName = getPropertyName((compProp as any).key);
+                    if (pName === 'props') {
+                        const propsNode = (compProp as any).value;
+                        if (t.isArrayExpression(propsNode)) {
+                            for (const el of propsNode.elements) {
+                                if (t.isStringLiteral(el)) { compProps.set(el.value, {}); }
+                            }
+                        } else if (t.isObjectExpression(propsNode)) {
+                            for (const pp of propsNode.properties) {
+                                if (!t.isObjectProperty(pp)) { continue; }
+                                const ppName = getPropertyName(pp.key);
+                                if (!ppName) { continue; }
+                                const meta: { type?: string; default?: string; required?: boolean } = {};
+                                if (t.isIdentifier(pp.value)) { meta.type = pp.value.name; }
+                                if (t.isObjectExpression(pp.value)) {
+                                    for (const sub of pp.value.properties) {
+                                        if (!t.isObjectProperty(sub)) { continue; }
+                                        const sn = getPropertyName(sub.key);
+                                        if (sn === 'type' && t.isIdentifier(sub.value)) { meta.type = sub.value.name; }
+                                        if (sn === 'required' && t.isBooleanLiteral(sub.value)) { meta.required = sub.value.value; }
+                                    }
+                                }
+                                compProps.set(ppName, meta);
+                            }
+                        }
+                    }
+                }
+            }
+            target.set(name, { name, kebabName, props: compProps });
+        }
+    };
+
     const getPropertyName = (key: t.Node | null | undefined): string | null => {
         if (!key) { return null; }
         if (t.isIdentifier(key)) { return key.name; }
@@ -622,6 +815,32 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     extractMethods((prop as any).value ?? prop, lineOffset, index.mixinMethods, index.methodMeta);
                 } else if (name === 'computed') {
                     extractComputed((prop as any).value ?? prop, lineOffset, index.mixinComputed, index.computedMeta);
+                } else if (name === 'watch') {
+                    extractWatch((prop as any).value, lineOffset, index.watch, index.watchMeta);
+                } else if (name === 'filters') {
+                    extractFilters((prop as any).value, lineOffset, index.filters, index.filtersMeta);
+                }
+            }
+            // 递归处理 mixin 内部的 mixins
+            for (const prop of obj.properties) {
+                if (!t.isObjectProperty(prop)) { continue; }
+                const name = getPropertyName(prop.key);
+                if (name === 'mixins') {
+                    const value = prop.value;
+                    if (t.isArrayExpression(value)) {
+                        const nestedMixins: t.ObjectExpression[] = [];
+                        value.elements.forEach(el => {
+                            if (t.isIdentifier(el)) {
+                                const resolved = objectVarDecls[el.name] || functionVarReturns[el.name] || functionDeclarations[el.name];
+                                if (resolved) { nestedMixins.push(resolved); }
+                            } else if (t.isObjectExpression(el)) {
+                                nestedMixins.push(el);
+                            }
+                        });
+                        if (nestedMixins.length > 0) {
+                            applyMixinsToIndex(index, nestedMixins, lineOffset);
+                        }
+                    }
                 }
             }
         }
@@ -643,6 +862,12 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                 extractComputed((prop as any).value ?? prop, lineOffset, index.computed, index.computedMeta);
             } else if (name === 'props') {
                 extractProps((prop as any).value, lineOffset, index.props, index.propsMeta);
+            } else if (name === 'watch') {
+                extractWatch((prop as any).value, lineOffset, index.watch, index.watchMeta);
+            } else if (name === 'filters') {
+                extractFilters((prop as any).value, lineOffset, index.filters, index.filtersMeta);
+            } else if (name === 'components') {
+                extractRegisteredComponents((prop as any).value, lineOffset, index.registeredComponents);
             } else if (name === 'mixins') {
                 const value = (prop as any).value;
                 if (value && t.isArrayExpression(value)) {
@@ -653,6 +878,9 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                 }
             }
         }
+
+        // 提取生命周期钩子
+        extractLifecycle(options, lineOffset, index.lifecycle);
 
         for (const mixinVar of mixinVars) {
             const obj = objectVarDecls[mixinVar] || functionVarReturns[mixinVar] || functionDeclarations[mixinVar];
@@ -687,6 +915,12 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         methods,
         computed,
         props,
+        watch,
+        filters,
+        lifecycle,
+        refs,
+        emits,
+        registeredComponents,
         mixinData,
         mixinMethods,
         mixinComputed,
@@ -695,6 +929,8 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         methodMeta,
         computedMeta,
         propsMeta,
+        watchMeta,
+        filtersMeta,
         version: 0,
         hash: contentHash,
         builtAt: Date.now()
@@ -778,17 +1014,23 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         }
     }
 
+    // 提取 $emit 调用
+    extractEmits(ast, baseLine, rootIndex.emits);
+
     const all = new Map<string, vscode.Location>();
-    for (const m of [props, data, computed, methods, mixinData, mixinComputed, mixinMethods]) {
+    for (const m of [props, data, computed, methods, filters, mixinData, mixinComputed, mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
     }
 
     return {
-        data, methods, computed, props, mixinData, mixinMethods, mixinComputed, all,
+        data, methods, computed, props, watch, filters, lifecycle, refs, emits, registeredComponents,
+        mixinData, mixinMethods, mixinComputed, all,
         dataMeta,
         methodMeta,
         computedMeta,
         propsMeta,
+        watchMeta,
+        filtersMeta,
         version: 0,
         hash: contentHash,
         builtAt: Date.now(),
@@ -1027,6 +1269,12 @@ function createEmptyVueIndex(): VueIndex {
         methods: new Map<string, vscode.Location>(),
         computed: new Map<string, vscode.Location>(),
         props: new Map<string, vscode.Location>(),
+        watch: new Map<string, vscode.Location>(),
+        filters: new Map<string, vscode.Location>(),
+        lifecycle: new Map<string, vscode.Location>(),
+        refs: new Map<string, vscode.Location>(),
+        emits: new Map<string, vscode.Location>(),
+        registeredComponents: new Map(),
         mixinData: new Map<string, vscode.Location>(),
         mixinMethods: new Map<string, vscode.Location>(),
         mixinComputed: new Map<string, vscode.Location>(),
@@ -1035,6 +1283,8 @@ function createEmptyVueIndex(): VueIndex {
         methodMeta: new Map<string, { params: string[]; doc?: string }>(),
         computedMeta: new Map<string, { params: string[]; doc?: string }>(),
         propsMeta: new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>(),
+        watchMeta: new Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>(),
+        filtersMeta: new Map<string, { params: string[]; doc?: string }>(),
         version: 0,
         hash: '',
         builtAt: 0,
@@ -1054,12 +1304,22 @@ function mergeVueIndexInto(target: VueIndex, source: VueIndex) {
     mergeMap(target.data, source.data);
     mergeMap(target.methods, source.methods);
     mergeMap(target.computed, source.computed);
+    mergeMap(target.watch, source.watch);
+    mergeMap(target.filters, source.filters);
+    mergeMap(target.lifecycle, source.lifecycle);
+    mergeMap(target.refs, source.refs);
+    mergeMap(target.emits, source.emits);
     mergeMap(target.mixinData, source.mixinData);
     mergeMap(target.mixinMethods, source.mixinMethods);
     mergeMap(target.mixinComputed, source.mixinComputed);
     mergeMap(target.dataMeta, source.dataMeta);
     mergeMap(target.methodMeta, source.methodMeta);
     mergeMap(target.computedMeta, source.computedMeta);
+    mergeMap(target.watchMeta, source.watchMeta);
+    mergeMap(target.filtersMeta, source.filtersMeta);
+    source.registeredComponents.forEach((v, k) => {
+        if (!target.registeredComponents.has(k)) { target.registeredComponents.set(k, v); }
+    });
     if (source.componentsByTemplateId) {
         if (!target.componentsByTemplateId) {
             target.componentsByTemplateId = new Map<string, VueIndex>();
@@ -1075,7 +1335,7 @@ function mergeVueIndexInto(target: VueIndex, source: VueIndex) {
 
 function finalizeMergedIndex(target: VueIndex, hashes: string[]) {
     const all = new Map<string, vscode.Location>();
-    for (const m of [target.data, target.computed, target.methods, target.mixinData, target.mixinComputed, target.mixinMethods]) {
+    for (const m of [target.data, target.computed, target.methods, target.filters, target.mixinData, target.mixinComputed, target.mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
     }
     target.all = all;
@@ -1123,7 +1383,7 @@ export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex 
  * 查询变量 / 方法 定义位置
  */
 export function findDefinitionInIndex(name: string, index: VueIndex): vscode.Location | null {
-    // 优先顺序：props > data > mixinData > computed > mixinComputed > methods > mixinMethods
+    // 优先顺序：props > data > mixinData > computed > mixinComputed > methods > mixinMethods > filters > watch
     if (index.props.has(name)) { return index.props.get(name)!; }
     if (index.data.has(name)) { return index.data.get(name)!; }
     if (index.mixinData.has(name)) { return index.mixinData.get(name)!; }
@@ -1131,6 +1391,9 @@ export function findDefinitionInIndex(name: string, index: VueIndex): vscode.Loc
     if (index.mixinComputed.has(name)) { return index.mixinComputed.get(name)!; }
     if (index.methods.has(name)) { return index.methods.get(name)!; }
     if (index.mixinMethods.has(name)) { return index.mixinMethods.get(name)!; }
+    if (index.filters.has(name)) { return index.filters.get(name)!; }
+    if (index.watch.has(name)) { return index.watch.get(name)!; }
+    if (index.lifecycle.has(name)) { return index.lifecycle.get(name)!; }
     return index.all.get(name) || null;
 }
 
