@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, findDefinitionInIndex } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, findDefinitionInIndex, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
 import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { jsSymbolParser } from '../parsers/jsSymbolParser';
+import { getTemplateLiteralAtPosition } from '../helpers/templateLiteralHelper';
 
 export class VueHoverProvider implements vscode.HoverProvider {
     private hoverTimeout: NodeJS.Timeout | null = null;
@@ -51,18 +52,27 @@ export class VueHoverProvider implements vscode.HoverProvider {
             const methodMeta = vueIndex.methodMeta.get(word);
             const computedMeta = vueIndex.computedMeta.get(word);
             const dataMeta = vueIndex.dataMeta.get(word);
+            const propMeta = vueIndex.propsMeta?.get(word);
             const isMethod = vueIndex.methods.has(word);
             const isComputed = vueIndex.computed.has(word);
             const isData = vueIndex.data.has(word);
+            const isProp = vueIndex.props?.has(word) ?? false;
             const isMixin = vueIndex.mixinMethods.has(word) || vueIndex.mixinComputed.has(word) || vueIndex.mixinData.has(word);
-            const label = isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : isData ? 'Vue Data' : isMixin ? 'Vue Mixin' : 'Vue Variable';
+            const label = isProp ? 'Vue Prop' : isMethod ? 'Vue Method' : isComputed ? 'Vue Computed' : isData ? 'Vue Data' : isMixin ? 'Vue Mixin' : 'Vue Variable';
             const meta = methodMeta || computedMeta;
             const params = meta?.params?.length ? `(${meta.params.join(', ')})` : isMethod ? '()' : '';
             const header = `**${label}**: ${word}${params}`;
-            const scopeLabel = isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isMixin ? 'mixin' : 'variable';
+            const scopeLabel = isProp ? 'prop' : isMethod ? 'method' : isComputed ? 'computed' : isData ? 'data' : isMixin ? 'mixin' : 'variable';
             const parts: string[] = [header];
             parts.push(`Scope: \`${scopeLabel}\``);
-            const doc = meta?.doc || dataMeta?.doc;
+            if (isProp && propMeta) {
+                const propParts: string[] = [];
+                if (propMeta.type) { propParts.push(`Type: \`${propMeta.type}\``); }
+                if (propMeta.default !== undefined) { propParts.push(`Default: \`${propMeta.default}\``); }
+                if (propMeta.required) { propParts.push(`Required: \`true\``); }
+                if (propParts.length > 0) { parts.push(propParts.join(' | ')); }
+            }
+            const doc = meta?.doc || dataMeta?.doc || propMeta?.doc;
             if (doc) {
                 parts.push(doc);
             }
@@ -94,6 +104,21 @@ export class VueHoverProvider implements vscode.HoverProvider {
 
         // 检查JavaScript/TypeScript
         if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            // 检测是否在 template: `...` 模板字符串内
+            const templateInfo = getTemplateLiteralAtPosition(document, position);
+            if (templateInfo) {
+                // 在模板字符串内，使用 Vue 索引提供悬停信息
+                const content = document.getText();
+                const vueIndex = getOrCreateVueIndexFromContent(content, document.uri, 0);
+                if (vueIndex) {
+                    const def = findDefinitionInIndex(word, vueIndex);
+                    if (def) {
+                        const hover = buildVueHover(def, vueIndex);
+                        if (hover) { return hover; }
+                    }
+                }
+            }
+
             const localSymbol = await jsSymbolParser.findLocalSymbol(document, position, word);
             if (localSymbol) {
                 return new vscode.Hover(

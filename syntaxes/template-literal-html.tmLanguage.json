@@ -1,0 +1,40 @@
+{
+    "fileTypes": [],
+    "injectionSelector": "L:source.js -comment, L:source.ts -comment, L:source.js.jsx -comment, L:source.tsx -comment",
+    "patterns": [
+        {
+            "begin": "(template)(\\s*)(:\\s*)(`)",
+            "beginCaptures": {
+                "1": { "name": "meta.object-literal.key.js" },
+                "2": { "name": "source.js" },
+                "3": { "name": "punctuation.separator.key-value.js" },
+                "4": { "name": "punctuation.definition.string.template.begin.js" }
+            },
+            "end": "(`)",
+            "endCaptures": {
+                "1": { "name": "punctuation.definition.string.template.end.js" }
+            },
+            "name": "string.template.html.js",
+            "contentName": "meta.embedded.block.html",
+            "patterns": [
+                {
+                    "begin": "\\$\\{",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.template-expression.begin.js" }
+                    },
+                    "end": "\\}",
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.template-expression.end.js" }
+                    },
+                    "name": "meta.template.expression.js",
+                    "contentName": "meta.embedded.line.js",
+                    "patterns": [
+                        { "include": "source.js" }
+                    ]
+                },
+                { "include": "text.html.basic" }
+            ]
+        }
+    ],
+    "scopeName": "inline.template-literal-html"
+}

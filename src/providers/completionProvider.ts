@@ -7,10 +7,11 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheItem } from '../types';
-import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathsForHtml, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { inferObjectProperties } from '../helpers/propertyInference';
+import { getTemplateLiteralAtPosition, isVueTemplateContext } from '../helpers/templateLiteralHelper';
 import * as fs from 'fs';
 
 /**
@@ -126,6 +127,17 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
         try {
+            // 检测是否在 template: `...` 模板字符串内
+            const templateInfo = getTemplateLiteralAtPosition(document, position);
+            if (templateInfo) {
+                const linePrefix = document.lineAt(position).text.substring(0, position.character);
+                if (isVueTemplateContext(linePrefix)) {
+                    return this.provideTemplateLiteralCompletions(document) || [];
+                }
+                // 非 Vue 指令上下文时不拦截，让内置 HTML 补全生效
+                return [];
+            }
+
             // 检查触发自动完成的字符
             const linePrefix = document.lineAt(position).text.substring(0, position.character);
             const objectContext = this.getObjectPropertyContext(linePrefix);
@@ -217,6 +229,68 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         });
         this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version });
         return items;
+    }
+
+    /**
+     * 为 JS 文件中 template: `...` 模板字符串提供 Vue 补全
+     */
+    private provideTemplateLiteralCompletions(document: vscode.TextDocument): vscode.CompletionList | null {
+        try {
+            const content = document.getText();
+            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+            if (!index) { return null; }
+
+            const completionItems: vscode.CompletionItem[] = [];
+
+            index.data.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = 'data 属性 (模板字符串)';
+                const dataMeta = index.dataMeta.get(name);
+                if (dataMeta?.doc) {
+                    item.documentation = new vscode.MarkdownString(dataMeta.doc);
+                }
+                completionItems.push(item);
+            });
+            index.methods.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+                const meta = index.methodMeta.get(name);
+                item.detail = meta?.params?.length
+                    ? `methods ${name}(${meta.params.join(', ')}) (模板字符串)`
+                    : `methods ${name}() (模板字符串)`;
+                if (meta?.doc) {
+                    item.documentation = new vscode.MarkdownString(meta.doc);
+                }
+                completionItems.push(item);
+            });
+            index.computed.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                const meta = index.computedMeta.get(name);
+                item.detail = `computed ${name} (模板字符串)`;
+                if (meta?.doc) {
+                    item.documentation = new vscode.MarkdownString(meta.doc);
+                }
+                completionItems.push(item);
+            });
+            index.props.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Field);
+                const meta = index.propsMeta?.get(name);
+                const typePart = meta?.type ? `: ${meta.type}` : '';
+                item.detail = `prop ${name}${typePart} (模板字符串)`;
+                completionItems.push(item);
+            });
+
+            completionItems.forEach((item, idx) => {
+                item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                if (!item.detail?.includes('(雷动三千)')) {
+                    item.detail = `${item.detail || ''} (雷动三千)`;
+                }
+            });
+
+            return new vscode.CompletionList(completionItems, false);
+        } catch (e) {
+            console.error('[JS Completion] template literal error:', e);
+            return null;
+        }
     }
 
     // 获取缓存的解析结果

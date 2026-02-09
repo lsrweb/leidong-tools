@@ -14,6 +14,7 @@ import {
 } from '../parsers/parseDocument';
 import { findTemplateVar } from './templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
+import { getTemplateLiteralAtPosition } from '../helpers/templateLiteralHelper';
 
 const HTML_ATTR_BLACKLIST = new Set([
     'class','id','style','src','href','alt','title','width','height','type','value','name','placeholder','rel','for','aria-label'
@@ -77,6 +78,12 @@ export class EnhancedDefinitionLogic {
     ): Promise<vscode.Location | null> {
         if (this.shouldLog()) {
             console.log(`[enhanced-jump][js] word=${word} chain=${fullChain || ''} context=${contextType}`);
+        }
+
+        // 检测是否在 template: `...` 模板字符串内
+        const templateInfo = getTemplateLiteralAtPosition(document, position);
+        if (templateInfo) {
+            return this.handleTemplateLiteralDefinition(document, position, word, fullChain);
         }
 
         try {
@@ -221,6 +228,60 @@ export class EnhancedDefinitionLogic {
 
         if (this.shouldLog()) {
             console.log(`[enhanced-jump][html][miss] ${word}`);
+        }
+
+        return null;
+    }
+
+    /**
+     * 处理 JS 文件中 template: `...` 模板字符串内的定义跳转
+     * 将模板中的变量名映射到同文件 Vue 组件的 data/methods/computed
+     */
+    private async handleTemplateLiteralDefinition(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        word: string,
+        fullChain: string | undefined
+    ): Promise<vscode.Location | null> {
+        if (this.shouldLog()) {
+            console.log(`[enhanced-jump][js][template-literal] word=${word} chain=${fullChain || ''}`);
+        }
+
+        try {
+            // 解析整个 JS 文件构建 Vue 索引
+            const content = document.getText();
+            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+
+            // 在 Vue 索引中查找定义
+            let target = findDefinitionInIndex(word, index);
+            if (!target && fullChain) {
+                target = findChainedRootDefinition(fullChain, index);
+            }
+
+            if (target) {
+                if (this.shouldLog()) {
+                    console.log(`[enhanced-jump][js][template-literal-hit] ${word} -> ${target.uri.fsPath}:${target.range.start.line + 1}`);
+                }
+                return target;
+            }
+
+            // 降级：尝试新解析器查找普通符号
+            const parseResult = await jsSymbolParser.parse(document);
+            const symbol = parseResult.thisReferences.get(word)
+                || parseResult.variables.get(word)
+                || parseResult.functions.get(word);
+            if (symbol) {
+                if (this.shouldLog()) {
+                    console.log(`[enhanced-jump][js][template-literal-symbol-hit] ${word} -> ${document.uri.fsPath}:${symbol.range.start.line + 1}`);
+                }
+                return new vscode.Location(document.uri, symbol.selectionRange);
+            }
+
+            if (this.shouldLog()) {
+                console.log(`[enhanced-jump][js][template-literal-miss] ${word}`);
+            }
+        } catch (e) {
+            console.error('[enhanced-jump][js][template-literal-error]', e);
         }
 
         return null;

@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.1.9",
+  "version": "2.1.10",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -364,6 +364,21 @@
         }
       }
     ],
+    "grammars": [
+      {
+        "injectTo": [
+          "source.js",
+          "source.ts",
+          "source.js.jsx",
+          "source.tsx"
+        ],
+        "scopeName": "inline.template-literal-html",
+        "path": "./syntaxes/template-literal-html.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.html": "html"
+        }
+      }
+    ],
     "semanticTokenProvider": {
       "selector": [
         {
@@ -387,7 +402,14 @@
         "id": "readonly",
         "description": "Placeholder modifier."
       }
-    ]
+    ],
+    "configurationDefaults": {
+      "emmet.includeLanguages": {
+        "javascript": "html",
+        "typescript": "html"
+      },
+      "emmet.triggerExpansionOnTab": true
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -425,11 +447,11 @@
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^9.23.0",
     "ts-loader": "^9.5.2",
     "typescript": "^5.8.2",
     "webpack": "^5.98.0",
-    "webpack-cli": "^6.0.1",
-    "@vscode/vsce": "^3.0.0"
+    "webpack-cli": "^6.0.1"
   }
 }
