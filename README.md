@@ -1,454 +1,335 @@
-# 雷动三千 VSCode 工具集
+<p align="center">
+  <img src="logo.png" width="128" height="128" alt="logo">
+</p>
 
-<div align="center">
+<h1 align="center">雷动三千 VSCode 工具集</h1>
 
-![Version](https://img.shields.io/badge/version-2.1.10-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
-![VSCode](https://img.shields.io/badge/VSCode-%5E1.99.0-blue.svg)
+<p align="center">
+  <strong>专为 Vue 2 CDN / 非工程化项目打造的智能开发体验</strong>
+</p>
 
-**专为 Vue 2 CDN 模式深度优化的开发效率工具集**
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=KuCai.leidong-sanqian-vscode-tools"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visual-studio-code&logoColor=white" alt="Marketplace"></a>
+  <img src="https://img.shields.io/badge/version-2.1.10-5c63d8.svg?style=flat" alt="Version">
+  <img src="https://img.shields.io/badge/vue-2.x%20CDN-42b883.svg?logo=vue.js&logoColor=white" alt="Vue 2">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+</p>
 
-[功能特性](#-功能特性) • [Vue 2 CDN 支持](#-vue-2-cdn-深度支持) • [使用指南](#-使用指南) • [配置说明](#️-配置说明) • [更新日志](CHANGELOG.md)
-
-</div>
-
----
-
-## 🚀 专为 Vue 2 CDN 模式而生
-
-本扩展重点解决在传统 **CDN 引入 Vue 2**、**非工程化项目** 中，缺乏代码提示和定义跳转的痛点。
-
-### 🌟 核心能力：Vue 2 语法补全与跳转
-
-针对 Vue 2 特有的对象定义方式（Options API），提供媲美 Vue SFC 的开发体验。
-
-#### 1. 🔍 智能代码跳转 (F12)
-一键从 HTML 模板跳转到 JavaScript 中的变量或方法定义。
-- **Props 支持**：支持跳转到 `props`（数组、对象、含默认值等多种定义）。
-- **Data/Methods/Computed**：完整支持实例内定义的属性和方法。
-- **Mixins 支持**：自动解析 mixins 中的定义，实现跨文件精准跳转。
-- **局部变量优先**：智能处理 `v-for`、`slot-scope` 等局部作用域变量。
-
-#### 2. 📝 JS 模板字符串 (`template: \`...\``) 增强
-在 JavaScript 文件的 `template` 属性内提供完整的 HTML 环境模拟。
-- **语法高亮**：在反引号内享受与 HTML 文件完全一致的彩色高亮。
-- **Emmet 支持**：支持在模板字符串内使用 `Tab` 键快速补全 HTML 结构。
-- **Vue 指令补全**：在 `template` 属性中输入时，自动提示对应的 data、methods 等成员。
-- **Props 跳转**：模板内引用的 `props` 变量同样支持 F12 跳转。
-
-#### 3. 📊 智能侧边栏 (Variable Index)
-无需在长达数千行的 JS 文件中反复滚动定位逻辑。
-- **变量大纲**：侧边栏实时展示当前组件的所有 Data、Methods、Computed 和 Props。
-- **一键触达**：点击图标瞬间定位到代码文件中的具体实现。
+<p align="center">
+  <a href="#-核心亮点">核心亮点</a> ·
+  <a href="#-功能速览">功能速览</a> ·
+  <a href="#️-配置项">配置项</a> ·
+  <a href="#-快捷键">快捷键</a> ·
+  <a href="CHANGELOG.md">更新日志</a>
+</p>
 
 ---
 
-## 🌟 更多功能特性
+## 💡 解决什么问题？
 
-### 1. ⚡ 智能日志补全（.log）
-
-告别手动输入冗长的 console.log，一个 `.log` 搞定一切！
-
-```javascript
-// 输入：userName.log
-// 自动展开为：console.log('file.js:10 userName:', userName)
-
-// 输入：'error message'.err
-// 自动展开为：console.error('error message')
-
-// 支持的触发器：
-userName.log   // 🔥 console.log
-userName.err   // ❌ console.error
-userName.warn  // ⚠️ console.warn
-userName.info  // ℹ️ console.info
-userName.dbg   // 🐛 console.debug
-```
-
-**技术亮点**：
-- 🎯 使用 command 模式，优先级高于内置补全
-- 📍 自动包含文件名和行号
-- 🎨 图标标识不同日志级别
-- 📝 支持字符串字面量直接输出
-- ⚡ 正则匹配变量名，支持复杂表达式
-
-**参考实现**：[jaluik/dot-log](https://github.com/jaluik/dot-log) (MIT)
-
----
-
-### 3. 🧠 JavaScript 智能补全
-
-为 JavaScript/TypeScript/Vue 文件提供强大的变量和函数补全。
-
-**支持场景**：
-- 变量声明、函数定义
-- Vue 组件 data、methods、computed
-- 上下文感知（this. / that.）
-- .dev.js 文件特别优化
-
-**性能优化**：
-- 30秒 LRU 缓存
-- 高优先级排序（sortText: '0000'）
-- 标识符：`(雷动三千)`
-
----
-
-### 4. ⌨️ 快捷键快速日志
-
-选中变量或光标定位，一键生成日志语句。
-
-| 快捷键 | 功能 | 示例 |
-|--------|------|------|
-| `Ctrl+Shift+L` | 选中变量生成 log | `console.log('file:10 userName:', userName)` |
-| `Ctrl+L` | 快速 console.log | 识别光标处变量 |
-| `Ctrl+E` | 快速 console.error | 识别光标处变量 |
-| `Ctrl+Alt+L` | 备选 console.log | - |
-| `Ctrl+Alt+E` | 备选 console.error | - |
-
----
-
-### 5. 🗜️ 多行代码压缩
-
-智能识别文件类型，一键压缩多行代码。
-
-**支持语言**：
-- **HTML/XML**: 移除标签间空白
-- **JavaScript/TypeScript**: 移除注释和空行
-- **CSS/SCSS/Less**: 压缩样式规则
-- **JSON**: 移除格式化空白
-- **注释**: `//`, `/* */`, `<!-- -->`, `#`, `--`
-
-**使用方式**：
-1. 选中多行文本
-2. 右键 → "Compress Multiple Lines"
-3. 或命令面板搜索
-
-
----
-
-### 6. 👁️ HTML→JS 文件监听
-
-监听 HTML 文件变化，自动提取内容并更新对应 JS 文件。
-
-```
-项目结构：
-my-project/
-  └── dev/
-      ├── index.html   # 修改这个
-      └── index.js     # 自动更新这个
-```
-
-**工作流程**：
-1. 右键文件夹 → "启动 HTML→JS 文件监听"
-2. 输入文件扩展名（默认：html）
-3. 编辑 HTML，保存后自动更新 JS 中的 `var html =`
-4. 底部状态栏显示监听状态 `👁️ N`
-
-**智能特性**：
-- 自动识别 `dev` 目录
-- 支持单项目/多项目模式
-- 防重复监听（父子目录冲突检测）
-- 可视化管理面板
-
-**详细文档**：[docs/file-watch-usage.md](docs/file-watch-usage.md)
-
----
-
-### 7. 🔧 Von 快捷补全
-
-输入 `von` 触发快捷补全。
-
-- � 当前时间（YYYYMMDDHHMMSS）
-- 🆔 随机 UUID
-
-**使用场景**：
-- 快速添加时间戳
-- 生成唯一标识符
-- 文件命名辅助
-
----
-
-## 🚀 快速开始
-
-### 安装
-
-1. **VSCode 扩展市场**（推荐）
-   - 搜索 "雷动三千vscode工具集"
-   - 点击安装
-
-2. **手动安装 .vsix**
-   - 下载 `.vsix` 文件
-   - VSCode → 扩展 → 从 VSIX 安装
-
-### 首次使用
-
-安装后，扩展会在以下文件类型自动激活：
-- HTML, JavaScript, TypeScript, JSON, CSS
-
-无需额外配置，开箱即用！
-
----
-
-## 📖 使用指南
-
-### Vue 代码跳转
+在传统的 **CDN 引入 Vue 2** 项目中（搭配 PHP / Layui / 原生 HTML），你写的代码大概长这样：
 
 ```html
-<template>
-  <div @click="handleClick">{{ userName }}</div>
-</template>
-
+<script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
 <script>
 new Vue({
-  data: {
-    userName: 'John'
-  },
+  el: '#app',
+  data: { userName: '' },
   methods: {
-    handleClick() { }
+    handleClick() { /* 几千行之后... */ }
   }
 })
 </script>
 ```
 
-**操作**：
-- 光标放在 `userName` 或 `handleClick` 上
-- 按 `F12` 跳转到定义
-- 按 `Ctrl+K F12` 在侧边栏打开
+**痛点**：没有 `.vue` 单文件组件 → 没有跳转 → 没有提示 → 没有高亮 → 只能全局搜索 😩
+
+**这个插件就是为了解决这些问题。**
 
 ---
 
-### 日志补全
+## ✨ 核心亮点
 
-**方式一：.log 补全**
-```javascript
-// 输入并回车
-userName.log
+<table>
+<tr>
+<td width="50%">
 
-// 自动变为
-console.log('file.js:10 userName:', userName)
+### 🔍 定义跳转 (F12)
+在 HTML 模板中按 <kbd>F12</kbd>，直接跳转到 JS 中 `data` / `methods` / `computed` / `props` / `mixins` 的定义位置。
+
+支持 `this.xxx` · `that.xxx` · `v-for` 局部变量
+
+</td>
+<td width="50%">
+
+### 📝 模板字符串增强
+JS 文件中 `template: \`...\`` 内自动启用：
+- ✅ HTML **语法高亮**
+- ✅ **Emmet** 缩写补全
+- ✅ Vue 变量 **智能提示**
+- ✅ props / data / methods **跳转**
+
+</td>
+</tr>
+<tr>
+<td>
+
+### ⚡ .log 极速日志
+输入 `xxx.log` 自动展开为：
 ```
-
-**方式二：快捷键**
-```javascript
-// 1. 选中 userName
-// 2. 按 Ctrl+Shift+L
-// 3. 自动在下一行生成
-console.log('file.js:10 userName:', userName)
+console.log('file.js:10 xxx:', xxx)
 ```
+自带文件名 + 行号，还支持 `.err` `.warn` `.info` `.dbg`
 
-**方式三：字符串**
-```javascript
-'Hello World'.log
-// → console.log('Hello World')
-```
+</td>
+<td>
+
+### 📊 侧边栏大纲
+在活动栏打开「雷动三千工具」面板：
+- 📋 **变量索引** — Data / Methods / Computed / Props 分类展示，点击跳转
+- 👁️ **监听服务** — 管理所有 HTML→JS 文件监听
+- 🔧 **诊断面板** — 缓存状态 & 性能分析
+
+</td>
+</tr>
+</table>
 
 ---
 
-### 文件监听
+## 📦 功能速览
 
-**单项目模式**：
-```
-项目/
-  └── dev/      ← 右键这个文件夹
-      ├── index.html
-      └── index.js
-```
+### 1. 🔍 Vue 2 智能跳转
 
-**多项目模式**：
-```
-父目录/        ← 右键这个文件夹
-  ├── 项目A/dev/
-  ├── 项目B/dev/
-  └── 项目C/dev/
+> 从 HTML 模板中的变量名，一键跳到 JS 中的定义。
+
+```html
+<div @click="handleClick">{{ userName }}</div>
+<!--         ↑ F12 跳转        ↑ F12 跳转     -->
 ```
 
-**管理监听**：
-- 点击底部状态栏 `👁️ N` 图标
-- 查看所有监听项
-- 选择停止单个或全部
+| 能力 | 说明 |
+|:-----|:-----|
+| **data / methods / computed** | 完整支持 Options API 全部选项 |
+| **props** | 数组 · 对象简写 · 含 type/default/required |
+| **mixins** | 自动递归解析 mixin 内定义 |
+| **v-for / slot-scope** | 模板内局部变量优先识别 |
+| **this. / that.** | 智能识别 Vue 实例别名 |
+| **悬停提示** | 显示类型标签（Prop / Data / Method…）及 JSDoc 注释 |
+| **外部脚本** | 自动查找 `js/<name>.dev.js`，支持自定义路径模式 |
+| **Vue-like 对象** | 自动识别 `const comp = { data(), methods: {} }` 形式 |
 
 ---
 
-## ⚙️ 配置说明
+### 2. 📝 JS 模板字符串 HTML 增强
 
-### 通过设置面板配置
+> 在 `template: \`...\`` 内写 HTML 就像在 `.html` 文件中一样。
 
-`文件` → `首选项` → `设置` → 搜索 "leidong-tools"
-
-### 配置项列表
-
-| 配置项 | 类型 | 默认值 | 说明 |
-|--------|------|--------|------|
-| `enableDefinitionJump` | boolean | true | 启用/禁用 Vue 定义跳转 |
-| `indexLogging` | boolean | true | 启用/禁用索引调试日志 |
-| `rebuildOnSave` | boolean | true | 保存时重建索引 |
-| `maxIndexEntries` | number | 200 | Vue 索引缓存上限 |
-| `maxTemplateIndexEntries` | number | 300 | 模板索引缓存上限 |
-| `devScriptPatterns` | string[] | [] | 自定义 HTML 对应 dev.js 的匹配路径（支持 ${dir} ${base}），可配置多个，匹配脚本会合并索引 |
-| `hoverDelay` | number | 300 | 悬停延迟（毫秒） |
-
-### 配置示例
-
-```json
-{
-  "leidong-tools.enableDefinitionJump": true,
-  "leidong-tools.indexLogging": false,
-  "leidong-tools.maxIndexEntries": 500,
-  "leidong-tools.devScriptPatterns": [
-    "${dir}/js/${base}.dev.js",
-    "${dir}/scripts/${base}.dev.js",
-    "${dir}/js/${base}/index.dev.js"
-  ]
+```javascript
+const myComponent = {
+  props: { title: String },
+  data() { return { count: 0 } },
+  methods: { increment() { this.count++ } },
+  template: `
+    <div class="card">
+      <!--  ↑ 完整 HTML 语法高亮 -->
+      <h1>{{ title }}</h1>
+      <!--       ↑ F12 跳转到 props -->
+      <button @click="increment">{{ count }}</button>
+      <!--           ↑ 自动补全 methods      ↑ F12 跳转到 data -->
+    </div>
+  `
 }
 ```
 
----
-
-## �️ 命令面板
-
-按 `Ctrl+Shift+P` 打开命令面板，搜索以下命令：
-
-| 命令 | 功能 |
-|------|------|
-| `Toggle Definition Jump Feature` | 切换定义跳转功能 |
-| `Toggle Index Logging` | 切换索引日志 |
-| `Clear Vue Index Cache` | 清除索引缓存 |
-| `Show Index Summary` | 显示索引摘要 |
-| `Add Variable Comment` | 为当前变量添加注释 |
-| `Show Performance Report` | 显示性能报告 |
-| `启动 HTML→JS 文件监听` | 启动文件监听 |
-| `查看/管理文件监听列表` | 管理监听列表 |
+- **语法高亮** — TextMate Grammar 注入，反引号内原生 HTML 着色
+- **Emmet** — `div.card>h1+p` + <kbd>Tab</kbd> 直接展开
+- **智能提示** — `v-if="` `@click="` `{{ }}` 内自动提示组件成员
+- **定义跳转** — 模板内的 props / data / methods 变量直接 <kbd>F12</kbd>
 
 ---
 
-## 🎯 使用技巧
+### 3. ⚡ .log 智能日志补全
 
-### 1. 提升 .log 补全优先级
+> 输入变量名 + `.log`，自动生成带文件名和行号的日志语句。
 
-如果发现 .log 补全不够靠前，确保：
-- 使用最新版本（v1.0.0+）
-- 补全项会显示 🔥 图标
-- 标记为 `(雷动三千)`
+```javascript
+userName.log    →  console.log('index.js:42 userName:', userName)
+userName.err    →  console.error('index.js:42 userName:', userName)
+userName.warn   →  console.warn('index.js:42 userName:', userName)
+'hello'.log     →  console.log('hello')
+```
 
-### 2. 调试跳转问题
-
-如果跳转失败：
-1. 检查 dev.js 位置（默认 `js/同名.dev.js`），结构不同可配置 `devScriptPatterns`
-2. 确认 `<script>` 包含 `new Vue({...})`
-3. 运行命令 `Toggle Index Logging` 开启日志
-4. 运行命令 `Show Index Summary` 查看索引状态
-
-### 3. 性能优化
-
-- 适当调整 `maxIndexEntries` 和 `maxTemplateIndexEntries`
-- 关闭不需要的 `indexLogging`
-- 使用 `Show Performance Report` 查看瓶颈
+- 优先级高于内置补全，触发即预选
+- 支持链式属性：`obj.prop.log`
+- 支持字符串字面量：`'text'.log`
+- 灵感来源：[jaluik/dot-log](https://github.com/jaluik/dot-log) (MIT)
 
 ---
 
-## 📁 项目结构
+### 4. 👁️ HTML → JS 文件监听
+
+> 编辑 HTML 并保存，自动将内容同步到 JS 文件中的指定变量。
+
+```
+my-project/
+  └── dev/
+      ├── index.html   ← 编辑这个
+      └── index.js     ← 自动更新 var html = '...'
+```
+
+- 右键文件夹 → 「启动 HTML→JS 文件监听」
+- 变量名可配置（`html` / `dom` / 自定义正则）
+- 支持多项目批量监听
+- 侧边栏面板可视化管理（暂停 / 恢复 / 停止）
+- 详细文档：[docs/file-watch-usage.md](docs/file-watch-usage.md)
+
+---
+
+### 5. 🗜️ 多行代码压缩
+
+> 选中代码 → 右键 → 「Compress Multiple Lines」
+
+支持 HTML / JS / CSS / JSON，自动移除注释和空行。
+
+---
+
+### 6. 🔧 更多小工具
+
+| 功能 | 触发方式 | 说明 |
+|:-----|:---------|:-----|
+| Von 时间戳 | 输入 `von` | 插入 `YYYYMMDDHHMMSS` 格式时间 |
+| Von UUID | 输入 `von` | 生成随机唯一标识符 |
+| 变量注释 | <kbd>Ctrl+Alt+/</kbd> | 为光标处变量生成注释模板 |
+| 性能报告 | 命令面板 | 查看各操作耗时统计 |
+
+---
+
+## ⌨️ 快捷键
+
+| 快捷键 | 功能 |
+|:-------|:-----|
+| <kbd>Ctrl+L</kbd> | 快速 console.log（光标处变量） |
+| <kbd>Ctrl+E</kbd> | 快速 console.error（光标处变量） |
+| <kbd>Ctrl+Shift+L</kbd> | 选中变量 → 下一行 console.log |
+| <kbd>Ctrl+Alt+L</kbd> | 备选 console.log |
+| <kbd>Ctrl+Alt+E</kbd> | 备选 console.error |
+| <kbd>Ctrl+Alt+/</kbd> | 为变量添加注释 |
+
+---
+
+## ⚙️ 配置项
+
+在 VSCode 设置中搜索 `leidong-tools`：
+
+| 配置项 | 默认值 | 说明 |
+|:-------|:-------|:-----|
+| `enableDefinitionJump` | `true` | 启用 / 禁用定义跳转 |
+| `indexLogging` | `true` | 索引调试日志 |
+| `rebuildOnSave` | `true` | 保存时重建索引 |
+| `maxIndexEntries` | `200` | Vue 索引 LRU 缓存上限 |
+| `maxTemplateIndexEntries` | `300` | 模板索引 LRU 缓存上限 |
+| `devScriptPatterns` | `[]` | 自定义 dev.js 路径模式，支持 `${dir}` `${base}` |
+| `watchHtmlVariableName` | `"html"` | 文件监听替换的变量名 |
+| `watchHtmlVariablePattern` | `""` | 自定义替换正则（高级） |
+| `hoverDelay` | `300` | 悬停延迟（ms） |
+
+<details>
+<summary><b>📋 配置示例</b></summary>
+
+```jsonc
+{
+  // 自定义脚本查找路径（多个模式会合并索引）
+  "leidong-tools.devScriptPatterns": [
+    "${dir}/js/${base}.dev.js",
+    "${dir}/scripts/${base}.js"
+  ],
+  // 关闭调试日志（生产环境推荐）
+  "leidong-tools.indexLogging": false,
+  // 文件监听使用 dom 变量名
+  "leidong-tools.watchHtmlVariableName": "dom"
+}
+```
+
+</details>
+
+---
+
+## 🛠️ 命令面板
+
+按 <kbd>Ctrl+Shift+P</kbd>，输入「雷动三千」或命令名称：
+
+| 命令 | 说明 |
+|:-----|:-----|
+| Toggle Definition Jump | 开关跳转功能 |
+| Toggle Index Logging | 开关调试日志 |
+| Clear Vue Index Cache | 清除索引缓存 |
+| Show Index Summary | 查看当前索引状态 |
+| Show Performance Report | 性能报告 |
+| 启动 HTML→JS 文件监听 | 右键文件夹或命令面板均可 |
+| 查看/管理文件监听列表 | 管理所有监听服务 |
+
+---
+
+## 🏗️ 项目结构
 
 ```
 src/
-├── cache/        # LRU 缓存管理
-├── core/         # 核心配置和命令注册
-├── errors/       # 统一错误处理
-├── finders/      # 定义查找、脚本查找、模板索引
-├── managers/     # 索引生命周期、文件监听管理
-├── monitoring/   # 性能监控（@monitor 装饰器）
-├── parsers/      # AST 和文档解析
-├── providers/    # VSCode Provider 实现
-├── tools/        # 工具命令（压缩、日志）
-├── types/        # TypeScript 类型定义
-└── utils/        # 向后兼容导出层
+├── parsers/       # Babel AST 解析 · Vue 索引构建
+├── finders/       # 定义查找 · 模板变量索引
+├── providers/     # 跳转 / 悬停 / 补全 Provider
+├── helpers/       # 模板字符串检测 · Vue 辅助
+├── managers/      # 文件监听 · 索引生命周期
+├── cache/         # LRU 缓存
+├── monitoring/    # 性能监控 (@monitor 装饰器)
+├── tools/         # 日志 · 压缩 · 注释
+├── core/          # 命令注册 · Provider 注册 · 配置
+└── errors/        # 统一错误处理
 ```
-
-**架构特点**：
-- 按功能组织，不按层次
-- 每个目录独立 `index.ts` 导出
-- 使用具体路径导入，避免循环依赖
-- `utils/` 仅作兼容层，不添加新文件
 
 ---
 
 ## 🔧 技术栈
 
-- **VSCode API**: 扩展开发框架
-- **TypeScript**: 类型安全
-- **Babel**: AST 解析（@babel/parser, @babel/traverse）
-- **Webpack**: 打包构建
-- **ESLint**: 代码规范
-
-**关键技术**：
-- AST 解析带 `errorRecovery`
-- LRU 缓存策略
-- Command 模式补全
-- FileSystemWatcher 监听
+| 技术 | 用途 |
+|:-----|:-----|
+| **TypeScript** | 类型安全 |
+| **Babel** (`@babel/parser` + `@babel/traverse`) | AST 解析，`errorRecovery` 兼容 PHP/Layui 混合模板 |
+| **TextMate Grammar** | 模板字符串 HTML 语法注入 |
+| **Webpack** | 打包构建 |
+| **LRU Cache** | 高性能索引缓存 |
 
 ---
 
-## 📊 性能指标
+## 📌 已知限制
 
-| 指标 | 数值 | 说明 |
-|------|------|------|
-| 扩展大小 | ~1.5MB | Webpack 打包后 |
-| 启动时间 | <100ms | 按需激活 |
-| 补全响应 | <50ms | 有缓存时 |
-| 索引构建 | <200ms | 中等大小文件 |
-| 内存占用 | <50MB | 正常使用 |
+- 仅支持 **Vue 2 Options API**（不支持 Composition API / Vue 3）
+- 不支持 `.vue` 单文件组件的复杂场景
+- PHP / Layui 混合模板中严重语法错误可能影响解析精度
 
 ---
 
-## 🐛 已知限制
+## 🤝 致谢
 
-1. **Vue 版本**: 仅支持 Vue 2 Options API
-2. **文件结构**: 假设 Vue 实例使用 `new Vue({...})`
-3. **SFC 支持**: 不支持 .vue 单文件组件复杂结构
-4. **错误恢复**: 严重语法错误时可能不准确
-
-**未来计划**：
-- [ ] Vue 3 Composition API 支持
-- [ ] TypeScript Vue 项目支持
-- [ ] Pinia/Vuex 状态管理跳转
-
----
-
-## 🤝 参考与致谢
-
-- [jaluik/dot-log](https://github.com/jaluik/dot-log) - .log 补全实现灵感（MIT License）
-- [Babel](https://babeljs.io/) - AST 解析工具
+- [jaluik/dot-log](https://github.com/jaluik/dot-log) — .log 补全灵感 (MIT)
+- [Babel](https://babeljs.io/) — AST 解析
 - [VSCode Extension API](https://code.visualstudio.com/api)
 
 ---
 
-## 📄 许可证
+## 📄 License
 
-MIT License
-
-Copyright (c) 2025 雷动三千 (KuCai)
+[MIT](LICENSE) © 2025 雷动三千 (KuCai)
 
 ---
 
-## 💬 反馈与贡献
+## 💬 反馈与交流
 
-**遇到问题？**
-- [GitHub Issues](https://github.com/lsrweb/leidong-tools/issues)
-
-**想要贡献？**
-- Fork 项目
-- 提交 Pull Request
-- 参与讨论
-
-**联系方式**：
-- 项目主页：[leidong-tools](https://github.com/lsrweb/leidong-tools)
+- 🐛 **Bug 反馈 / 功能建议**：[GitHub Issues](https://github.com/lsrweb/leidong-tools/issues)
+- 📧 **邮件联系**：[siriforever.ltd@gmail.com](mailto:siriforever.ltd@gmail.com)
+- 🌟 **本扩展还在持续维护更新中, 如果你有更好的建议，欢迎提 Issue 或 PR！**
 
 ---
 
-<div align="center">
-
-**感谢使用 雷动三千 VSCode 工具集！**
-
-如果觉得有用，请给个 ⭐️ Star！
-
-[返回顶部](#雷动三千-vscode-工具集)
-
-</div>
+<p align="center">
+  <sub>如果对你有帮助，欢迎在 <a href="https://github.com/lsrweb/leidong-tools">GitHub</a> 点个 ⭐</sub>
+</p>
