@@ -2,73 +2,50 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.0.1-blue.svg)
+![Version](https://img.shields.io/badge/version-2.1.10-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![VSCode](https://img.shields.io/badge/VSCode-%5E1.99.0-blue.svg)
 
-**一站式 Vue.js 开发效率提升工具集**
+**专为 Vue 2 CDN 模式深度优化的开发效率工具集**
 
-[功能特性](#-功能特性) • [快速开始](#-快速开始) • [使用指南](#-使用指南) • [配置说明](#️-配置说明) • [更新日志](CHANGELOG.md)
+[功能特性](#-功能特性) • [Vue 2 CDN 支持](#-vue-2-cdn-深度支持) • [使用指南](#-使用指南) • [配置说明](#️-配置说明) • [更新日志](CHANGELOG.md)
 
 </div>
 
 ---
 
-## 🌟 功能特性
+## 🚀 专为 Vue 2 CDN 模式而生
 
-### 0. 📊 智能侧边栏 **NEW**
+本扩展重点解决在传统 **CDN 引入 Vue 2**、**非工程化项目** 中，缺乏代码提示和定义跳转的痛点。
 
-全新的侧边栏视图，集成变量索引和监听服务管理！
+### 🌟 核心能力：Vue 2 语法补全与跳转
 
-**功能亮点**：
-- 📋 **变量索引面板**：
-  - 实时显示当前 HTML 文件的 Vue 实例结构
-  - Data、Methods、Computed 分类展示
-  - 点击任意项直接跳转到定义
-  - 支持 Pin 常用变量/方法，跨文件快速跳转
-  - 自动监听文件切换和保存
-  
-- 👁️ **监听服务面板**：
-  - 查看所有运行中的 HTML→JS 文件监听
-  - 显示项目名称和监听目录
-  - 点击可在资源管理器中定位
-  - 无监听时友好提示
+针对 Vue 2 特有的对象定义方式（Options API），提供媲美 Vue SFC 的开发体验。
 
-- ?? **诊断面板**：
-  - 查看索引/缓存状态与上次更新时间
-  - 快速定位性能瓶颈与缓存命中问题
+#### 1. 🔍 智能代码跳转 (F12)
+一键从 HTML 模板跳转到 JavaScript 中的变量或方法定义。
+- **Props 支持**：支持跳转到 `props`（数组、对象、含默认值等多种定义）。
+- **Data/Methods/Computed**：完整支持实例内定义的属性和方法。
+- **Mixins 支持**：自动解析 mixins 中的定义，实现跨文件精准跳转。
+- **局部变量优先**：智能处理 `v-for`、`slot-scope` 等局部作用域变量。
 
-**使用方式**：
-- 点击活动栏的 "雷动三千工具" 图标（🔧）
-- 打开 HTML 文件自动加载变量索引
-- 支持折叠/展开所有节点
+#### 2. 📝 JS 模板字符串 (`template: \`...\``) 增强
+在 JavaScript 文件的 `template` 属性内提供完整的 HTML 环境模拟。
+- **语法高亮**：在反引号内享受与 HTML 文件完全一致的彩色高亮。
+- **Emmet 支持**：支持在模板字符串内使用 `Tab` 键快速补全 HTML 结构。
+- **Vue 指令补全**：在 `template` 属性中输入时，自动提示对应的 data、methods 等成员。
+- **Props 跳转**：模板内引用的 `props` 变量同样支持 F12 跳转。
+
+#### 3. 📊 智能侧边栏 (Variable Index)
+无需在长达数千行的 JS 文件中反复滚动定位逻辑。
+- **变量大纲**：侧边栏实时展示当前组件的所有 Data、Methods、Computed 和 Props。
+- **一键触达**：点击图标瞬间定位到代码文件中的具体实现。
 
 ---
 
-### 1. 🔍 Vue.js 智能代码跳转
+## 🌟 更多功能特性
 
-一键从 HTML 模板跳转到 Vue 实例定义，支持 data、methods、computed、mixins。
-
-```html
-<!-- HTML 模板 -->
-<div @click="handleClick">{{ userName }}</div>
-
-<!-- 按 F12 直接跳转到对应定义 -->
-```
-
-**核心特性**：
-- ✅ 支持内联 `<script>` 和外部 `.dev.js` 文件
-- ✅ 智能识别 `this.` 和 `that.` 上下文
-- ✅ 模板局部变量优先跳转（v-for, slot-scope）
-- ✅ 支持 mixins 属性和方法
-- ? 悬停显示作用域徽章（local/data/method/computed/mixin）
-- ? 支持 // 与 JSDoc 注释的 Markdown 文档解析
-- ? 支持 data 属性注释展示（HTML 悬停可见）
-- ✅ 可配置索引缓存大小和刷新策略
-
----
-
-### 2. ⚡ 智能日志补全（.log）
+### 1. ⚡ 智能日志补全（.log）
 
 告别手动输入冗长的 console.log，一个 `.log` 搞定一切！
 
