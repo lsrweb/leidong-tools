@@ -1,15 +1,39 @@
+# 开发配置
 .vscode/**
 .vscode-test/**
-out/**
-node_modules/**
+.github/**
+.gitignore
+.npmrc
+.yarnrc
+.vscode-test.mjs
+
+# 源码 (打包后不需要)
 src/**
 !src/webview/**
-.gitignore
-.yarnrc
+out/**
+node_modules/**
+tests/**
+
+# 构建配置
 webpack.config.js
 vsc-extension-quickstart.md
 **/tsconfig.json
 **/eslint.config.mjs
+
+# 服务端代码 (不属于扩展)
+server/**
+
+# 文档 (不需要打包)
+docs/**
+
+# 旧的 VSIX 包
+*.vsix
+
+# 多余的资源
+logo.jpg
+package-lock.json
+
+# Source maps 和 TypeScript 源文件
 **/*.map
 **/*.ts
-**/.vscode-test.*
+!src/webview/**/*.js
