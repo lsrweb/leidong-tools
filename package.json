@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -293,7 +293,11 @@
         "leidong-tools.codeLensPosition": {
           "type": "string",
           "default": "above",
-          "enum": ["above", "right", "hover"],
+          "enum": [
+            "above",
+            "right",
+            "hover"
+          ],
           "enumDescriptions": [
             "在定义行上方显示引用次数（CodeLens 样式）",
             "在定义行右侧行末装饰显示引用次数",
