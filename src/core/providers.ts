@@ -14,6 +14,7 @@ import { VueDocumentSymbolProvider } from '../providers/documentSymbolProvider';
 import { VueReferenceProvider } from '../providers/referenceProvider';
 import { VueCodeLensProvider, updateInlineRefDecorations, clearInlineRefDecorations } from '../providers/codeLensProvider';
 import { VueColorProvider } from '../providers/colorProvider';
+import { registerCopilotAnalyzer } from '../providers/copilotAnalyzer';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
@@ -121,14 +122,17 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         )
     );
 
-    // 注册 CodeLens 引用计数提供器
+    // 注册 CodeLens 引用计数提供器 (支持 JS/TS 以及 HTML 模板中的变量定义)
+    const codeLensProvider = new VueCodeLensProvider();
     context.subscriptions.push(
         vscode.languages.registerCodeLensProvider(
             [
                 { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' }
+                { scheme: 'file', language: 'typescript' },
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'vue' }
             ],
-            new VueCodeLensProvider()
+            codeLensProvider
         )
     );
 
@@ -141,8 +145,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             updateInlineRefDecorations(vscode.window.activeTextEditor);
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('leidong-tools.enableCodeLens') || e.affectsConfiguration('leidong-tools.codeLensPosition')) {
+            if (e.affectsConfiguration('leidong-tools.enableCodeLens') || 
+                e.affectsConfiguration('leidong-tools.codeLensPosition') ||
+                e.affectsConfiguration('leidong-tools.enableAIAnalysis')) {
                 const editor = vscode.window.activeTextEditor;
+
+                // 刷新 CodeLens 缓存
+                codeLensProvider.refresh();
+
                 if (editor) {
                     clearInlineRefDecorations(editor);
                     updateInlineRefDecorations(editor);
@@ -163,6 +173,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             new VueColorProvider()
         )
     );
+
+    // 注册 Copilot Chat 分析参与者
+    registerCopilotAnalyzer(context);
 
     // 注册侧边栏视图
     // 1. 变量索引 WebView（虚拟滚动，支持万级变量）

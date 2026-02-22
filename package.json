@@ -47,10 +47,26 @@
     "onLanguage:javascript",
     "onLanguage:typescript",
     "onLanguage:json",
-    "onLanguage:css"
+    "onLanguage:css",
+    "onLanguage:vue"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "chatParticipants": [
+      {
+        "id": "leidong-tools.analyzer",
+        "fullName": "雷动三千 Vue 分析",
+        "name": "leidong-tools",
+        "description": "分析 Vue 变量/方法的引用关系和逻辑依赖",
+        "isSticky": false,
+        "commands": [
+          {
+            "name": "analyze",
+            "description": "分析变量或方法的所有引用和逻辑关系"
+          }
+        ]
+      }
+    ],
     "commands": [
       {
         "command": "leidong-tools.goToDefinitionInNewTab",
@@ -184,6 +200,12 @@
         "command": "leidong-tools.changeGameNickname",
         "title": "修改游戏昵称",
         "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.analyzeWithCopilot",
+        "title": "AI 分析变量/方法引用关系",
+        "category": "雷动三千工具集",
+        "icon": "$(sparkle)"
       }
     ],
     "configuration": {
@@ -277,6 +299,16 @@
           "type": "boolean",
           "default": false,
           "description": "启用/关闭智能颜色选择器。在 HTML 文件中检测 hex/rgb/hsl 颜色值并提供可视化颜色选择器。"
+        },
+        "leidong-tools.enableAIAnalysis": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用/关闭 AI 分析功能。开启后将在变量定义处显示「AI 分析」按钮。"
+        },
+        "leidong-tools.aiModel": {
+          "type": "string",
+          "default": "",
+          "description": "AI 分析使用的模型（如 gpt-4o, gpt-4o-mini 等）。为空时将由系统首选或提示选择。"
         }
       }
     },

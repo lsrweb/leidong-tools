@@ -82,6 +82,19 @@ function maskInjectedTemplate(match: string): string {
 
 // 清理 PHP 等干扰项
 function sanitizeContent(raw: string): string {
+    // 处理 .vue 文件，只保留脚本部分，其余转为空行
+    if (raw.trim().startsWith('<') && (raw.includes('<template') || raw.includes('<script'))) {
+        const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/i;
+        const match = scriptRegex.exec(raw);
+        if (match) {
+            const scriptContent = match[1];
+            const startIdx = match.index + match[0].indexOf(scriptContent);
+            const prefix = raw.substring(0, startIdx).replace(/[^\r\n]/g, ' ');
+            const suffix = raw.substring(startIdx + scriptContent.length).replace(/[^\r\n]/g, ' ');
+            return prefix + scriptContent + suffix;
+        }
+    }
+    
     return raw
         .replace(/<\?(=|php\b|\s)[\s\S]*?\?>/g, maskInjectedTemplate)
         .replace(/\{\{[\s\S]*?\}\}/g, maskInjectedTemplate);
@@ -264,7 +277,10 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             if (t.isObjectProperty(prop) && prop.loc) {
                 const name = getPropertyName(prop.key);
                 if (!name) { continue; }
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(
+                    new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
+                    new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                ));
                 target.set(name, loc);
                 const doc = getDocForDataProperty(prop);
                 const initInfo = inferDataType(prop.value);
@@ -560,11 +576,17 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         if (!node || !t.isObjectExpression(node)) { return; }
         for (const prop of node.properties) {
             if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(
+                    new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
+                    new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                ));
                 target.set(prop.key.name, loc);
                 recordFunctionMeta(prop.key.name, prop.params, getDocFromProp(prop), metaTarget);
             } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc && (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value))) {
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(
+                    new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
+                    new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                ));
                 target.set(prop.key.name, loc);
                 recordFunctionMeta(prop.key.name, prop.value.params, getDocFromProp(prop), metaTarget);
             }
@@ -581,20 +603,29 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         for (const prop of node.properties) {
             if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
                 // getter / setter 任取一次
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(
+                    new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
+                    new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                ));
                 if (!target.has(prop.key.name)) { target.set(prop.key.name, loc); }
                 recordFunctionMeta(prop.key.name, prop.params, getDocFromProp(prop), metaTarget);
             } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
                 const val = prop.value as any;
                 if (t.isFunctionExpression(val) || t.isArrowFunctionExpression(val)) {
-                    const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                    const loc = new vscode.Location(uri, new vscode.Range(
+                        new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
+                        new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                    ));
                     target.set(prop.key.name, loc);
                     recordFunctionMeta(prop.key.name, val.params, getDocFromProp(prop), metaTarget);
                 } else if (t.isObjectExpression(val)) {
                     // 形如 someProp: { get(){}, set(){} }
                     const hasGetter = val.properties.some(p => t.isObjectMethod(p) && (p.kind === 'get'));
                     if (hasGetter) {
-                        const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                        const loc = new vscode.Location(uri, new vscode.Range(
+                            new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
+                            new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                        ));
                         target.set(prop.key.name, loc);
                         const getter = val.properties.find(p => t.isObjectMethod(p) && (p as t.ObjectMethod).kind === 'get') as t.ObjectMethod | undefined;
                         if (getter) {

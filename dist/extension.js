@@ -48,12 +48,12 @@ const vscode = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 const consoleLogger_1 = __webpack_require__(4);
 const variableCommenter_1 = __webpack_require__(6);
-const performanceMonitor_1 = __webpack_require__(179);
-const codeCompressor_1 = __webpack_require__(180);
+const performanceMonitor_1 = __webpack_require__(178);
+const codeCompressor_1 = __webpack_require__(179);
 const config_1 = __webpack_require__(5);
 const parseDocument_1 = __webpack_require__(7);
-const templateIndexer_1 = __webpack_require__(181);
-const fileWatchManager_1 = __webpack_require__(182);
+const templateIndexer_1 = __webpack_require__(180);
+const fileWatchManager_1 = __webpack_require__(181);
 /**
  * 注册所有命令
  */
@@ -238,9 +238,9 @@ function registerCommands(context) {
         vscode.window.showInformationMessage(`Vue 变量跳转功能 ${status}`);
     }));
     // =================== 游戏相关命令 ===================
-    const { GamePanel } = __webpack_require__(183);
-    const { GameManager } = __webpack_require__(189);
-    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = __webpack_require__(185);
+    const { GamePanel } = __webpack_require__(182);
+    const { GameManager } = __webpack_require__(188);
+    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = __webpack_require__(184);
     // 初始化玩家身份（注入 context 以使用 globalState 缓存昵称）
     initPlayerIdentity(context);
     // 打开游戏大厅（加载服务端页面）
@@ -634,7 +634,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.addVariableComment = addVariableComment;
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
-const templateContext_1 = __webpack_require__(178);
+const templateContext_1 = __webpack_require__(177);
 function findLineCommentIndex(text) {
     let inSingle = false;
     let inDouble = false;
@@ -818,12 +818,12 @@ exports.pruneVueIndexCache = pruneVueIndexCache;
 exports.recreateVueIndexCache = recreateVueIndexCache;
 exports.logVueIndexCacheSummary = logVueIndexCacheSummary;
 const vscode = __importStar(__webpack_require__(2));
-const resilientParse_1 = __webpack_require__(8);
-const traverse_1 = __importDefault(__webpack_require__(10));
-const t = __importStar(__webpack_require__(29));
-const fs = __importStar(__webpack_require__(176));
+const resilientParse_1 = __webpack_require__(208);
+const traverse_1 = __importDefault(__webpack_require__(9));
+const t = __importStar(__webpack_require__(28));
+const fs = __importStar(__webpack_require__(175));
 const path = __importStar(__webpack_require__(3));
-const lruCache_1 = __webpack_require__(177);
+const lruCache_1 = __webpack_require__(176);
 let lastVueIndexBuiltAt = 0;
 let lastExternalIndexBuiltAt = 0;
 // 使用 LRU 缓存
@@ -873,6 +873,18 @@ function maskInjectedTemplate(match) {
 }
 // 清理 PHP 等干扰项
 function sanitizeContent(raw) {
+    // 处理 .vue 文件，只保留脚本部分，其余转为空行
+    if (raw.trim().startsWith('<') && (raw.includes('<template') || raw.includes('<script'))) {
+        const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/i;
+        const match = scriptRegex.exec(raw);
+        if (match) {
+            const scriptContent = match[1];
+            const startIdx = match.index + match[0].indexOf(scriptContent);
+            const prefix = raw.substring(0, startIdx).replace(/[^\r\n]/g, ' ');
+            const suffix = raw.substring(startIdx + scriptContent.length).replace(/[^\r\n]/g, ' ');
+            return prefix + scriptContent + suffix;
+        }
+    }
     return raw
         .replace(/<\?(=|php\b|\s)[\s\S]*?\?>/g, maskInjectedTemplate)
         .replace(/\{\{[\s\S]*?\}\}/g, maskInjectedTemplate);
@@ -1101,7 +1113,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                 if (!name) {
                     continue;
                 }
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                 target.set(name, loc);
                 const doc = getDocForDataProperty(prop);
                 const initInfo = inferDataType(prop.value);
@@ -1430,12 +1442,12 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         }
         for (const prop of node.properties) {
             if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                 target.set(prop.key.name, loc);
                 recordFunctionMeta(prop.key.name, prop.params, getDocFromProp(prop), metaTarget);
             }
             else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc && (t.isFunctionExpression(prop.value) || t.isArrowFunctionExpression(prop.value))) {
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                 target.set(prop.key.name, loc);
                 recordFunctionMeta(prop.key.name, prop.value.params, getDocFromProp(prop), metaTarget);
             }
@@ -1448,7 +1460,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         for (const prop of node.properties) {
             if (t.isObjectMethod(prop) && t.isIdentifier(prop.key) && prop.loc) {
                 // getter / setter 任取一次
-                const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                 if (!target.has(prop.key.name)) {
                     target.set(prop.key.name, loc);
                 }
@@ -1457,7 +1469,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             else if (t.isObjectProperty(prop) && t.isIdentifier(prop.key) && prop.loc) {
                 const val = prop.value;
                 if (t.isFunctionExpression(val) || t.isArrowFunctionExpression(val)) {
-                    const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                    const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                     target.set(prop.key.name, loc);
                     recordFunctionMeta(prop.key.name, val.params, getDocFromProp(prop), metaTarget);
                 }
@@ -1465,7 +1477,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                     // 形如 someProp: { get(){}, set(){} }
                     const hasGetter = val.properties.some(p => t.isObjectMethod(p) && (p.kind === 'get'));
                     if (hasGetter) {
-                        const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
+                        const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                         target.set(prop.key.name, loc);
                         const getter = val.properties.find(p => t.isObjectMethod(p) && p.kind === 'get');
                         if (getter) {
@@ -2439,131 +2451,6 @@ function logVueIndexCacheSummary() {
 
 /***/ }),
 /* 8 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.resilientParse = resilientParse;
-/**
- * @file resilientParse.ts
- * @description 容错式 Babel 解析器
- *
- * @babel/parser 的 errorRecovery 选项只处理 **parser 级别** 的结构错误，
- * 不处理 **tokenizer 级别** 的致命错误（如未终止的字符串、正则、模板字面量等）。
- *
- * 本模块通过迭代修复策略处理 tokenizer 级别错误：
- * 1. 首次尝试：正常解析（errorRecovery: true）
- * 2. 若因 tokenizer 错误失败：mask 错误所在行 → 重试（最多 N 次）
- * 3. 所有重试均失败后抛出最后一个错误
- *
- * 这样即使部分行不可解析，其余代码仍能产出有效 AST。
- */
-const parser = __importStar(__webpack_require__(9));
-/** 最大修复重试次数（每次修复一行） */
-const MAX_FIX_RETRIES = 15;
-/**
- * 容错式 Babel 解析
- *
- * 用法与 parser.parse() 相同，但遇到 tokenizer 级别错误时
- * 会自动 mask 出错行并重试。
- *
- * @param content  待解析的 JS/TS 源码
- * @param options  传递给 @babel/parser 的选项（errorRecovery 会被强制打开）
- * @returns        解析后的 AST（File 节点）
- */
-function resilientParse(content, options) {
-    const parseOptions = {
-        sourceType: 'module',
-        plugins: ['jsx', 'typescript'],
-        ...options,
-        errorRecovery: true, // 始终开启
-    };
-    let currentContent = content;
-    const maskedLines = new Set();
-    for (let attempt = 0; attempt <= MAX_FIX_RETRIES; attempt++) {
-        try {
-            return parser.parse(currentContent, parseOptions);
-        }
-        catch (error) {
-            const lineNum = extractErrorLine(error);
-            // 无法定位 or 该行已 mask 过 → 无法继续修复
-            if (lineNum === null || maskedLines.has(lineNum)) {
-                throw error;
-            }
-            maskedLines.add(lineNum);
-            // 仅前几次打印日志，避免刷屏
-            if (maskedLines.size <= 5) {
-                const snippet = (error.message || '').substring(0, 80);
-                console.log(`[resilientParse] 修复第 ${lineNum} 行 (attempt ${attempt + 1}): ${snippet}`);
-            }
-            currentContent = maskLineInContent(currentContent, lineNum);
-        }
-    }
-    // fallback：不应到达此处（循环内最后一次迭代会 throw）
-    throw new Error(`[resilientParse] 超过最大修复次数 (${MAX_FIX_RETRIES})`);
-}
-// ─── helpers ───────────────────────────────────────────────
-/**
- * 从 babel SyntaxError 中提取出错行号（1-based）
- */
-function extractErrorLine(error) {
-    // babel 错误通常挂 .loc.line
-    if (error?.loc?.line && typeof error.loc.line === 'number') {
-        return error.loc.line;
-    }
-    // 降级：从 message 里匹配 "(line:column)"
-    const match = error?.message?.match(/\((\d+):\d+\)/);
-    return match ? parseInt(match[1], 10) : null;
-}
-/**
- * 将指定行（1-based）替换为等长空格，保留换行符以维持行号对应关系
- */
-function maskLineInContent(content, line) {
-    const lines = content.split('\n');
-    const idx = line - 1;
-    if (idx >= 0 && idx < lines.length) {
-        lines[idx] = ' '.repeat(lines[idx].length);
-    }
-    return lines.join('\n');
-}
-
-
-/***/ }),
-/* 9 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -17165,7 +17052,7 @@ exports.tokTypes = tokTypes;
 
 
 /***/ }),
-/* 10 */
+/* 9 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -17193,15 +17080,15 @@ Object.defineProperty(exports, "Scope", ({
   }
 }));
 exports.visitors = exports["default"] = void 0;
-__webpack_require__(11);
-var visitors = __webpack_require__(117);
+__webpack_require__(10);
+var visitors = __webpack_require__(116);
 exports.visitors = visitors;
-var _t = __webpack_require__(29);
-var cache = __webpack_require__(120);
-var _traverseNode = __webpack_require__(12);
-var _index = __webpack_require__(14);
-var _index2 = __webpack_require__(27);
-var _hub = __webpack_require__(175);
+var _t = __webpack_require__(28);
+var cache = __webpack_require__(119);
+var _traverseNode = __webpack_require__(11);
+var _index = __webpack_require__(13);
+var _index2 = __webpack_require__(26);
+var _hub = __webpack_require__(174);
 const {
   VISITOR_KEYS,
   removeProperties,
@@ -17259,7 +17146,7 @@ traverse.cache = cache;
 
 
 /***/ }),
-/* 11 */
+/* 10 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -17289,10 +17176,10 @@ exports.skip = skip;
 exports.skipKey = skipKey;
 exports.stop = stop;
 exports.visit = visit;
-var _traverseNode = __webpack_require__(12);
-var _index = __webpack_require__(14);
-var _removal = __webpack_require__(159);
-var t = __webpack_require__(29);
+var _traverseNode = __webpack_require__(11);
+var _index = __webpack_require__(13);
+var _removal = __webpack_require__(158);
+var t = __webpack_require__(28);
 function call(key) {
   const opts = this.opts;
   this.debug(key);
@@ -17508,7 +17395,7 @@ function _getQueueContexts() {
 
 
 /***/ }),
-/* 12 */
+/* 11 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -17518,10 +17405,10 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.traverseNode = traverseNode;
-var _context = __webpack_require__(13);
-var _index = __webpack_require__(14);
-var _t = __webpack_require__(29);
-var _context2 = __webpack_require__(11);
+var _context = __webpack_require__(12);
+var _index = __webpack_require__(13);
+var _t = __webpack_require__(28);
+var _context2 = __webpack_require__(10);
 const {
   VISITOR_KEYS
 } = _t;
@@ -17653,7 +17540,7 @@ function traverseNode(node, opts, scope, state, path, skipKeys, visitSelf) {
 
 
 /***/ }),
-/* 13 */
+/* 12 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -17663,9 +17550,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _index = __webpack_require__(14);
-var _t = __webpack_require__(29);
-var _context = __webpack_require__(11);
+var _index = __webpack_require__(13);
+var _t = __webpack_require__(28);
+var _context = __webpack_require__(10);
 const {
   VISITOR_KEYS
 } = _t;
@@ -17779,7 +17666,7 @@ exports["default"] = TraversalContext;
 
 
 /***/ }),
-/* 14 */
+/* 13 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -17789,27 +17676,27 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = exports.SHOULD_STOP = exports.SHOULD_SKIP = exports.REMOVED = void 0;
-var virtualTypes = __webpack_require__(15);
-var _debug = __webpack_require__(16);
-var _index = __webpack_require__(10);
-var _index2 = __webpack_require__(27);
-var _t = __webpack_require__(29);
+var virtualTypes = __webpack_require__(14);
+var _debug = __webpack_require__(15);
+var _index = __webpack_require__(9);
+var _index2 = __webpack_require__(26);
+var _t = __webpack_require__(28);
 var t = _t;
-var cache = __webpack_require__(120);
-var _generator = __webpack_require__(123);
-var NodePath_ancestry = __webpack_require__(149);
-var NodePath_inference = __webpack_require__(150);
-var NodePath_replacement = __webpack_require__(154);
-var NodePath_evaluation = __webpack_require__(162);
-var NodePath_conversion = __webpack_require__(163);
-var NodePath_introspection = __webpack_require__(172);
-var _context = __webpack_require__(11);
+var cache = __webpack_require__(119);
+var _generator = __webpack_require__(122);
+var NodePath_ancestry = __webpack_require__(148);
+var NodePath_inference = __webpack_require__(149);
+var NodePath_replacement = __webpack_require__(153);
+var NodePath_evaluation = __webpack_require__(161);
+var NodePath_conversion = __webpack_require__(162);
+var NodePath_introspection = __webpack_require__(171);
+var _context = __webpack_require__(10);
 var NodePath_context = _context;
-var NodePath_removal = __webpack_require__(159);
-var NodePath_modification = __webpack_require__(158);
-var NodePath_family = __webpack_require__(173);
-var NodePath_comments = __webpack_require__(174);
-var NodePath_virtual_types_validator = __webpack_require__(118);
+var NodePath_removal = __webpack_require__(158);
+var NodePath_modification = __webpack_require__(157);
+var NodePath_family = __webpack_require__(172);
+var NodePath_comments = __webpack_require__(173);
+var NodePath_virtual_types_validator = __webpack_require__(117);
 const {
   validate
 } = _t;
@@ -18079,7 +17966,7 @@ for (const type of Object.keys(virtualTypes)) {
 
 
 /***/ }),
-/* 15 */
+/* 14 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -18112,7 +17999,7 @@ const ForAwaitStatement = exports.ForAwaitStatement = ["ForOfStatement"];
 
 
 /***/ }),
-/* 16 */
+/* 15 */
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 /**
@@ -18121,14 +18008,14 @@ const ForAwaitStatement = exports.ForAwaitStatement = ["ForOfStatement"];
  */
 
 if (typeof process === 'undefined' || process.type === 'renderer' || process.browser === true || process.__nwjs) {
-	module.exports = __webpack_require__(17);
+	module.exports = __webpack_require__(16);
 } else {
-	module.exports = __webpack_require__(20);
+	module.exports = __webpack_require__(19);
 }
 
 
 /***/ }),
-/* 17 */
+/* 16 */
 /***/ ((module, exports, __webpack_require__) => {
 
 /* eslint-env browser */
@@ -18388,7 +18275,7 @@ function localstorage() {
 	}
 }
 
-module.exports = __webpack_require__(18)(exports);
+module.exports = __webpack_require__(17)(exports);
 
 const {formatters} = module.exports;
 
@@ -18406,7 +18293,7 @@ formatters.j = function (v) {
 
 
 /***/ }),
-/* 18 */
+/* 17 */
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 
@@ -18422,7 +18309,7 @@ function setup(env) {
 	createDebug.disable = disable;
 	createDebug.enable = enable;
 	createDebug.enabled = enabled;
-	createDebug.humanize = __webpack_require__(19);
+	createDebug.humanize = __webpack_require__(18);
 	createDebug.destroy = destroy;
 
 	Object.keys(env).forEach(key => {
@@ -18704,7 +18591,7 @@ module.exports = setup;
 
 
 /***/ }),
-/* 19 */
+/* 18 */
 /***/ ((module) => {
 
 /**
@@ -18872,15 +18759,15 @@ function plural(ms, msAbs, n, name) {
 
 
 /***/ }),
-/* 20 */
+/* 19 */
 /***/ ((module, exports, __webpack_require__) => {
 
 /**
  * Module dependencies.
  */
 
-const tty = __webpack_require__(21);
-const util = __webpack_require__(22);
+const tty = __webpack_require__(20);
+const util = __webpack_require__(21);
 
 /**
  * This is the Node.js implementation of `debug()`.
@@ -18906,7 +18793,7 @@ exports.colors = [6, 2, 3, 4, 5, 1];
 try {
 	// Optional dependency (as in, doesn't need to be installed, NOT like optionalDependencies in package.json)
 	// eslint-disable-next-line import/no-extraneous-dependencies
-	const supportsColor = __webpack_require__(23);
+	const supportsColor = __webpack_require__(22);
 
 	if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
 		exports.colors = [
@@ -19114,7 +19001,7 @@ function init(debug) {
 	}
 }
 
-module.exports = __webpack_require__(18)(exports);
+module.exports = __webpack_require__(17)(exports);
 
 const {formatters} = module.exports;
 
@@ -19141,21 +19028,21 @@ formatters.O = function (v) {
 
 
 /***/ }),
-/* 21 */
+/* 20 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("tty");
 
 /***/ }),
-/* 22 */
+/* 21 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("util");
 
 /***/ }),
-/* 23 */
+/* 22 */
 /***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
 
 "use strict";
@@ -19164,9 +19051,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   createSupportsColor: () => (/* binding */ createSupportsColor),
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(24);
-/* harmony import */ var node_os__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(25);
-/* harmony import */ var node_tty__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(26);
+/* harmony import */ var node_process__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(23);
+/* harmony import */ var node_os__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(24);
+/* harmony import */ var node_tty__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(25);
 
 
 
@@ -19352,28 +19239,28 @@ const supportsColor = {
 
 
 /***/ }),
-/* 24 */
+/* 23 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("node:process");
 
 /***/ }),
-/* 25 */
+/* 24 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("node:os");
 
 /***/ }),
-/* 26 */
+/* 25 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("node:tty");
 
 /***/ }),
-/* 27 */
+/* 26 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -19383,14 +19270,14 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _renamer = __webpack_require__(28);
-var _index = __webpack_require__(10);
-var _binding = __webpack_require__(119);
-var _t = __webpack_require__(29);
+var _renamer = __webpack_require__(27);
+var _index = __webpack_require__(9);
+var _binding = __webpack_require__(118);
+var _t = __webpack_require__(28);
 var t = _t;
-var _cache = __webpack_require__(120);
-const globalsBuiltinLower = __webpack_require__(121),
-  globalsBuiltinUpper = __webpack_require__(122);
+var _cache = __webpack_require__(119);
+const globalsBuiltinLower = __webpack_require__(120),
+  globalsBuiltinUpper = __webpack_require__(121);
 const {
   assignmentExpression,
   callExpression,
@@ -20419,7 +20306,7 @@ Scope.contextVariables = ["arguments", "undefined", "Infinity", "NaN"];
 
 
 /***/ }),
-/* 28 */
+/* 27 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -20429,11 +20316,11 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var t = __webpack_require__(29);
+var t = __webpack_require__(28);
 var _t = t;
-var _traverseNode = __webpack_require__(12);
-var _visitors = __webpack_require__(117);
-var _context = __webpack_require__(11);
+var _traverseNode = __webpack_require__(11);
+var _visitors = __webpack_require__(116);
+var _context = __webpack_require__(10);
 const {
   getAssignmentIdentifiers
 } = _t;
@@ -20557,7 +20444,7 @@ exports["default"] = Renamer;
 
 
 /***/ }),
-/* 29 */
+/* 28 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -20976,11 +20863,11 @@ Object.defineProperty(exports, "valueToNode", ({
     return _valueToNode.default;
   }
 }));
-var _isReactComponent = __webpack_require__(30);
-var _isCompatTag = __webpack_require__(36);
-var _buildChildren = __webpack_require__(37);
-var _assertNode = __webpack_require__(62);
-var _index = __webpack_require__(64);
+var _isReactComponent = __webpack_require__(29);
+var _isCompatTag = __webpack_require__(35);
+var _buildChildren = __webpack_require__(36);
+var _assertNode = __webpack_require__(61);
+var _index = __webpack_require__(63);
 Object.keys(_index).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -20992,10 +20879,10 @@ Object.keys(_index).forEach(function (key) {
     }
   });
 });
-var _createTypeAnnotationBasedOnTypeof = __webpack_require__(65);
-var _createFlowUnionType = __webpack_require__(66);
-var _createTSUnionType = __webpack_require__(68);
-var _productions = __webpack_require__(70);
+var _createTypeAnnotationBasedOnTypeof = __webpack_require__(64);
+var _createFlowUnionType = __webpack_require__(65);
+var _createTSUnionType = __webpack_require__(67);
+var _productions = __webpack_require__(69);
 Object.keys(_productions).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21007,7 +20894,7 @@ Object.keys(_productions).forEach(function (key) {
     }
   });
 });
-var _index2 = __webpack_require__(39);
+var _index2 = __webpack_require__(38);
 Object.keys(_index2).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21019,19 +20906,19 @@ Object.keys(_index2).forEach(function (key) {
     }
   });
 });
-var _cloneNode = __webpack_require__(71);
-var _clone = __webpack_require__(72);
-var _cloneDeep = __webpack_require__(73);
-var _cloneDeepWithoutLoc = __webpack_require__(74);
-var _cloneWithoutLoc = __webpack_require__(75);
-var _addComment = __webpack_require__(76);
-var _addComments = __webpack_require__(77);
-var _inheritInnerComments = __webpack_require__(78);
-var _inheritLeadingComments = __webpack_require__(80);
-var _inheritsComments = __webpack_require__(81);
-var _inheritTrailingComments = __webpack_require__(82);
-var _removeComments = __webpack_require__(83);
-var _index3 = __webpack_require__(84);
+var _cloneNode = __webpack_require__(70);
+var _clone = __webpack_require__(71);
+var _cloneDeep = __webpack_require__(72);
+var _cloneDeepWithoutLoc = __webpack_require__(73);
+var _cloneWithoutLoc = __webpack_require__(74);
+var _addComment = __webpack_require__(75);
+var _addComments = __webpack_require__(76);
+var _inheritInnerComments = __webpack_require__(77);
+var _inheritLeadingComments = __webpack_require__(79);
+var _inheritsComments = __webpack_require__(80);
+var _inheritTrailingComments = __webpack_require__(81);
+var _removeComments = __webpack_require__(82);
+var _index3 = __webpack_require__(83);
 Object.keys(_index3).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21043,7 +20930,7 @@ Object.keys(_index3).forEach(function (key) {
     }
   });
 });
-var _index4 = __webpack_require__(52);
+var _index4 = __webpack_require__(51);
 Object.keys(_index4).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21055,16 +20942,16 @@ Object.keys(_index4).forEach(function (key) {
     }
   });
 });
-var _ensureBlock = __webpack_require__(85);
-var _toBindingIdentifierName = __webpack_require__(87);
-var _toBlock = __webpack_require__(86);
-var _toComputedKey = __webpack_require__(89);
-var _toExpression = __webpack_require__(90);
-var _toIdentifier = __webpack_require__(88);
-var _toKeyAlias = __webpack_require__(91);
-var _toStatement = __webpack_require__(95);
-var _valueToNode = __webpack_require__(96);
-var _index5 = __webpack_require__(42);
+var _ensureBlock = __webpack_require__(84);
+var _toBindingIdentifierName = __webpack_require__(86);
+var _toBlock = __webpack_require__(85);
+var _toComputedKey = __webpack_require__(88);
+var _toExpression = __webpack_require__(89);
+var _toIdentifier = __webpack_require__(87);
+var _toKeyAlias = __webpack_require__(90);
+var _toStatement = __webpack_require__(94);
+var _valueToNode = __webpack_require__(95);
+var _index5 = __webpack_require__(41);
 Object.keys(_index5).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21076,17 +20963,17 @@ Object.keys(_index5).forEach(function (key) {
     }
   });
 });
-var _appendToMemberExpression = __webpack_require__(97);
-var _inherits = __webpack_require__(98);
-var _prependToMemberExpression = __webpack_require__(99);
-var _removeProperties = __webpack_require__(94);
-var _removePropertiesDeep = __webpack_require__(92);
-var _removeTypeDuplicates = __webpack_require__(67);
-var _getAssignmentIdentifiers = __webpack_require__(100);
-var _getBindingIdentifiers = __webpack_require__(101);
-var _getOuterBindingIdentifiers = __webpack_require__(102);
-var _getFunctionName = __webpack_require__(103);
-var _traverse = __webpack_require__(104);
+var _appendToMemberExpression = __webpack_require__(96);
+var _inherits = __webpack_require__(97);
+var _prependToMemberExpression = __webpack_require__(98);
+var _removeProperties = __webpack_require__(93);
+var _removePropertiesDeep = __webpack_require__(91);
+var _removeTypeDuplicates = __webpack_require__(66);
+var _getAssignmentIdentifiers = __webpack_require__(99);
+var _getBindingIdentifiers = __webpack_require__(100);
+var _getOuterBindingIdentifiers = __webpack_require__(101);
+var _getFunctionName = __webpack_require__(102);
+var _traverse = __webpack_require__(103);
 Object.keys(_traverse).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21098,27 +20985,27 @@ Object.keys(_traverse).forEach(function (key) {
     }
   });
 });
-var _traverseFast = __webpack_require__(93);
-var _shallowEqual = __webpack_require__(34);
-var _is = __webpack_require__(44);
-var _isBinding = __webpack_require__(105);
-var _isBlockScoped = __webpack_require__(106);
-var _isImmutable = __webpack_require__(108);
-var _isLet = __webpack_require__(107);
-var _isNode = __webpack_require__(63);
-var _isNodesEquivalent = __webpack_require__(109);
-var _isPlaceholderType = __webpack_require__(46);
-var _isReferenced = __webpack_require__(110);
-var _isScope = __webpack_require__(111);
-var _isSpecifierDefault = __webpack_require__(112);
-var _isType = __webpack_require__(45);
-var _isValidES3Identifier = __webpack_require__(113);
-var _isValidIdentifier = __webpack_require__(47);
-var _isVar = __webpack_require__(114);
-var _matchesPattern = __webpack_require__(32);
-var _validate = __webpack_require__(41);
-var _buildMatchMemberExpression = __webpack_require__(31);
-var _index6 = __webpack_require__(33);
+var _traverseFast = __webpack_require__(92);
+var _shallowEqual = __webpack_require__(33);
+var _is = __webpack_require__(43);
+var _isBinding = __webpack_require__(104);
+var _isBlockScoped = __webpack_require__(105);
+var _isImmutable = __webpack_require__(107);
+var _isLet = __webpack_require__(106);
+var _isNode = __webpack_require__(62);
+var _isNodesEquivalent = __webpack_require__(108);
+var _isPlaceholderType = __webpack_require__(45);
+var _isReferenced = __webpack_require__(109);
+var _isScope = __webpack_require__(110);
+var _isSpecifierDefault = __webpack_require__(111);
+var _isType = __webpack_require__(44);
+var _isValidES3Identifier = __webpack_require__(112);
+var _isValidIdentifier = __webpack_require__(46);
+var _isVar = __webpack_require__(113);
+var _matchesPattern = __webpack_require__(31);
+var _validate = __webpack_require__(40);
+var _buildMatchMemberExpression = __webpack_require__(30);
+var _index6 = __webpack_require__(32);
 Object.keys(_index6).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;
@@ -21130,8 +21017,8 @@ Object.keys(_index6).forEach(function (key) {
     }
   });
 });
-var _deprecationWarning = __webpack_require__(35);
-var _toSequenceExpression = __webpack_require__(115);
+var _deprecationWarning = __webpack_require__(34);
+var _toSequenceExpression = __webpack_require__(114);
 const react = exports.react = {
   isReactComponent: _isReactComponent.default,
   isCompatTag: _isCompatTag.default,
@@ -21148,7 +21035,7 @@ if (process.env.BABEL_TYPES_8_BREAKING) {
 
 
 /***/ }),
-/* 30 */
+/* 29 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -21158,11 +21045,31 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _buildMatchMemberExpression = __webpack_require__(31);
+var _buildMatchMemberExpression = __webpack_require__(30);
 const isReactComponent = (0, _buildMatchMemberExpression.default)("React.Component");
 var _default = exports["default"] = isReactComponent;
 
 //# sourceMappingURL=isReactComponent.js.map
+
+
+/***/ }),
+/* 30 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = buildMatchMemberExpression;
+var _matchesPattern = __webpack_require__(31);
+function buildMatchMemberExpression(match, allowPartial) {
+  const parts = match.split(".");
+  return member => (0, _matchesPattern.default)(member, parts, allowPartial);
+}
+
+//# sourceMappingURL=buildMatchMemberExpression.js.map
 
 
 /***/ }),
@@ -21175,28 +21082,8 @@ var _default = exports["default"] = isReactComponent;
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = buildMatchMemberExpression;
-var _matchesPattern = __webpack_require__(32);
-function buildMatchMemberExpression(match, allowPartial) {
-  const parts = match.split(".");
-  return member => (0, _matchesPattern.default)(member, parts, allowPartial);
-}
-
-//# sourceMappingURL=buildMatchMemberExpression.js.map
-
-
-/***/ }),
-/* 32 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
 exports["default"] = matchesPattern;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function isMemberExpressionLike(node) {
   return (0, _index.isMemberExpression)(node) || (0, _index.isMetaProperty)(node);
 }
@@ -21237,7 +21124,7 @@ function matchesPattern(member, match, allowPartial) {
 
 
 /***/ }),
-/* 33 */
+/* 32 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -21554,8 +21441,8 @@ exports.isWhile = isWhile;
 exports.isWhileStatement = isWhileStatement;
 exports.isWithStatement = isWithStatement;
 exports.isYieldExpression = isYieldExpression;
-var _shallowEqual = __webpack_require__(34);
-var _deprecationWarning = __webpack_require__(35);
+var _shallowEqual = __webpack_require__(33);
+var _deprecationWarning = __webpack_require__(34);
 function isArrayExpression(node, opts) {
   if (!node) return false;
   if (node.type !== "ArrayExpression") return false;
@@ -24041,7 +23928,7 @@ function isModuleDeclaration(node, opts) {
 
 
 /***/ }),
-/* 34 */
+/* 33 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -24065,7 +23952,7 @@ function shallowEqual(actual, expected) {
 
 
 /***/ }),
-/* 35 */
+/* 34 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -24116,7 +24003,7 @@ function captureShortStackTrace(skip, length) {
 
 
 /***/ }),
-/* 36 */
+/* 35 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -24134,7 +24021,7 @@ function isCompatTag(tagName) {
 
 
 /***/ }),
-/* 37 */
+/* 36 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -24144,8 +24031,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = buildChildren;
-var _index = __webpack_require__(33);
-var _cleanJSXElementLiteralChild = __webpack_require__(38);
+var _index = __webpack_require__(32);
+var _cleanJSXElementLiteralChild = __webpack_require__(37);
 function buildChildren(node) {
   const elements = [];
   for (let i = 0; i < node.children.length; i++) {
@@ -24165,7 +24052,7 @@ function buildChildren(node) {
 
 
 /***/ }),
-/* 38 */
+/* 37 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -24175,8 +24062,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = cleanJSXElementLiteralChild;
-var _index = __webpack_require__(39);
-var _index2 = __webpack_require__(29);
+var _index = __webpack_require__(38);
+var _index2 = __webpack_require__(28);
 function cleanJSXElementLiteralChild(child, args) {
   const lines = child.value.split(/\r\n|\n|\r/);
   let lastNonEmptyLine = 0;
@@ -24212,7 +24099,7 @@ function cleanJSXElementLiteralChild(child, args) {
 
 
 /***/ }),
-/* 39 */
+/* 38 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -24221,7 +24108,7 @@ function cleanJSXElementLiteralChild(child, args) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-var _lowercase = __webpack_require__(40);
+var _lowercase = __webpack_require__(39);
 Object.keys(_lowercase).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _lowercase[key]) return;
@@ -24232,7 +24119,7 @@ Object.keys(_lowercase).forEach(function (key) {
     }
   });
 });
-var _uppercase = __webpack_require__(61);
+var _uppercase = __webpack_require__(60);
 Object.keys(_uppercase).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _uppercase[key]) return;
@@ -24248,7 +24135,7 @@ Object.keys(_uppercase).forEach(function (key) {
 
 
 /***/ }),
-/* 40 */
+/* 39 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -24514,9 +24401,9 @@ exports.voidTypeAnnotation = voidTypeAnnotation;
 exports.whileStatement = whileStatement;
 exports.withStatement = withStatement;
 exports.yieldExpression = yieldExpression;
-var _validate = __webpack_require__(41);
-var _deprecationWarning = __webpack_require__(35);
-var utils = __webpack_require__(53);
+var _validate = __webpack_require__(40);
+var _deprecationWarning = __webpack_require__(34);
+var utils = __webpack_require__(52);
 const {
   validateInternal: validate
 } = _validate;
@@ -27151,7 +27038,7 @@ function SpreadProperty(argument) {
 
 
 /***/ }),
-/* 41 */
+/* 40 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -27164,7 +27051,7 @@ exports["default"] = validate;
 exports.validateChild = validateChild;
 exports.validateField = validateField;
 exports.validateInternal = validateInternal;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 function validate(node, key, val) {
   if (!node) return;
   const fields = _index.NODE_FIELDS[node.type];
@@ -27200,7 +27087,7 @@ function validateChild(node, key, val) {
 
 
 /***/ }),
-/* 42 */
+/* 41 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -27276,15 +27163,15 @@ Object.defineProperty(exports, "VISITOR_KEYS", ({
     return _utils.VISITOR_KEYS;
   }
 }));
-__webpack_require__(43);
+__webpack_require__(42);
+__webpack_require__(53);
 __webpack_require__(54);
 __webpack_require__(55);
-__webpack_require__(56);
+__webpack_require__(57);
 __webpack_require__(58);
-__webpack_require__(59);
-var _utils = __webpack_require__(53);
-var _placeholders = __webpack_require__(57);
-var _deprecatedAliases = __webpack_require__(60);
+var _utils = __webpack_require__(52);
+var _placeholders = __webpack_require__(56);
+var _deprecatedAliases = __webpack_require__(59);
 Object.keys(_deprecatedAliases.DEPRECATED_ALIASES).forEach(deprecatedAlias => {
   _utils.FLIPPED_ALIAS_KEYS[deprecatedAlias] = _utils.FLIPPED_ALIAS_KEYS[_deprecatedAliases.DEPRECATED_ALIASES[deprecatedAlias]];
 });
@@ -27307,7 +27194,7 @@ const TYPES = exports.TYPES = [].concat(Object.keys(_utils.VISITOR_KEYS), Object
 
 
 /***/ }),
-/* 43 */
+/* 42 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -27317,12 +27204,12 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.patternLikeCommon = exports.importAttributes = exports.functionTypeAnnotationCommon = exports.functionDeclarationCommon = exports.functionCommon = exports.classMethodOrPropertyCommon = exports.classMethodOrDeclareMethodCommon = void 0;
-var _is = __webpack_require__(44);
-var _isValidIdentifier = __webpack_require__(47);
-var _helperValidatorIdentifier = __webpack_require__(48);
-var _helperStringParser = __webpack_require__(51);
-var _index = __webpack_require__(52);
-var _utils = __webpack_require__(53);
+var _is = __webpack_require__(43);
+var _isValidIdentifier = __webpack_require__(46);
+var _helperValidatorIdentifier = __webpack_require__(47);
+var _helperStringParser = __webpack_require__(50);
+var _index = __webpack_require__(51);
+var _utils = __webpack_require__(52);
 const defineType = (0, _utils.defineAliasedType)("Standardized");
 defineType("ArrayExpression", {
   fields: {
@@ -28973,7 +28860,7 @@ defineType("ImportAttribute", {
 
 
 /***/ }),
-/* 44 */
+/* 43 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -28983,10 +28870,10 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = is;
-var _shallowEqual = __webpack_require__(34);
-var _isType = __webpack_require__(45);
-var _isPlaceholderType = __webpack_require__(46);
-var _index = __webpack_require__(42);
+var _shallowEqual = __webpack_require__(33);
+var _isType = __webpack_require__(44);
+var _isPlaceholderType = __webpack_require__(45);
+var _index = __webpack_require__(41);
 function is(type, node, opts) {
   if (!node) return false;
   const matches = (0, _isType.default)(node.type, type);
@@ -29007,7 +28894,7 @@ function is(type, node, opts) {
 
 
 /***/ }),
-/* 45 */
+/* 44 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -29017,7 +28904,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isType;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 function isType(nodeType, targetType) {
   if (nodeType === targetType) return true;
   if (nodeType == null) return false;
@@ -29031,7 +28918,7 @@ function isType(nodeType, targetType) {
 
 
 /***/ }),
-/* 46 */
+/* 45 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -29041,7 +28928,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isPlaceholderType;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 function isPlaceholderType(placeholderType, targetType) {
   if (placeholderType === targetType) return true;
   const aliases = _index.PLACEHOLDERS_ALIAS[placeholderType];
@@ -29053,7 +28940,7 @@ function isPlaceholderType(placeholderType, targetType) {
 
 
 /***/ }),
-/* 47 */
+/* 46 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -29063,7 +28950,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isValidIdentifier;
-var _helperValidatorIdentifier = __webpack_require__(48);
+var _helperValidatorIdentifier = __webpack_require__(47);
 function isValidIdentifier(name, reserved = true) {
   if (typeof name !== "string") return false;
   if (reserved) {
@@ -29078,7 +28965,7 @@ function isValidIdentifier(name, reserved = true) {
 
 
 /***/ }),
-/* 48 */
+/* 47 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -29135,14 +29022,14 @@ Object.defineProperty(exports, "isStrictReservedWord", ({
     return _keyword.isStrictReservedWord;
   }
 }));
-var _identifier = __webpack_require__(49);
-var _keyword = __webpack_require__(50);
+var _identifier = __webpack_require__(48);
+var _keyword = __webpack_require__(49);
 
 //# sourceMappingURL=index.js.map
 
 
 /***/ }),
-/* 49 */
+/* 48 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -29219,7 +29106,7 @@ function isIdentifierName(name) {
 
 
 /***/ }),
-/* 50 */
+/* 49 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -29261,7 +29148,7 @@ function isKeyword(word) {
 
 
 /***/ }),
-/* 51 */
+/* 50 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -29563,7 +29450,7 @@ function readCodePoint(input, pos, lineStart, curLine, throwOnInvalid, errors) {
 
 
 /***/ }),
-/* 52 */
+/* 51 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -29603,7 +29490,7 @@ const INHERIT_KEYS = exports.INHERIT_KEYS = {
 
 
 /***/ }),
-/* 53 */
+/* 52 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -29630,8 +29517,8 @@ exports.validateArrayOfType = validateArrayOfType;
 exports.validateOptional = validateOptional;
 exports.validateOptionalType = validateOptionalType;
 exports.validateType = validateType;
-var _is = __webpack_require__(44);
-var _validate = __webpack_require__(41);
+var _is = __webpack_require__(43);
+var _validate = __webpack_require__(40);
 const VISITOR_KEYS = exports.VISITOR_KEYS = {};
 const ALIAS_KEYS = exports.ALIAS_KEYS = {};
 const FLIPPED_ALIAS_KEYS = exports.FLIPPED_ALIAS_KEYS = {};
@@ -29902,14 +29789,14 @@ function defineType(type, opts = {}) {
 
 
 /***/ }),
-/* 54 */
+/* 53 */
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __webpack_require__) => {
 
 "use strict";
 
 
-var _core = __webpack_require__(43);
-var _utils = __webpack_require__(53);
+var _core = __webpack_require__(42);
+var _utils = __webpack_require__(52);
 const defineType = (0, _utils.defineAliasedType)("Flow");
 const defineInterfaceishType = name => {
   const isDeclareClass = name === "DeclareClass";
@@ -30404,13 +30291,13 @@ defineType("OptionalIndexedAccessType", {
 
 
 /***/ }),
-/* 55 */
+/* 54 */
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __webpack_require__) => {
 
 "use strict";
 
 
-var _utils = __webpack_require__(53);
+var _utils = __webpack_require__(52);
 const defineType = (0, _utils.defineAliasedType)("JSX");
 defineType("JSXAttribute", {
   visitor: ["name", "value"],
@@ -30568,15 +30455,15 @@ defineType("JSXClosingFragment", {
 
 
 /***/ }),
-/* 56 */
+/* 55 */
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __webpack_require__) => {
 
 "use strict";
 
 
-var _utils = __webpack_require__(53);
-var _placeholders = __webpack_require__(57);
-var _core = __webpack_require__(43);
+var _utils = __webpack_require__(52);
+var _placeholders = __webpack_require__(56);
+var _core = __webpack_require__(42);
 const defineType = (0, _utils.defineAliasedType)("Miscellaneous");
 {
   defineType("Noop", {
@@ -30608,7 +30495,7 @@ defineType("V8IntrinsicIdentifier", {
 
 
 /***/ }),
-/* 57 */
+/* 56 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -30618,7 +30505,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.PLACEHOLDERS_FLIPPED_ALIAS = exports.PLACEHOLDERS_ALIAS = exports.PLACEHOLDERS = void 0;
-var _utils = __webpack_require__(53);
+var _utils = __webpack_require__(52);
 const PLACEHOLDERS = exports.PLACEHOLDERS = ["Identifier", "StringLiteral", "Expression", "Statement", "Declaration", "BlockStatement", "ClassBody", "Pattern"];
 const PLACEHOLDERS_ALIAS = exports.PLACEHOLDERS_ALIAS = {
   Declaration: ["Statement"],
@@ -30642,13 +30529,13 @@ Object.keys(PLACEHOLDERS_ALIAS).forEach(type => {
 
 
 /***/ }),
-/* 58 */
+/* 57 */
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __webpack_require__) => {
 
 "use strict";
 
 
-var _utils = __webpack_require__(53);
+var _utils = __webpack_require__(52);
 (0, _utils.default)("ArgumentPlaceholder", {});
 (0, _utils.default)("BindExpression", {
   visitor: ["object", "callee"],
@@ -30775,15 +30662,15 @@ var _utils = __webpack_require__(53);
 
 
 /***/ }),
-/* 59 */
+/* 58 */
 /***/ ((__unused_webpack_module, __unused_webpack_exports, __webpack_require__) => {
 
 "use strict";
 
 
-var _utils = __webpack_require__(53);
-var _core = __webpack_require__(43);
-var _is = __webpack_require__(44);
+var _utils = __webpack_require__(52);
+var _core = __webpack_require__(42);
+var _is = __webpack_require__(43);
 const defineType = (0, _utils.defineAliasedType)("TypeScript");
 const bool = (0, _utils.assertValueType)("boolean");
 const tSFunctionTypeAnnotationCommon = () => ({
@@ -31310,7 +31197,7 @@ defineType("TSTypeParameter", {
 
 
 /***/ }),
-/* 60 */
+/* 59 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -31328,7 +31215,7 @@ const DEPRECATED_ALIASES = exports.DEPRECATED_ALIASES = {
 
 
 /***/ }),
-/* 61 */
+/* 60 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -31340,8 +31227,8 @@ Object.defineProperty(exports, "__esModule", ({
 exports.JSXIdentifier = exports.JSXFragment = exports.JSXExpressionContainer = exports.JSXEmptyExpression = exports.JSXElement = exports.JSXClosingFragment = exports.JSXClosingElement = exports.JSXAttribute = exports.IntersectionTypeAnnotation = exports.InterpreterDirective = exports.InterfaceTypeAnnotation = exports.InterfaceExtends = exports.InterfaceDeclaration = exports.InferredPredicate = exports.IndexedAccessType = exports.ImportSpecifier = exports.ImportNamespaceSpecifier = exports.ImportExpression = exports.ImportDefaultSpecifier = exports.ImportDeclaration = exports.ImportAttribute = exports.Import = exports.IfStatement = exports.Identifier = exports.GenericTypeAnnotation = exports.FunctionTypeParam = exports.FunctionTypeAnnotation = exports.FunctionExpression = exports.FunctionDeclaration = exports.ForStatement = exports.ForOfStatement = exports.ForInStatement = exports.File = exports.ExpressionStatement = exports.ExportSpecifier = exports.ExportNamespaceSpecifier = exports.ExportNamedDeclaration = exports.ExportDefaultSpecifier = exports.ExportDefaultDeclaration = exports.ExportAllDeclaration = exports.ExistsTypeAnnotation = exports.EnumSymbolBody = exports.EnumStringMember = exports.EnumStringBody = exports.EnumNumberMember = exports.EnumNumberBody = exports.EnumDefaultedMember = exports.EnumDeclaration = exports.EnumBooleanMember = exports.EnumBooleanBody = exports.EmptyTypeAnnotation = exports.EmptyStatement = exports.DoWhileStatement = exports.DoExpression = exports.DirectiveLiteral = exports.Directive = exports.Decorator = exports.DeclaredPredicate = exports.DeclareVariable = exports.DeclareTypeAlias = exports.DeclareOpaqueType = exports.DeclareModuleExports = exports.DeclareModule = exports.DeclareInterface = exports.DeclareFunction = exports.DeclareExportDeclaration = exports.DeclareExportAllDeclaration = exports.DeclareClass = exports.DecimalLiteral = exports.DebuggerStatement = exports.ContinueStatement = exports.ConditionalExpression = exports.ClassProperty = exports.ClassPrivateProperty = exports.ClassPrivateMethod = exports.ClassMethod = exports.ClassImplements = exports.ClassExpression = exports.ClassDeclaration = exports.ClassBody = exports.ClassAccessorProperty = exports.CatchClause = exports.CallExpression = exports.BreakStatement = exports.BooleanTypeAnnotation = exports.BooleanLiteralTypeAnnotation = exports.BooleanLiteral = exports.BlockStatement = exports.BindExpression = exports.BinaryExpression = exports.BigIntLiteral = exports.AwaitExpression = exports.AssignmentPattern = exports.AssignmentExpression = exports.ArrowFunctionExpression = exports.ArrayTypeAnnotation = exports.ArrayPattern = exports.ArrayExpression = exports.ArgumentPlaceholder = exports.AnyTypeAnnotation = void 0;
 exports.TSNumberKeyword = exports.TSNullKeyword = exports.TSNonNullExpression = exports.TSNeverKeyword = exports.TSNamespaceExportDeclaration = exports.TSNamedTupleMember = exports.TSModuleDeclaration = exports.TSModuleBlock = exports.TSMethodSignature = exports.TSMappedType = exports.TSLiteralType = exports.TSIntrinsicKeyword = exports.TSIntersectionType = exports.TSInterfaceDeclaration = exports.TSInterfaceBody = exports.TSInstantiationExpression = exports.TSInferType = exports.TSIndexedAccessType = exports.TSIndexSignature = exports.TSImportType = exports.TSImportEqualsDeclaration = exports.TSFunctionType = exports.TSExternalModuleReference = exports.TSExpressionWithTypeArguments = exports.TSExportAssignment = exports.TSEnumMember = exports.TSEnumDeclaration = exports.TSEnumBody = exports.TSDeclareMethod = exports.TSDeclareFunction = exports.TSConstructorType = exports.TSConstructSignatureDeclaration = exports.TSConditionalType = exports.TSCallSignatureDeclaration = exports.TSBooleanKeyword = exports.TSBigIntKeyword = exports.TSAsExpression = exports.TSArrayType = exports.TSAnyKeyword = exports.SymbolTypeAnnotation = exports.SwitchStatement = exports.SwitchCase = exports.Super = exports.StringTypeAnnotation = exports.StringLiteralTypeAnnotation = exports.StringLiteral = exports.StaticBlock = exports.SpreadProperty = exports.SpreadElement = exports.SequenceExpression = exports.ReturnStatement = exports.RestProperty = exports.RestElement = exports.RegexLiteral = exports.RegExpLiteral = exports.RecordExpression = exports.QualifiedTypeIdentifier = exports.Program = exports.PrivateName = exports.Placeholder = exports.PipelineTopicExpression = exports.PipelinePrimaryTopicReference = exports.PipelineBareFunction = exports.ParenthesizedExpression = exports.OptionalMemberExpression = exports.OptionalIndexedAccessType = exports.OptionalCallExpression = exports.OpaqueType = exports.ObjectTypeSpreadProperty = exports.ObjectTypeProperty = exports.ObjectTypeInternalSlot = exports.ObjectTypeIndexer = exports.ObjectTypeCallProperty = exports.ObjectTypeAnnotation = exports.ObjectProperty = exports.ObjectPattern = exports.ObjectMethod = exports.ObjectExpression = exports.NumericLiteral = exports.NumberTypeAnnotation = exports.NumberLiteralTypeAnnotation = exports.NumberLiteral = exports.NullableTypeAnnotation = exports.NullLiteralTypeAnnotation = exports.NullLiteral = exports.Noop = exports.NewExpression = exports.ModuleExpression = exports.MixedTypeAnnotation = exports.MetaProperty = exports.MemberExpression = exports.LogicalExpression = exports.LabeledStatement = exports.JSXText = exports.JSXSpreadChild = exports.JSXSpreadAttribute = exports.JSXOpeningFragment = exports.JSXOpeningElement = exports.JSXNamespacedName = exports.JSXMemberExpression = void 0;
 exports.YieldExpression = exports.WithStatement = exports.WhileStatement = exports.VoidTypeAnnotation = exports.VoidPattern = exports.Variance = exports.VariableDeclarator = exports.VariableDeclaration = exports.V8IntrinsicIdentifier = exports.UpdateExpression = exports.UnionTypeAnnotation = exports.UnaryExpression = exports.TypeofTypeAnnotation = exports.TypeParameterInstantiation = exports.TypeParameterDeclaration = exports.TypeParameter = exports.TypeCastExpression = exports.TypeAnnotation = exports.TypeAlias = exports.TupleTypeAnnotation = exports.TupleExpression = exports.TryStatement = exports.TopicReference = exports.ThrowStatement = exports.ThisTypeAnnotation = exports.ThisExpression = exports.TemplateLiteral = exports.TemplateElement = exports.TaggedTemplateExpression = exports.TSVoidKeyword = exports.TSUnknownKeyword = exports.TSUnionType = exports.TSUndefinedKeyword = exports.TSTypeReference = exports.TSTypeQuery = exports.TSTypePredicate = exports.TSTypeParameterInstantiation = exports.TSTypeParameterDeclaration = exports.TSTypeParameter = exports.TSTypeOperator = exports.TSTypeLiteral = exports.TSTypeAssertion = exports.TSTypeAnnotation = exports.TSTypeAliasDeclaration = exports.TSTupleType = exports.TSThisType = exports.TSTemplateLiteralType = exports.TSSymbolKeyword = exports.TSStringKeyword = exports.TSSatisfiesExpression = exports.TSRestType = exports.TSQualifiedName = exports.TSPropertySignature = exports.TSParenthesizedType = exports.TSParameterProperty = exports.TSOptionalType = exports.TSObjectKeyword = void 0;
-var b = __webpack_require__(40);
-var _deprecationWarning = __webpack_require__(35);
+var b = __webpack_require__(39);
+var _deprecationWarning = __webpack_require__(34);
 function alias(lowercase) {
   {
     return b[lowercase];
@@ -31609,7 +31496,7 @@ const NumberLiteral = exports.NumberLiteral = b.numberLiteral,
 
 
 /***/ }),
-/* 62 */
+/* 61 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -31619,7 +31506,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = assertNode;
-var _isNode = __webpack_require__(63);
+var _isNode = __webpack_require__(62);
 function assertNode(node) {
   if (!(0, _isNode.default)(node)) {
     var _node$type;
@@ -31632,7 +31519,7 @@ function assertNode(node) {
 
 
 /***/ }),
-/* 63 */
+/* 62 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -31642,7 +31529,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isNode;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 function isNode(node) {
   return !!(node && _index.VISITOR_KEYS[node.type]);
 }
@@ -31651,7 +31538,7 @@ function isNode(node) {
 
 
 /***/ }),
-/* 64 */
+/* 63 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -31968,8 +31855,8 @@ exports.assertWhile = assertWhile;
 exports.assertWhileStatement = assertWhileStatement;
 exports.assertWithStatement = assertWithStatement;
 exports.assertYieldExpression = assertYieldExpression;
-var _is = __webpack_require__(44);
-var _deprecationWarning = __webpack_require__(35);
+var _is = __webpack_require__(43);
+var _deprecationWarning = __webpack_require__(34);
 function assert(type, node, opts) {
   if (!(0, _is.default)(type, node, opts)) {
     throw new Error(`Expected type "${type}" with option ${JSON.stringify(opts)}, ` + `but instead got "${node.type}".`);
@@ -32909,7 +32796,7 @@ function assertModuleDeclaration(node, opts) {
 
 
 /***/ }),
-/* 65 */
+/* 64 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -32919,7 +32806,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _index = __webpack_require__(39);
+var _index = __webpack_require__(38);
 var _default = exports["default"] = createTypeAnnotationBasedOnTypeof;
 function createTypeAnnotationBasedOnTypeof(type) {
   switch (type) {
@@ -32947,7 +32834,7 @@ function createTypeAnnotationBasedOnTypeof(type) {
 
 
 /***/ }),
-/* 66 */
+/* 65 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -32957,8 +32844,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = createFlowUnionType;
-var _index = __webpack_require__(39);
-var _removeTypeDuplicates = __webpack_require__(67);
+var _index = __webpack_require__(38);
+var _removeTypeDuplicates = __webpack_require__(66);
 function createFlowUnionType(types) {
   const flattened = (0, _removeTypeDuplicates.default)(types);
   if (flattened.length === 1) {
@@ -32972,7 +32859,7 @@ function createFlowUnionType(types) {
 
 
 /***/ }),
-/* 67 */
+/* 66 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -32982,7 +32869,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = removeTypeDuplicates;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function getQualifiedName(node) {
   return (0, _index.isIdentifier)(node) ? node.name : `${node.id.name}.${getQualifiedName(node.qualification)}`;
 }
@@ -33044,7 +32931,7 @@ function removeTypeDuplicates(nodesIn) {
 
 
 /***/ }),
-/* 68 */
+/* 67 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33054,9 +32941,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = createTSUnionType;
-var _index = __webpack_require__(39);
-var _removeTypeDuplicates = __webpack_require__(69);
-var _index2 = __webpack_require__(33);
+var _index = __webpack_require__(38);
+var _removeTypeDuplicates = __webpack_require__(68);
+var _index2 = __webpack_require__(32);
 function createTSUnionType(typeAnnotations) {
   const types = typeAnnotations.map(type => {
     return (0, _index2.isTSTypeAnnotation)(type) ? type.typeAnnotation : type;
@@ -33073,7 +32960,7 @@ function createTSUnionType(typeAnnotations) {
 
 
 /***/ }),
-/* 69 */
+/* 68 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33083,7 +32970,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = removeTypeDuplicates;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function getQualifiedName(node) {
   return (0, _index.isIdentifier)(node) ? node.name : (0, _index.isThisExpression)(node) ? "this" : `${node.right.name}.${getQualifiedName(node.left)}`;
 }
@@ -33146,7 +33033,7 @@ function removeTypeDuplicates(nodesIn) {
 
 
 /***/ }),
-/* 70 */
+/* 69 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33156,7 +33043,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.buildUndefinedNode = buildUndefinedNode;
-var _index = __webpack_require__(39);
+var _index = __webpack_require__(38);
 function buildUndefinedNode() {
   return (0, _index.unaryExpression)("void", (0, _index.numericLiteral)(0), true);
 }
@@ -33165,7 +33052,7 @@ function buildUndefinedNode() {
 
 
 /***/ }),
-/* 71 */
+/* 70 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33175,8 +33062,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = cloneNode;
-var _index = __webpack_require__(42);
-var _index2 = __webpack_require__(33);
+var _index = __webpack_require__(41);
+var _index2 = __webpack_require__(32);
 const {
   hasOwn
 } = {
@@ -33279,7 +33166,7 @@ function maybeCloneComments(comments, deep, withoutLoc, commentsCache) {
 
 
 /***/ }),
-/* 72 */
+/* 71 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33289,12 +33176,31 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = clone;
-var _cloneNode = __webpack_require__(71);
+var _cloneNode = __webpack_require__(70);
 function clone(node) {
   return (0, _cloneNode.default)(node, false);
 }
 
 //# sourceMappingURL=clone.js.map
+
+
+/***/ }),
+/* 72 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = cloneDeep;
+var _cloneNode = __webpack_require__(70);
+function cloneDeep(node) {
+  return (0, _cloneNode.default)(node);
+}
+
+//# sourceMappingURL=cloneDeep.js.map
 
 
 /***/ }),
@@ -33307,13 +33213,13 @@ function clone(node) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = cloneDeep;
-var _cloneNode = __webpack_require__(71);
-function cloneDeep(node) {
-  return (0, _cloneNode.default)(node);
+exports["default"] = cloneDeepWithoutLoc;
+var _cloneNode = __webpack_require__(70);
+function cloneDeepWithoutLoc(node) {
+  return (0, _cloneNode.default)(node, true, true);
 }
 
-//# sourceMappingURL=cloneDeep.js.map
+//# sourceMappingURL=cloneDeepWithoutLoc.js.map
 
 
 /***/ }),
@@ -33326,13 +33232,13 @@ function cloneDeep(node) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = cloneDeepWithoutLoc;
-var _cloneNode = __webpack_require__(71);
-function cloneDeepWithoutLoc(node) {
-  return (0, _cloneNode.default)(node, true, true);
+exports["default"] = cloneWithoutLoc;
+var _cloneNode = __webpack_require__(70);
+function cloneWithoutLoc(node) {
+  return (0, _cloneNode.default)(node, false, true);
 }
 
-//# sourceMappingURL=cloneDeepWithoutLoc.js.map
+//# sourceMappingURL=cloneWithoutLoc.js.map
 
 
 /***/ }),
@@ -33345,27 +33251,8 @@ function cloneDeepWithoutLoc(node) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = cloneWithoutLoc;
-var _cloneNode = __webpack_require__(71);
-function cloneWithoutLoc(node) {
-  return (0, _cloneNode.default)(node, false, true);
-}
-
-//# sourceMappingURL=cloneWithoutLoc.js.map
-
-
-/***/ }),
-/* 76 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
 exports["default"] = addComment;
-var _addComments = __webpack_require__(77);
+var _addComments = __webpack_require__(76);
 function addComment(node, type, content, line) {
   return (0, _addComments.default)(node, type, [{
     type: line ? "CommentLine" : "CommentBlock",
@@ -33377,7 +33264,7 @@ function addComment(node, type, content, line) {
 
 
 /***/ }),
-/* 77 */
+/* 76 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -33406,7 +33293,7 @@ function addComments(node, type, comments) {
 
 
 /***/ }),
-/* 78 */
+/* 77 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33416,7 +33303,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = inheritInnerComments;
-var _inherit = __webpack_require__(79);
+var _inherit = __webpack_require__(78);
 function inheritInnerComments(child, parent) {
   (0, _inherit.default)("innerComments", child, parent);
 }
@@ -33425,7 +33312,7 @@ function inheritInnerComments(child, parent) {
 
 
 /***/ }),
-/* 79 */
+/* 78 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -33445,7 +33332,7 @@ function inherit(key, child, parent) {
 
 
 /***/ }),
-/* 80 */
+/* 79 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33455,12 +33342,36 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = inheritLeadingComments;
-var _inherit = __webpack_require__(79);
+var _inherit = __webpack_require__(78);
 function inheritLeadingComments(child, parent) {
   (0, _inherit.default)("leadingComments", child, parent);
 }
 
 //# sourceMappingURL=inheritLeadingComments.js.map
+
+
+/***/ }),
+/* 80 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = inheritsComments;
+var _inheritTrailingComments = __webpack_require__(81);
+var _inheritLeadingComments = __webpack_require__(79);
+var _inheritInnerComments = __webpack_require__(77);
+function inheritsComments(child, parent) {
+  (0, _inheritTrailingComments.default)(child, parent);
+  (0, _inheritLeadingComments.default)(child, parent);
+  (0, _inheritInnerComments.default)(child, parent);
+  return child;
+}
+
+//# sourceMappingURL=inheritsComments.js.map
 
 
 /***/ }),
@@ -33473,18 +33384,13 @@ function inheritLeadingComments(child, parent) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = inheritsComments;
-var _inheritTrailingComments = __webpack_require__(82);
-var _inheritLeadingComments = __webpack_require__(80);
-var _inheritInnerComments = __webpack_require__(78);
-function inheritsComments(child, parent) {
-  (0, _inheritTrailingComments.default)(child, parent);
-  (0, _inheritLeadingComments.default)(child, parent);
-  (0, _inheritInnerComments.default)(child, parent);
-  return child;
+exports["default"] = inheritTrailingComments;
+var _inherit = __webpack_require__(78);
+function inheritTrailingComments(child, parent) {
+  (0, _inherit.default)("trailingComments", child, parent);
 }
 
-//# sourceMappingURL=inheritsComments.js.map
+//# sourceMappingURL=inheritTrailingComments.js.map
 
 
 /***/ }),
@@ -33497,13 +33403,16 @@ function inheritsComments(child, parent) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = inheritTrailingComments;
-var _inherit = __webpack_require__(79);
-function inheritTrailingComments(child, parent) {
-  (0, _inherit.default)("trailingComments", child, parent);
+exports["default"] = removeComments;
+var _index = __webpack_require__(51);
+function removeComments(node) {
+  _index.COMMENT_KEYS.forEach(key => {
+    node[key] = null;
+  });
+  return node;
 }
 
-//# sourceMappingURL=inheritTrailingComments.js.map
+//# sourceMappingURL=removeComments.js.map
 
 
 /***/ }),
@@ -33516,30 +33425,8 @@ function inheritTrailingComments(child, parent) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = removeComments;
-var _index = __webpack_require__(52);
-function removeComments(node) {
-  _index.COMMENT_KEYS.forEach(key => {
-    node[key] = null;
-  });
-  return node;
-}
-
-//# sourceMappingURL=removeComments.js.map
-
-
-/***/ }),
-/* 84 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
 exports.WHILE_TYPES = exports.USERWHITESPACABLE_TYPES = exports.UNARYLIKE_TYPES = exports.TYPESCRIPT_TYPES = exports.TSTYPE_TYPES = exports.TSTYPEELEMENT_TYPES = exports.TSENTITYNAME_TYPES = exports.TSBASETYPE_TYPES = exports.TERMINATORLESS_TYPES = exports.STATEMENT_TYPES = exports.STANDARDIZED_TYPES = exports.SCOPABLE_TYPES = exports.PUREISH_TYPES = exports.PROPERTY_TYPES = exports.PRIVATE_TYPES = exports.PATTERN_TYPES = exports.PATTERNLIKE_TYPES = exports.OBJECTMEMBER_TYPES = exports.MODULESPECIFIER_TYPES = exports.MODULEDECLARATION_TYPES = exports.MISCELLANEOUS_TYPES = exports.METHOD_TYPES = exports.LVAL_TYPES = exports.LOOP_TYPES = exports.LITERAL_TYPES = exports.JSX_TYPES = exports.IMPORTOREXPORTDECLARATION_TYPES = exports.IMMUTABLE_TYPES = exports.FUNCTION_TYPES = exports.FUNCTIONPARENT_TYPES = exports.FUNCTIONPARAMETER_TYPES = exports.FOR_TYPES = exports.FORXSTATEMENT_TYPES = exports.FLOW_TYPES = exports.FLOWTYPE_TYPES = exports.FLOWPREDICATE_TYPES = exports.FLOWDECLARATION_TYPES = exports.FLOWBASEANNOTATION_TYPES = exports.EXPRESSION_TYPES = exports.EXPRESSIONWRAPPER_TYPES = exports.EXPORTDECLARATION_TYPES = exports.ENUMMEMBER_TYPES = exports.ENUMBODY_TYPES = exports.DECLARATION_TYPES = exports.CONDITIONAL_TYPES = exports.COMPLETIONSTATEMENT_TYPES = exports.CLASS_TYPES = exports.BLOCK_TYPES = exports.BLOCKPARENT_TYPES = exports.BINARY_TYPES = exports.ACCESSOR_TYPES = void 0;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 const STANDARDIZED_TYPES = exports.STANDARDIZED_TYPES = _index.FLIPPED_ALIAS_KEYS["Standardized"];
 const EXPRESSION_TYPES = exports.EXPRESSION_TYPES = _index.FLIPPED_ALIAS_KEYS["Expression"];
 const BINARY_TYPES = exports.BINARY_TYPES = _index.FLIPPED_ALIAS_KEYS["Binary"];
@@ -33596,7 +33483,7 @@ const MODULEDECLARATION_TYPES = exports.MODULEDECLARATION_TYPES = IMPORTOREXPORT
 
 
 /***/ }),
-/* 85 */
+/* 84 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33606,7 +33493,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = ensureBlock;
-var _toBlock = __webpack_require__(86);
+var _toBlock = __webpack_require__(85);
 function ensureBlock(node, key = "body") {
   const result = (0, _toBlock.default)(node[key], node);
   node[key] = result;
@@ -33617,7 +33504,7 @@ function ensureBlock(node, key = "body") {
 
 
 /***/ }),
-/* 86 */
+/* 85 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33627,8 +33514,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = toBlock;
-var _index = __webpack_require__(33);
-var _index2 = __webpack_require__(39);
+var _index = __webpack_require__(32);
+var _index2 = __webpack_require__(38);
 function toBlock(node, parent) {
   if ((0, _index.isBlockStatement)(node)) {
     return node;
@@ -33653,7 +33540,7 @@ function toBlock(node, parent) {
 
 
 /***/ }),
-/* 87 */
+/* 86 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33663,7 +33550,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = toBindingIdentifierName;
-var _toIdentifier = __webpack_require__(88);
+var _toIdentifier = __webpack_require__(87);
 function toBindingIdentifierName(name) {
   name = (0, _toIdentifier.default)(name);
   if (name === "eval" || name === "arguments") name = "_" + name;
@@ -33674,7 +33561,7 @@ function toBindingIdentifierName(name) {
 
 
 /***/ }),
-/* 88 */
+/* 87 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33684,8 +33571,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = toIdentifier;
-var _isValidIdentifier = __webpack_require__(47);
-var _helperValidatorIdentifier = __webpack_require__(48);
+var _isValidIdentifier = __webpack_require__(46);
+var _helperValidatorIdentifier = __webpack_require__(47);
 function toIdentifier(input) {
   input = input + "";
   let name = "";
@@ -33706,7 +33593,7 @@ function toIdentifier(input) {
 
 
 /***/ }),
-/* 89 */
+/* 88 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33716,8 +33603,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = toComputedKey;
-var _index = __webpack_require__(33);
-var _index2 = __webpack_require__(39);
+var _index = __webpack_require__(32);
+var _index2 = __webpack_require__(38);
 function toComputedKey(node, key = node.key || node.property) {
   if (!node.computed && (0, _index.isIdentifier)(key)) key = (0, _index2.stringLiteral)(key.name);
   return key;
@@ -33727,7 +33614,7 @@ function toComputedKey(node, key = node.key || node.property) {
 
 
 /***/ }),
-/* 90 */
+/* 89 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33737,7 +33624,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 var _default = exports["default"] = toExpression;
 function toExpression(node) {
   if ((0, _index.isExpressionStatement)(node)) {
@@ -33762,7 +33649,7 @@ function toExpression(node) {
 
 
 /***/ }),
-/* 91 */
+/* 90 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33772,9 +33659,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = toKeyAlias;
-var _index = __webpack_require__(33);
-var _cloneNode = __webpack_require__(71);
-var _removePropertiesDeep = __webpack_require__(92);
+var _index = __webpack_require__(32);
+var _cloneNode = __webpack_require__(70);
+var _removePropertiesDeep = __webpack_require__(91);
 function toKeyAlias(node, key = node.key) {
   let alias;
   if (node.kind === "method") {
@@ -33807,7 +33694,7 @@ toKeyAlias.increment = function () {
 
 
 /***/ }),
-/* 92 */
+/* 91 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33817,8 +33704,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = removePropertiesDeep;
-var _traverseFast = __webpack_require__(93);
-var _removeProperties = __webpack_require__(94);
+var _traverseFast = __webpack_require__(92);
+var _removeProperties = __webpack_require__(93);
 function removePropertiesDeep(tree, opts) {
   (0, _traverseFast.default)(tree, _removeProperties.default, opts);
   return tree;
@@ -33828,7 +33715,7 @@ function removePropertiesDeep(tree, opts) {
 
 
 /***/ }),
-/* 93 */
+/* 92 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33838,7 +33725,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = traverseFast;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 const _skip = Symbol();
 const _stop = Symbol();
 function traverseFast(node, enter, opts) {
@@ -33875,7 +33762,7 @@ traverseFast.stop = _stop;
 
 
 /***/ }),
-/* 94 */
+/* 93 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33885,7 +33772,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = removeProperties;
-var _index = __webpack_require__(52);
+var _index = __webpack_require__(51);
 const CLEAR_KEYS = ["tokens", "start", "end", "loc", "raw", "rawValue"];
 const CLEAR_KEYS_PLUS_COMMENTS = [..._index.COMMENT_KEYS, "comments", ...CLEAR_KEYS];
 function removeProperties(node, opts = {}) {
@@ -33906,7 +33793,7 @@ function removeProperties(node, opts = {}) {
 
 
 /***/ }),
-/* 95 */
+/* 94 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33916,8 +33803,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _index = __webpack_require__(33);
-var _index2 = __webpack_require__(39);
+var _index = __webpack_require__(32);
+var _index2 = __webpack_require__(38);
 var _default = exports["default"] = toStatement;
 function toStatement(node, ignore) {
   if ((0, _index.isStatement)(node)) {
@@ -33952,7 +33839,7 @@ function toStatement(node, ignore) {
 
 
 /***/ }),
-/* 96 */
+/* 95 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -33962,8 +33849,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _isValidIdentifier = __webpack_require__(47);
-var _index = __webpack_require__(39);
+var _isValidIdentifier = __webpack_require__(46);
+var _index = __webpack_require__(38);
 var _default = exports["default"] = valueToNode;
 const objectToString = Function.call.bind(Object.prototype.toString);
 function isRegExp(value) {
@@ -34048,7 +33935,7 @@ function valueToNode(value) {
 
 
 /***/ }),
-/* 97 */
+/* 96 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34058,7 +33945,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = appendToMemberExpression;
-var _index = __webpack_require__(39);
+var _index = __webpack_require__(38);
 function appendToMemberExpression(member, append, computed = false) {
   member.object = (0, _index.memberExpression)(member.object, member.property, member.computed);
   member.property = append;
@@ -34070,7 +33957,7 @@ function appendToMemberExpression(member, append, computed = false) {
 
 
 /***/ }),
-/* 98 */
+/* 97 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34080,8 +33967,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = inherits;
-var _index = __webpack_require__(52);
-var _inheritsComments = __webpack_require__(81);
+var _index = __webpack_require__(51);
+var _inheritsComments = __webpack_require__(80);
 function inherits(child, parent) {
   if (!child || !parent) return child;
   for (const key of _index.INHERIT_KEYS.optional) {
@@ -34105,7 +33992,7 @@ function inherits(child, parent) {
 
 
 /***/ }),
-/* 99 */
+/* 98 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34115,8 +34002,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = prependToMemberExpression;
-var _index = __webpack_require__(39);
-var _index2 = __webpack_require__(29);
+var _index = __webpack_require__(38);
+var _index2 = __webpack_require__(28);
 function prependToMemberExpression(member, prepend) {
   if ((0, _index2.isSuper)(member.object)) {
     throw new Error("Cannot prepend node to super property access (`super.foo`).");
@@ -34129,7 +34016,7 @@ function prependToMemberExpression(member, prepend) {
 
 
 /***/ }),
-/* 100 */
+/* 99 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -34184,7 +34071,7 @@ function getAssignmentIdentifiers(node) {
 
 
 /***/ }),
-/* 101 */
+/* 100 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34194,7 +34081,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = getBindingIdentifiers;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function getBindingIdentifiers(node, duplicates, outerOnly, newBindingsOnly) {
   const search = [].concat(node);
   const ids = Object.create(null);
@@ -34293,7 +34180,7 @@ getBindingIdentifiers.keys = keys;
 
 
 /***/ }),
-/* 102 */
+/* 101 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34303,7 +34190,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _getBindingIdentifiers = __webpack_require__(101);
+var _getBindingIdentifiers = __webpack_require__(100);
 var _default = exports["default"] = getOuterBindingIdentifiers;
 function getOuterBindingIdentifiers(node, duplicates) {
   return (0, _getBindingIdentifiers.default)(node, duplicates, true);
@@ -34313,7 +34200,7 @@ function getOuterBindingIdentifiers(node, duplicates) {
 
 
 /***/ }),
-/* 103 */
+/* 102 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34323,7 +34210,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = getFunctionName;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function getNameFromLiteralId(id) {
   if ((0, _index.isNullLiteral)(id)) {
     return "null";
@@ -34383,7 +34270,7 @@ function getFunctionName(node, parent) {
 
 
 /***/ }),
-/* 104 */
+/* 103 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34393,7 +34280,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = traverse;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 function traverse(node, handlers, state) {
   if (typeof handlers === "function") {
     handlers = {
@@ -34440,7 +34327,7 @@ function traverseSimpleImpl(node, enter, exit, state, ancestors) {
 
 
 /***/ }),
-/* 105 */
+/* 104 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34450,7 +34337,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isBinding;
-var _getBindingIdentifiers = __webpack_require__(101);
+var _getBindingIdentifiers = __webpack_require__(100);
 function isBinding(node, parent, grandparent) {
   if (grandparent && node.type === "Identifier" && parent.type === "ObjectProperty" && grandparent.type === "ObjectExpression") {
     return false;
@@ -34474,7 +34361,7 @@ function isBinding(node, parent, grandparent) {
 
 
 /***/ }),
-/* 106 */
+/* 105 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34484,8 +34371,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isBlockScoped;
-var _index = __webpack_require__(33);
-var _isLet = __webpack_require__(107);
+var _index = __webpack_require__(32);
+var _isLet = __webpack_require__(106);
 function isBlockScoped(node) {
   return (0, _index.isFunctionDeclaration)(node) || (0, _index.isClassDeclaration)(node) || (0, _isLet.default)(node);
 }
@@ -34494,7 +34381,7 @@ function isBlockScoped(node) {
 
 
 /***/ }),
-/* 107 */
+/* 106 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34504,7 +34391,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isLet;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 {
   var BLOCK_SCOPED_SYMBOL = Symbol.for("var used to be block scoped");
 }
@@ -34518,7 +34405,7 @@ function isLet(node) {
 
 
 /***/ }),
-/* 108 */
+/* 107 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34528,8 +34415,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isImmutable;
-var _isType = __webpack_require__(45);
-var _index = __webpack_require__(33);
+var _isType = __webpack_require__(44);
+var _index = __webpack_require__(32);
 function isImmutable(node) {
   if ((0, _isType.default)(node.type, "Immutable")) return true;
   if ((0, _index.isIdentifier)(node)) {
@@ -34546,7 +34433,7 @@ function isImmutable(node) {
 
 
 /***/ }),
-/* 109 */
+/* 108 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34556,7 +34443,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isNodesEquivalent;
-var _index = __webpack_require__(42);
+var _index = __webpack_require__(41);
 function isNodesEquivalent(a, b) {
   if (typeof a !== "object" || typeof b !== "object" || a == null || b == null) {
     return a === b;
@@ -34610,7 +34497,7 @@ function isNodesEquivalent(a, b) {
 
 
 /***/ }),
-/* 110 */
+/* 109 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -34713,7 +34600,7 @@ function isReferenced(node, parent, grandparent) {
 
 
 /***/ }),
-/* 111 */
+/* 110 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34723,7 +34610,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isScope;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function isScope(node, parent) {
   if ((0, _index.isBlockStatement)(node) && ((0, _index.isFunction)(parent) || (0, _index.isCatchClause)(parent))) {
     return false;
@@ -34738,7 +34625,7 @@ function isScope(node, parent) {
 
 
 /***/ }),
-/* 112 */
+/* 111 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34748,7 +34635,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = isSpecifierDefault;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 function isSpecifierDefault(specifier) {
   return (0, _index.isImportDefaultSpecifier)(specifier) || (0, _index.isIdentifier)(specifier.imported || specifier.exported, {
     name: "default"
@@ -34756,6 +34643,26 @@ function isSpecifierDefault(specifier) {
 }
 
 //# sourceMappingURL=isSpecifierDefault.js.map
+
+
+/***/ }),
+/* 112 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = isValidES3Identifier;
+var _isValidIdentifier = __webpack_require__(46);
+const RESERVED_WORDS_ES3_ONLY = new Set(["abstract", "boolean", "byte", "char", "double", "enum", "final", "float", "goto", "implements", "int", "interface", "long", "native", "package", "private", "protected", "public", "short", "static", "synchronized", "throws", "transient", "volatile"]);
+function isValidES3Identifier(name) {
+  return (0, _isValidIdentifier.default)(name) && !RESERVED_WORDS_ES3_ONLY.has(name);
+}
+
+//# sourceMappingURL=isValidES3Identifier.js.map
 
 
 /***/ }),
@@ -34768,28 +34675,8 @@ function isSpecifierDefault(specifier) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports["default"] = isValidES3Identifier;
-var _isValidIdentifier = __webpack_require__(47);
-const RESERVED_WORDS_ES3_ONLY = new Set(["abstract", "boolean", "byte", "char", "double", "enum", "final", "float", "goto", "implements", "int", "interface", "long", "native", "package", "private", "protected", "public", "short", "static", "synchronized", "throws", "transient", "volatile"]);
-function isValidES3Identifier(name) {
-  return (0, _isValidIdentifier.default)(name) && !RESERVED_WORDS_ES3_ONLY.has(name);
-}
-
-//# sourceMappingURL=isValidES3Identifier.js.map
-
-
-/***/ }),
-/* 114 */
-/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
 exports["default"] = isVar;
-var _index = __webpack_require__(33);
+var _index = __webpack_require__(32);
 {
   var BLOCK_SCOPED_SYMBOL = Symbol.for("var used to be block scoped");
 }
@@ -34805,7 +34692,7 @@ function isVar(node) {
 
 
 /***/ }),
-/* 115 */
+/* 114 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34815,7 +34702,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = toSequenceExpression;
-var _gatherSequenceExpressions = __webpack_require__(116);
+var _gatherSequenceExpressions = __webpack_require__(115);
 ;
 function toSequenceExpression(nodes, scope) {
   if (!(nodes != null && nodes.length)) return;
@@ -34832,7 +34719,7 @@ function toSequenceExpression(nodes, scope) {
 
 
 /***/ }),
-/* 116 */
+/* 115 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34842,11 +34729,11 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = gatherSequenceExpressions;
-var _getBindingIdentifiers = __webpack_require__(101);
-var _index = __webpack_require__(33);
-var _index2 = __webpack_require__(39);
-var _productions = __webpack_require__(70);
-var _cloneNode = __webpack_require__(71);
+var _getBindingIdentifiers = __webpack_require__(100);
+var _index = __webpack_require__(32);
+var _index2 = __webpack_require__(38);
+var _productions = __webpack_require__(69);
+var _cloneNode = __webpack_require__(70);
 ;
 function gatherSequenceExpressions(nodes, declars) {
   const exprs = [];
@@ -34905,7 +34792,7 @@ function gatherSequenceExpressions(nodes, declars) {
 
 
 /***/ }),
-/* 117 */
+/* 116 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -34919,10 +34806,10 @@ exports.explode = explode$1;
 exports.isExplodedVisitor = isExplodedVisitor;
 exports.merge = merge;
 exports.verify = verify$1;
-var virtualTypes = __webpack_require__(15);
-var virtualTypesValidators = __webpack_require__(118);
-var _t = __webpack_require__(29);
-var _context = __webpack_require__(11);
+var virtualTypes = __webpack_require__(14);
+var virtualTypesValidators = __webpack_require__(117);
+var _t = __webpack_require__(28);
+var _context = __webpack_require__(10);
 const {
   DEPRECATED_KEYS,
   DEPRECATED_ALIASES,
@@ -35170,7 +35057,7 @@ function environmentVisitor(visitor) {
 
 
 /***/ }),
-/* 118 */
+/* 117 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -35195,7 +35082,7 @@ exports.isSpreadProperty = isSpreadProperty;
 exports.isStatement = isStatement;
 exports.isUser = isUser;
 exports.isVar = isVar;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   isBinding,
   isBlockScoped: nodeIsBlockScoped,
@@ -35340,7 +35227,7 @@ function isForAwaitStatement() {
 
 
 /***/ }),
-/* 119 */
+/* 118 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -35431,7 +35318,7 @@ function isInitInLoop(path) {
 
 
 /***/ }),
-/* 120 */
+/* 119 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -35476,21 +35363,21 @@ function getOrCreateCachedPaths(node, parentPath) {
 
 
 /***/ }),
-/* 121 */
+/* 120 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = /*#__PURE__*/JSON.parse('["decodeURI","decodeURIComponent","encodeURI","encodeURIComponent","escape","eval","globalThis","isFinite","isNaN","parseFloat","parseInt","undefined","unescape"]');
 
 /***/ }),
-/* 122 */
+/* 121 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = /*#__PURE__*/JSON.parse('["AggregateError","Array","ArrayBuffer","Atomics","BigInt","BigInt64Array","BigUint64Array","Boolean","DataView","Date","Error","EvalError","FinalizationRegistry","Float16Array","Float32Array","Float64Array","Function","Infinity","Int16Array","Int32Array","Int8Array","Intl","Iterator","JSON","Map","Math","NaN","Number","Object","Promise","Proxy","RangeError","ReferenceError","Reflect","RegExp","Set","SharedArrayBuffer","String","Symbol","SyntaxError","TypeError","Uint16Array","Uint32Array","Uint8Array","Uint8ClampedArray","URIError","WeakMap","WeakRef","WeakSet"]');
 
 /***/ }),
-/* 123 */
+/* 122 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -35501,8 +35388,8 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports["default"] = void 0;
 exports.generate = generate;
-var _sourceMap = __webpack_require__(124);
-var _printer = __webpack_require__(129);
+var _sourceMap = __webpack_require__(123);
+var _printer = __webpack_require__(128);
 function normalizeOptions(code, opts, ast) {
   if (opts.experimental_preserveFormat) {
     if (typeof code !== "string") {
@@ -35609,7 +35496,7 @@ var _default = exports["default"] = generate;
 
 
 /***/ }),
-/* 124 */
+/* 123 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -35619,8 +35506,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _genMapping = __webpack_require__(125);
-var _traceMapping = __webpack_require__(127);
+var _genMapping = __webpack_require__(124);
+var _traceMapping = __webpack_require__(126);
 class SourceMap {
   constructor(opts, code) {
     var _opts$sourceFileName;
@@ -35701,13 +35588,13 @@ exports["default"] = SourceMap;
 
 
 /***/ }),
-/* 125 */
+/* 124 */
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 /* module decorator */ module = __webpack_require__.nmd(module);
 (function (global, factory) {
   if (true) {
-    factory(module, __webpack_require__(126), __webpack_require__(127));
+    factory(module, __webpack_require__(125), __webpack_require__(126));
     module.exports = def(module);
   } else // removed by dead control flow
 {}
@@ -36057,7 +35944,7 @@ function addMappingInternal(skipable, map, mapping) {
 
 
 /***/ }),
-/* 126 */
+/* 125 */
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 /* module decorator */ module = __webpack_require__.nmd(module);
@@ -36519,13 +36406,13 @@ function encode(decoded) {
 
 
 /***/ }),
-/* 127 */
+/* 126 */
 /***/ (function(module, __unused_webpack_exports, __webpack_require__) {
 
 /* module decorator */ module = __webpack_require__.nmd(module);
 (function (global, factory) {
   if (true) {
-    factory(module, __webpack_require__(128), __webpack_require__(126));
+    factory(module, __webpack_require__(127), __webpack_require__(125));
     module.exports = def(module);
   } else // removed by dead control flow
 {}
@@ -37076,7 +36963,7 @@ function generatedPosition(map, source, line, column, bias, all) {
 
 
 /***/ }),
-/* 128 */
+/* 127 */
 /***/ (function(module) {
 
 (function (global, factory) {
@@ -37321,7 +37208,7 @@ function generatedPosition(map, source, line, column, bias, all) {
 
 
 /***/ }),
-/* 129 */
+/* 128 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -37331,13 +37218,13 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _buffer = __webpack_require__(130);
-var _index = __webpack_require__(131);
+var _buffer = __webpack_require__(129);
+var _index = __webpack_require__(130);
 var n = _index;
-var _t = __webpack_require__(29);
-var _tokenMap = __webpack_require__(134);
-var generatorFunctions = __webpack_require__(135);
-var _deprecated = __webpack_require__(148);
+var _t = __webpack_require__(28);
+var _tokenMap = __webpack_require__(133);
+var generatorFunctions = __webpack_require__(134);
+var _deprecated = __webpack_require__(147);
 const {
   isExpression,
   isFunction,
@@ -38109,7 +37996,7 @@ function commaSeparator(occurrenceCount, last) {
 
 
 /***/ }),
-/* 130 */
+/* 129 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -38433,7 +38320,7 @@ exports["default"] = Buffer;
 
 
 /***/ }),
-/* 131 */
+/* 130 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -38448,9 +38335,9 @@ exports.needsParens = needsParens;
 exports.needsWhitespace = needsWhitespace;
 exports.needsWhitespaceAfter = needsWhitespaceAfter;
 exports.needsWhitespaceBefore = needsWhitespaceBefore;
-var whitespace = __webpack_require__(132);
-var parens = __webpack_require__(133);
-var _t = __webpack_require__(29);
+var whitespace = __webpack_require__(131);
+var parens = __webpack_require__(132);
+var _t = __webpack_require__(28);
 const {
   FLIPPED_ALIAS_KEYS,
   VISITOR_KEYS,
@@ -38562,7 +38449,7 @@ function isLastChild(parent, child) {
 
 
 /***/ }),
-/* 132 */
+/* 131 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -38572,7 +38459,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.nodes = void 0;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   FLIPPED_ALIAS_KEYS,
   isArrayExpression,
@@ -38714,7 +38601,7 @@ nodes.ObjectTypeInternalSlot = function (node, parent) {
 
 
 /***/ }),
-/* 133 */
+/* 132 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -38750,8 +38637,8 @@ exports.TSUnionType = TSUnionType;
 exports.IntersectionTypeAnnotation = exports.UnionTypeAnnotation = UnionTypeAnnotation;
 exports.UpdateExpression = UpdateExpression;
 exports.AwaitExpression = exports.YieldExpression = YieldExpression;
-var _t = __webpack_require__(29);
-var _index = __webpack_require__(131);
+var _t = __webpack_require__(28);
+var _index = __webpack_require__(130);
 const {
   isArrayTypeAnnotation,
   isBinaryExpression,
@@ -38983,7 +38870,7 @@ function Identifier(node, parent, tokenContext, getRawIdentifier) {
 
 
 /***/ }),
-/* 134 */
+/* 133 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -38993,7 +38880,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.TokenMap = void 0;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   traverseFast,
   VISITOR_KEYS
@@ -39181,7 +39068,7 @@ function* childrenIterator(node) {
 
 
 /***/ }),
-/* 135 */
+/* 134 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -39190,7 +39077,7 @@ function* childrenIterator(node) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-var _templateLiterals = __webpack_require__(136);
+var _templateLiterals = __webpack_require__(135);
 Object.keys(_templateLiterals).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _templateLiterals[key]) return;
@@ -39201,7 +39088,7 @@ Object.keys(_templateLiterals).forEach(function (key) {
     }
   });
 });
-var _expressions = __webpack_require__(137);
+var _expressions = __webpack_require__(136);
 Object.keys(_expressions).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _expressions[key]) return;
@@ -39212,7 +39099,7 @@ Object.keys(_expressions).forEach(function (key) {
     }
   });
 });
-var _statements = __webpack_require__(138);
+var _statements = __webpack_require__(137);
 Object.keys(_statements).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _statements[key]) return;
@@ -39223,7 +39110,7 @@ Object.keys(_statements).forEach(function (key) {
     }
   });
 });
-var _classes = __webpack_require__(139);
+var _classes = __webpack_require__(138);
 Object.keys(_classes).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _classes[key]) return;
@@ -39234,7 +39121,7 @@ Object.keys(_classes).forEach(function (key) {
     }
   });
 });
-var _methods = __webpack_require__(140);
+var _methods = __webpack_require__(139);
 Object.keys(_methods).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _methods[key]) return;
@@ -39245,7 +39132,7 @@ Object.keys(_methods).forEach(function (key) {
     }
   });
 });
-var _modules = __webpack_require__(141);
+var _modules = __webpack_require__(140);
 Object.keys(_modules).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _modules[key]) return;
@@ -39256,7 +39143,7 @@ Object.keys(_modules).forEach(function (key) {
     }
   });
 });
-var _types = __webpack_require__(142);
+var _types = __webpack_require__(141);
 Object.keys(_types).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _types[key]) return;
@@ -39267,7 +39154,7 @@ Object.keys(_types).forEach(function (key) {
     }
   });
 });
-var _flow = __webpack_require__(144);
+var _flow = __webpack_require__(143);
 Object.keys(_flow).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _flow[key]) return;
@@ -39278,7 +39165,7 @@ Object.keys(_flow).forEach(function (key) {
     }
   });
 });
-var _base = __webpack_require__(145);
+var _base = __webpack_require__(144);
 Object.keys(_base).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _base[key]) return;
@@ -39289,7 +39176,7 @@ Object.keys(_base).forEach(function (key) {
     }
   });
 });
-var _jsx = __webpack_require__(146);
+var _jsx = __webpack_require__(145);
 Object.keys(_jsx).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _jsx[key]) return;
@@ -39300,7 +39187,7 @@ Object.keys(_jsx).forEach(function (key) {
     }
   });
 });
-var _typescript = __webpack_require__(147);
+var _typescript = __webpack_require__(146);
 Object.keys(_typescript).forEach(function (key) {
   if (key === "default" || key === "__esModule") return;
   if (key in exports && exports[key] === _typescript[key]) return;
@@ -39316,7 +39203,7 @@ Object.keys(_typescript).forEach(function (key) {
 
 
 /***/ }),
-/* 136 */
+/* 135 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -39363,7 +39250,7 @@ function TemplateLiteral(node) {
 
 
 /***/ }),
-/* 137 */
+/* 136 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -39399,8 +39286,8 @@ exports.UpdateExpression = UpdateExpression;
 exports.V8IntrinsicIdentifier = V8IntrinsicIdentifier;
 exports.YieldExpression = YieldExpression;
 exports._shouldPrintDecoratorsBeforeExport = _shouldPrintDecoratorsBeforeExport;
-var _t = __webpack_require__(29);
-var _index = __webpack_require__(131);
+var _t = __webpack_require__(28);
+var _index = __webpack_require__(130);
 const {
   isCallExpression,
   isLiteral,
@@ -39670,7 +39557,7 @@ function ModuleExpression(node) {
 
 
 /***/ }),
-/* 138 */
+/* 137 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -39697,7 +39584,7 @@ exports.VariableDeclaration = VariableDeclaration;
 exports.VariableDeclarator = VariableDeclarator;
 exports.WhileStatement = WhileStatement;
 exports.WithStatement = WithStatement;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   isFor,
   isForStatement,
@@ -39956,7 +39843,7 @@ function VariableDeclarator(node) {
 
 
 /***/ }),
-/* 139 */
+/* 138 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -39974,7 +39861,7 @@ exports.ClassPrivateProperty = ClassPrivateProperty;
 exports.ClassProperty = ClassProperty;
 exports.StaticBlock = StaticBlock;
 exports._classMethodHead = _classMethodHead;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   isExportDefaultDeclaration,
   isExportNamedDeclaration
@@ -40175,7 +40062,7 @@ function StaticBlock(node) {
 
 
 /***/ }),
-/* 140 */
+/* 139 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -40193,8 +40080,8 @@ exports._parameters = _parameters;
 exports._params = _params;
 exports._predicate = _predicate;
 exports._shouldPrintArrowParamsParens = _shouldPrintArrowParamsParens;
-var _t = __webpack_require__(29);
-var _index = __webpack_require__(131);
+var _t = __webpack_require__(28);
+var _index = __webpack_require__(130);
 const {
   isIdentifier
 } = _t;
@@ -40380,7 +40267,7 @@ function _getFuncIdName(idNode, parent) {
 
 
 /***/ }),
-/* 141 */
+/* 140 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -40402,8 +40289,8 @@ exports.ImportExpression = ImportExpression;
 exports.ImportNamespaceSpecifier = ImportNamespaceSpecifier;
 exports.ImportSpecifier = ImportSpecifier;
 exports._printAttributes = _printAttributes;
-var _t = __webpack_require__(29);
-var _index = __webpack_require__(131);
+var _t = __webpack_require__(28);
+var _index = __webpack_require__(130);
 const {
   isClassDeclaration,
   isExportDefaultSpecifier,
@@ -40674,7 +40561,7 @@ function ImportExpression(node) {
 
 
 /***/ }),
-/* 142 */
+/* 141 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -40704,8 +40591,8 @@ exports.TopicReference = TopicReference;
 exports.TupleExpression = TupleExpression;
 exports.VoidPattern = VoidPattern;
 exports._getRawIdentifier = _getRawIdentifier;
-var _t = __webpack_require__(29);
-var _jsesc = __webpack_require__(143);
+var _t = __webpack_require__(28);
+var _jsesc = __webpack_require__(142);
 const {
   isAssignmentPattern,
   isIdentifier
@@ -40919,7 +40806,7 @@ function VoidPattern() {
 
 
 /***/ }),
-/* 143 */
+/* 142 */
 /***/ ((module) => {
 
 "use strict";
@@ -41263,7 +41150,7 @@ module.exports = jsesc;
 
 
 /***/ }),
-/* 144 */
+/* 143 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -41346,10 +41233,10 @@ exports.Variance = Variance;
 exports.VoidTypeAnnotation = VoidTypeAnnotation;
 exports._interfaceish = _interfaceish;
 exports._variance = _variance;
-var _t = __webpack_require__(29);
-var _modules = __webpack_require__(141);
-var _index = __webpack_require__(131);
-var _types2 = __webpack_require__(142);
+var _t = __webpack_require__(28);
+var _modules = __webpack_require__(140);
+var _index = __webpack_require__(130);
+var _types2 = __webpack_require__(141);
 const {
   isDeclareExportDeclaration,
   isStatement
@@ -41930,7 +41817,7 @@ function OptionalIndexedAccessType(node) {
 
 
 /***/ }),
-/* 145 */
+/* 144 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -42024,7 +41911,7 @@ function Placeholder(node) {
 
 
 /***/ }),
-/* 146 */
+/* 145 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -42157,7 +42044,7 @@ function JSXClosingFragment() {
 
 
 /***/ }),
-/* 147 */
+/* 146 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -42888,7 +42775,7 @@ function printModifiersList(printer, node, modifiers) {
 
 
 /***/ }),
-/* 148 */
+/* 147 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -42923,7 +42810,7 @@ function addDeprecatedGenerators(PrinterClass) {
 
 
 /***/ }),
-/* 149 */
+/* 148 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -42942,7 +42829,7 @@ exports.getStatementParent = getStatementParent;
 exports.inType = inType;
 exports.isAncestor = isAncestor;
 exports.isDescendant = isDescendant;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   VISITOR_KEYS
 } = _t;
@@ -43069,7 +42956,7 @@ function inType(...candidateTypes) {
 
 
 /***/ }),
-/* 150 */
+/* 149 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -43084,8 +42971,8 @@ exports.couldBeBaseType = couldBeBaseType;
 exports.getTypeAnnotation = getTypeAnnotation;
 exports.isBaseType = isBaseType;
 exports.isGenericType = isGenericType;
-var inferers = __webpack_require__(151);
-var _t = __webpack_require__(29);
+var inferers = __webpack_require__(150);
+var _t = __webpack_require__(28);
 const {
   anyTypeAnnotation,
   isAnyTypeAnnotation,
@@ -43225,7 +43112,7 @@ function isGenericType(genericName) {
 
 
 /***/ }),
-/* 151 */
+/* 150 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -43265,9 +43152,9 @@ exports.TypeCastExpression = TypeCastExpression;
 exports.UnaryExpression = UnaryExpression;
 exports.UpdateExpression = UpdateExpression;
 exports.VariableDeclarator = VariableDeclarator;
-var _t = __webpack_require__(29);
-var _infererReference = __webpack_require__(152);
-var _util = __webpack_require__(153);
+var _t = __webpack_require__(28);
+var _infererReference = __webpack_require__(151);
+var _util = __webpack_require__(152);
 const {
   BOOLEAN_BINARY_OPERATORS,
   BOOLEAN_UNARY_OPERATORS,
@@ -43439,7 +43326,7 @@ function resolveCall(callee) {
 
 
 /***/ }),
-/* 152 */
+/* 151 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -43449,8 +43336,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = _default;
-var _t = __webpack_require__(29);
-var _util = __webpack_require__(153);
+var _t = __webpack_require__(28);
+var _util = __webpack_require__(152);
 const {
   BOOLEAN_NUMBER_BINARY_OPERATORS,
   createTypeAnnotationBasedOnTypeof,
@@ -43597,7 +43484,7 @@ function getConditionalAnnotation(binding, path, name) {
 
 
 /***/ }),
-/* 153 */
+/* 152 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -43607,7 +43494,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.createUnionType = createUnionType;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   createFlowUnionType,
   createTSUnionType,
@@ -43634,7 +43521,7 @@ function createUnionType(types) {
 
 
 /***/ }),
-/* 154 */
+/* 153 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -43649,14 +43536,14 @@ exports.replaceInline = replaceInline;
 exports.replaceWith = replaceWith;
 exports.replaceWithMultiple = replaceWithMultiple;
 exports.replaceWithSourceString = replaceWithSourceString;
-var _codeFrame = __webpack_require__(155);
-var _index = __webpack_require__(10);
-var _index2 = __webpack_require__(14);
-var _cache = __webpack_require__(120);
-var _modification = __webpack_require__(158);
-var _parser = __webpack_require__(9);
-var _t = __webpack_require__(29);
-var _context = __webpack_require__(11);
+var _codeFrame = __webpack_require__(154);
+var _index = __webpack_require__(9);
+var _index2 = __webpack_require__(13);
+var _cache = __webpack_require__(119);
+var _modification = __webpack_require__(157);
+var _parser = __webpack_require__(8);
+var _t = __webpack_require__(28);
+var _context = __webpack_require__(10);
 const {
   FUNCTION_TYPES,
   arrowFunctionExpression,
@@ -43904,7 +43791,7 @@ function replaceInline(nodes) {
 
 
 /***/ }),
-/* 155 */
+/* 154 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -43912,9 +43799,9 @@ function replaceInline(nodes) {
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 
-var picocolors = __webpack_require__(156);
-var jsTokens = __webpack_require__(157);
-var helperValidatorIdentifier = __webpack_require__(48);
+var picocolors = __webpack_require__(155);
+var jsTokens = __webpack_require__(156);
+var helperValidatorIdentifier = __webpack_require__(47);
 
 function isColorSupported() {
   return (typeof process === "object" && (process.env.FORCE_COLOR === "0" || process.env.FORCE_COLOR === "false") ? false : picocolors.isColorSupported
@@ -44127,7 +44014,7 @@ exports.highlight = highlight;
 
 
 /***/ }),
-/* 156 */
+/* 155 */
 /***/ ((module) => {
 
 let p = process || {}, argv = p.argv || [], env = p.env || {}
@@ -44208,7 +44095,7 @@ module.exports.createColors = createColors
 
 
 /***/ }),
-/* 157 */
+/* 156 */
 /***/ ((__unused_webpack_module, exports) => {
 
 // Copyright 2014, 2015, 2016, 2017, 2018 Simon Lydell
@@ -44237,7 +44124,7 @@ exports.matchToToken = function(match) {
 
 
 /***/ }),
-/* 158 */
+/* 157 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -44255,12 +44142,12 @@ exports.insertBefore = insertBefore;
 exports.pushContainer = pushContainer;
 exports.unshiftContainer = unshiftContainer;
 exports.updateSiblingKeys = updateSiblingKeys;
-var _cache = __webpack_require__(120);
-var _index = __webpack_require__(14);
-var _context = __webpack_require__(11);
-var _removal = __webpack_require__(159);
-var _t = __webpack_require__(29);
-var _hoister = __webpack_require__(161);
+var _cache = __webpack_require__(119);
+var _index = __webpack_require__(13);
+var _context = __webpack_require__(10);
+var _removal = __webpack_require__(158);
+var _t = __webpack_require__(28);
+var _hoister = __webpack_require__(160);
 const {
   arrowFunctionExpression,
   assertExpression,
@@ -44475,7 +44362,7 @@ function pushContainer(listKey, nodes) {
 
 
 /***/ }),
-/* 159 */
+/* 158 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -44490,13 +44377,13 @@ exports._markRemoved = _markRemoved;
 exports._remove = _remove;
 exports._removeFromScope = _removeFromScope;
 exports.remove = remove;
-var _removalHooks = __webpack_require__(160);
-var _cache = __webpack_require__(120);
-var _replacement = __webpack_require__(154);
-var _index = __webpack_require__(14);
-var _t = __webpack_require__(29);
-var _modification = __webpack_require__(158);
-var _context = __webpack_require__(11);
+var _removalHooks = __webpack_require__(159);
+var _cache = __webpack_require__(119);
+var _replacement = __webpack_require__(153);
+var _index = __webpack_require__(13);
+var _t = __webpack_require__(28);
+var _modification = __webpack_require__(157);
+var _context = __webpack_require__(10);
 const {
   getBindingIdentifiers
 } = _t;
@@ -44552,7 +44439,7 @@ function _assertUnremoved() {
 
 
 /***/ }),
-/* 160 */
+/* 159 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -44596,7 +44483,7 @@ const hooks = exports.hooks = [function (self, parent) {
 
 
 /***/ }),
-/* 161 */
+/* 160 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -44606,7 +44493,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = void 0;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 var _t2 = _t;
 const {
   react
@@ -44774,7 +44661,7 @@ exports["default"] = PathHoister;
 
 
 /***/ }),
-/* 162 */
+/* 161 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -45149,7 +45036,7 @@ function evaluate() {
 
 
 /***/ }),
-/* 163 */
+/* 162 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -45164,10 +45051,10 @@ exports.ensureFunctionName = ensureFunctionName;
 exports.splitExportDeclaration = splitExportDeclaration;
 exports.toComputedKey = toComputedKey;
 exports.unwrapFunctionEnvironment = unwrapFunctionEnvironment;
-var _t = __webpack_require__(29);
-var _template = __webpack_require__(164);
-var _visitors = __webpack_require__(117);
-var _context = __webpack_require__(11);
+var _t = __webpack_require__(28);
+var _template = __webpack_require__(163);
+var _visitors = __webpack_require__(116);
+var _context = __webpack_require__(10);
 const {
   arrowFunctionExpression,
   assignmentExpression,
@@ -45768,7 +45655,7 @@ function getFunctionArity(node) {
 
 
 /***/ }),
-/* 164 */
+/* 163 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -45778,8 +45665,8 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.statements = exports.statement = exports.smart = exports.program = exports.expression = exports["default"] = void 0;
-var formatters = __webpack_require__(165);
-var _builder = __webpack_require__(166);
+var formatters = __webpack_require__(164);
+var _builder = __webpack_require__(165);
 const smart = exports.smart = (0, _builder.default)(formatters.smart);
 const statement = exports.statement = (0, _builder.default)(formatters.statement);
 const statements = exports.statements = (0, _builder.default)(formatters.statements);
@@ -45798,7 +45685,7 @@ var _default = exports["default"] = Object.assign(smart.bind(undefined), {
 
 
 /***/ }),
-/* 165 */
+/* 164 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -45808,7 +45695,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports.statements = exports.statement = exports.smart = exports.program = exports.expression = void 0;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   assertExpressionStatement
 } = _t;
@@ -45866,7 +45753,7 @@ const program = exports.program = {
 
 
 /***/ }),
-/* 166 */
+/* 165 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -45876,9 +45763,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = createTemplateBuilder;
-var _options = __webpack_require__(167);
-var _string = __webpack_require__(168);
-var _literal = __webpack_require__(171);
+var _options = __webpack_require__(166);
+var _string = __webpack_require__(167);
+var _literal = __webpack_require__(170);
 const NO_PLACEHOLDER = (0, _options.validate)({
   placeholderPattern: false
 });
@@ -45942,7 +45829,7 @@ function extendedTrace(fn) {
 
 
 /***/ }),
-/* 167 */
+/* 166 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -46022,7 +45909,7 @@ function normalizeReplacements(replacements) {
 
 
 /***/ }),
-/* 168 */
+/* 167 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -46032,9 +45919,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = stringTemplate;
-var _options = __webpack_require__(167);
-var _parse = __webpack_require__(169);
-var _populate = __webpack_require__(170);
+var _options = __webpack_require__(166);
+var _parse = __webpack_require__(168);
+var _populate = __webpack_require__(169);
 function stringTemplate(formatter, code, opts) {
   code = formatter.code(code);
   let metadata;
@@ -46049,7 +45936,7 @@ function stringTemplate(formatter, code, opts) {
 
 
 /***/ }),
-/* 169 */
+/* 168 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -46059,9 +45946,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = parseAndBuildMetadata;
-var _t = __webpack_require__(29);
-var _parser = __webpack_require__(9);
-var _codeFrame = __webpack_require__(155);
+var _t = __webpack_require__(28);
+var _parser = __webpack_require__(8);
+var _codeFrame = __webpack_require__(154);
 const {
   isCallExpression,
   isExpressionStatement,
@@ -46219,7 +46106,7 @@ function parseWithCodeFrame(code, parserOpts, syntacticPlaceholders) {
 
 
 /***/ }),
-/* 170 */
+/* 169 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -46229,7 +46116,7 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = populatePlaceholders;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   blockStatement,
   cloneNode,
@@ -46364,7 +46251,7 @@ function applyReplacement(placeholder, ast, replacement) {
 
 
 /***/ }),
-/* 171 */
+/* 170 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -46374,9 +46261,9 @@ Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
 exports["default"] = literalTemplate;
-var _options = __webpack_require__(167);
-var _parse = __webpack_require__(169);
-var _populate = __webpack_require__(170);
+var _options = __webpack_require__(166);
+var _parse = __webpack_require__(168);
+var _populate = __webpack_require__(169);
 function literalTemplate(formatter, tpl, opts) {
   const {
     metadata,
@@ -46440,7 +46327,7 @@ function buildTemplateCode(tpl, prefix) {
 
 
 /***/ }),
-/* 172 */
+/* 171 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -46464,7 +46351,7 @@ exports.matchesPattern = matchesPattern;
 exports.referencesImport = referencesImport;
 exports.resolve = resolve;
 exports.willIMaybeExecuteBefore = willIMaybeExecuteBefore;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   STATEMENT_OR_BLOCK_KEYS,
   VISITOR_KEYS,
@@ -46845,7 +46732,7 @@ function isInStrictMode() {
 
 
 /***/ }),
-/* 173 */
+/* 172 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -46869,8 +46756,8 @@ exports.getOuterBindingIdentifierPaths = getOuterBindingIdentifierPaths;
 exports.getOuterBindingIdentifiers = getOuterBindingIdentifiers;
 exports.getPrevSibling = getPrevSibling;
 exports.getSibling = getSibling;
-var _index = __webpack_require__(14);
-var _t = __webpack_require__(29);
+var _index = __webpack_require__(13);
+var _t = __webpack_require__(28);
 const {
   getAssignmentIdentifiers: _getAssignmentIdentifiers,
   getBindingIdentifiers: _getBindingIdentifiers,
@@ -47198,7 +47085,7 @@ function getOuterBindingIdentifierPaths(duplicates = false) {
 
 
 /***/ }),
-/* 174 */
+/* 173 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
@@ -47210,7 +47097,7 @@ Object.defineProperty(exports, "__esModule", ({
 exports.addComment = addComment;
 exports.addComments = addComments;
 exports.shareCommentsWithSiblings = shareCommentsWithSiblings;
-var _t = __webpack_require__(29);
+var _t = __webpack_require__(28);
 const {
   addComment: _addComment,
   addComments: _addComments
@@ -47257,7 +47144,7 @@ function addComments(type, comments) {
 
 
 /***/ }),
-/* 175 */
+/* 174 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -47283,14 +47170,14 @@ exports["default"] = Hub;
 
 
 /***/ }),
-/* 176 */
+/* 175 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("fs");
 
 /***/ }),
-/* 177 */
+/* 176 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -47347,7 +47234,7 @@ exports.LRUCache = LRUCache;
 
 
 /***/ }),
-/* 178 */
+/* 177 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -47400,7 +47287,7 @@ function getXTemplateIdAtPosition(document, position) {
 
 
 /***/ }),
-/* 179 */
+/* 178 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47694,7 +47581,7 @@ async function withPerformanceMonitoring(operation, fn) {
 
 
 /***/ }),
-/* 180 */
+/* 179 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -47993,7 +47880,7 @@ function compressGeneric(text) {
 
 
 /***/ }),
-/* 181 */
+/* 180 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48044,7 +47931,7 @@ exports.showTemplateIndexSummary = showTemplateIndexSummary;
 exports.clearTemplateIndexCache = clearTemplateIndexCache;
 exports.getTemplateIndexCacheStats = getTemplateIndexCacheStats;
 const vscode = __importStar(__webpack_require__(2));
-const lruCache_1 = __webpack_require__(177);
+const lruCache_1 = __webpack_require__(176);
 function getMaxTemplateEntries() { try {
     return Math.max(10, vscode.workspace.getConfiguration('leidong-tools').get('maxTemplateIndexEntries', 50));
 }
@@ -48231,7 +48118,7 @@ function getTemplateIndexCacheStats() {
 
 
 /***/ }),
-/* 182 */
+/* 181 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -48276,7 +48163,7 @@ exports.FileWatchManager = void 0;
  * 用于监听 HTML 文件变化并自动更新对应的 JS 文件
  */
 const vscode = __importStar(__webpack_require__(2));
-const fs = __importStar(__webpack_require__(176));
+const fs = __importStar(__webpack_require__(175));
 const path = __importStar(__webpack_require__(3));
 /**
  * 文件监听管理器类
@@ -49053,7 +48940,7 @@ exports.FileWatchManager = FileWatchManager;
 
 
 /***/ }),
-/* 183 */
+/* 182 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -49102,8 +48989,8 @@ exports.GamePanel = exports.GameSidebarProvider = void 0;
  *   更新游戏只需部署服务器，无需重新发布扩展
  */
 const vscode = __importStar(__webpack_require__(2));
-const gameTypes_1 = __webpack_require__(184);
-const playerIdentity_1 = __webpack_require__(185);
+const gameTypes_1 = __webpack_require__(183);
+const playerIdentity_1 = __webpack_require__(184);
 /**
  * 游戏侧边栏 - 显示服务器连接和游戏入口
  */
@@ -49155,7 +49042,7 @@ class GameSidebarProvider {
     /** 检查服务器是否在线 */
     async _checkServer(url) {
         try {
-            const http = __webpack_require__(188);
+            const http = __webpack_require__(187);
             return new Promise((resolve) => {
                 const req = http.get(`${url}/api/status`, (res) => {
                     resolve(res.statusCode === 200);
@@ -49689,7 +49576,7 @@ exports.GamePanel = GamePanel;
 
 
 /***/ }),
-/* 184 */
+/* 183 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -49711,7 +49598,7 @@ exports.DEFAULT_SERVER_CONFIG = {
 
 
 /***/ }),
-/* 185 */
+/* 184 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -49768,8 +49655,8 @@ exports.changePlayerNickname = changePlayerNickname;
  * - nickname: 用户自定义昵称，首次使用时弹窗输入，缓存在 globalState 中
  */
 const vscode = __importStar(__webpack_require__(2));
-const os = __importStar(__webpack_require__(186));
-const crypto = __importStar(__webpack_require__(187));
+const os = __importStar(__webpack_require__(185));
+const crypto = __importStar(__webpack_require__(186));
 const NICKNAME_KEY = 'leidong-games.playerNickname';
 const UID_OVERRIDE_KEY = 'leidong-games.uidOverride';
 /** 全局 context 引用，由 activate 时注入 */
@@ -49903,28 +49790,28 @@ async function changePlayerNickname() {
 
 
 /***/ }),
-/* 186 */
+/* 185 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("os");
 
 /***/ }),
-/* 187 */
+/* 186 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("crypto");
 
 /***/ }),
-/* 188 */
+/* 187 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("http");
 
 /***/ }),
-/* 189 */
+/* 188 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -49977,7 +49864,7 @@ exports.GameManager = void 0;
  *   NO WebSocket, NO 房间管理, NO 游戏状态 —— 全在服务端
  */
 const vscode = __importStar(__webpack_require__(2));
-const gameTypes_1 = __webpack_require__(184);
+const gameTypes_1 = __webpack_require__(183);
 class GameManager {
     constructor() {
         const vsConfig = vscode.workspace.getConfiguration('leidong-tools');
@@ -50006,7 +49893,7 @@ class GameManager {
     async checkServer(url) {
         const target = url || this._config.httpUrl;
         try {
-            const http = __webpack_require__(188);
+            const http = __webpack_require__(187);
             return new Promise((resolve) => {
                 const req = http.get(`${target}/api/status`, (res) => {
                     resolve(res.statusCode === 200);
@@ -50027,7 +49914,7 @@ exports.GameManager = GameManager;
 
 
 /***/ }),
-/* 190 */
+/* 189 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50071,17 +49958,18 @@ exports.registerProviders = registerProviders;
  * Provider 注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
-const definitionProvider_1 = __webpack_require__(191);
-const hoverProvider_1 = __webpack_require__(197);
-const completionProvider_1 = __webpack_require__(199);
-const documentSymbolProvider_1 = __webpack_require__(201);
-const referenceProvider_1 = __webpack_require__(202);
-const codeLensProvider_1 = __webpack_require__(198);
-const colorProvider_1 = __webpack_require__(203);
-const variableIndexWebview_1 = __webpack_require__(204);
-const diagnosticsWebview_1 = __webpack_require__(205);
-const watchServiceTreeView_1 = __webpack_require__(206);
-const gameWebviewProvider_1 = __webpack_require__(183);
+const definitionProvider_1 = __webpack_require__(190);
+const hoverProvider_1 = __webpack_require__(196);
+const completionProvider_1 = __webpack_require__(197);
+const documentSymbolProvider_1 = __webpack_require__(204);
+const referenceProvider_1 = __webpack_require__(205);
+const codeLensProvider_1 = __webpack_require__(206);
+const colorProvider_1 = __webpack_require__(207);
+const copilotAnalyzer_1 = __webpack_require__(209);
+const variableIndexWebview_1 = __webpack_require__(199);
+const diagnosticsWebview_1 = __webpack_require__(200);
+const watchServiceTreeView_1 = __webpack_require__(201);
+const gameWebviewProvider_1 = __webpack_require__(182);
 const config_1 = __webpack_require__(5);
 /**
  * 注册所有 Language Providers
@@ -50132,19 +50020,26 @@ function registerProviders(context, fileWatchManager) {
         { scheme: 'file', language: 'javascript' },
         { scheme: 'file', language: 'typescript' }
     ], new referenceProvider_1.VueReferenceProvider()));
-    // 注册 CodeLens 引用计数提供器
+    // 注册 CodeLens 引用计数提供器 (支持 JS/TS 以及 HTML 模板中的变量定义)
+    const codeLensProvider = new codeLensProvider_1.VueCodeLensProvider();
     context.subscriptions.push(vscode.languages.registerCodeLensProvider([
         { scheme: 'file', language: 'javascript' },
-        { scheme: 'file', language: 'typescript' }
-    ], new codeLensProvider_1.VueCodeLensProvider()));
+        { scheme: 'file', language: 'typescript' },
+        { scheme: 'file', language: 'html' },
+        { scheme: 'file', language: 'vue' }
+    ], codeLensProvider));
     // CodeLens right 模式：行末装饰更新钩子
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
         (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
     }), vscode.workspace.onDidSaveTextDocument(() => {
         (0, codeLensProvider_1.updateInlineRefDecorations)(vscode.window.activeTextEditor);
     }), vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('leidong-tools.enableCodeLens') || e.affectsConfiguration('leidong-tools.codeLensPosition')) {
+        if (e.affectsConfiguration('leidong-tools.enableCodeLens') ||
+            e.affectsConfiguration('leidong-tools.codeLensPosition') ||
+            e.affectsConfiguration('leidong-tools.enableAIAnalysis')) {
             const editor = vscode.window.activeTextEditor;
+            // 刷新 CodeLens 缓存
+            codeLensProvider.refresh();
             if (editor) {
                 (0, codeLensProvider_1.clearInlineRefDecorations)(editor);
                 (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
@@ -50158,6 +50053,8 @@ function registerProviders(context, fileWatchManager) {
         { scheme: 'file', language: 'html' },
         { scheme: 'file', language: 'css' }
     ], new colorProvider_1.VueColorProvider()));
+    // 注册 Copilot Chat 分析参与者
+    (0, copilotAnalyzer_1.registerCopilotAnalyzer)(context);
     // 注册侧边栏视图
     // 1. 变量索引 WebView（虚拟滚动，支持万级变量）
     const variableIndexProvider = new variableIndexWebview_1.VariableIndexWebviewProvider(context.extensionUri);
@@ -50182,14 +50079,14 @@ function registerProviders(context, fileWatchManager) {
 
 
 /***/ }),
-/* 191 */
+/* 190 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueHtmlDefinitionProvider = void 0;
-const enhancedDefinitionLogic_1 = __webpack_require__(192);
+const enhancedDefinitionLogic_1 = __webpack_require__(191);
 class VueHtmlDefinitionProvider {
     constructor() {
         this.definitionLogic = new enhancedDefinitionLogic_1.EnhancedDefinitionLogic();
@@ -50202,7 +50099,7 @@ exports.VueHtmlDefinitionProvider = VueHtmlDefinitionProvider;
 
 
 /***/ }),
-/* 192 */
+/* 191 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50254,12 +50151,12 @@ exports.enhancedDefinitionLogic = exports.EnhancedDefinitionLogic = void 0;
  * 保持向后兼容，同时提供更准确的解析
  */
 const vscode = __importStar(__webpack_require__(2));
-const performanceMonitor_1 = __webpack_require__(179);
-const jsSymbolParser_1 = __webpack_require__(193);
+const performanceMonitor_1 = __webpack_require__(178);
+const jsSymbolParser_1 = __webpack_require__(192);
 const parseDocument_1 = __webpack_require__(7);
-const templateIndexer_1 = __webpack_require__(181);
-const templateContext_1 = __webpack_require__(178);
-const templateLiteralHelper_1 = __webpack_require__(196);
+const templateIndexer_1 = __webpack_require__(180);
+const templateContext_1 = __webpack_require__(177);
+const templateLiteralHelper_1 = __webpack_require__(195);
 const HTML_ATTR_BLACKLIST = new Set([
     'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'type', 'value', 'name', 'placeholder', 'rel', 'for', 'aria-label'
 ]);
@@ -50606,7 +50503,7 @@ exports.enhancedDefinitionLogic = new EnhancedDefinitionLogic();
 
 
 /***/ }),
-/* 193 */
+/* 192 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50662,11 +50559,11 @@ exports.jsSymbolParser = exports.JSSymbolParser = exports.SymbolType = void 0;
  * @see https://github.com/Gerrnperl/outline-map
  */
 const vscode = __importStar(__webpack_require__(2));
-const resilientParse_1 = __webpack_require__(8);
-const traverse_1 = __importDefault(__webpack_require__(10));
-const t = __importStar(__webpack_require__(29));
-const cacheManager_1 = __webpack_require__(194);
-const performanceMonitor_1 = __webpack_require__(179);
+const resilientParse_1 = __webpack_require__(208);
+const traverse_1 = __importDefault(__webpack_require__(9));
+const t = __importStar(__webpack_require__(28));
+const cacheManager_1 = __webpack_require__(193);
+const performanceMonitor_1 = __webpack_require__(178);
 /**
  * 符号类型枚举
  */
@@ -51197,14 +51094,14 @@ exports.jsSymbolParser = new JSSymbolParser();
 
 
 /***/ }),
-/* 194 */
+/* 193 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.documentParseCache = exports.astIndexCache = exports.DocumentParseCacheManager = exports.ASTIndexCacheManager = exports.CacheManager = void 0;
-const errorHandler_1 = __webpack_require__(195);
+const errorHandler_1 = __webpack_require__(194);
 // 默认缓存配置
 const DEFAULT_CACHE_CONFIG = {
     maxSize: 1000,
@@ -51509,7 +51406,7 @@ exports.documentParseCache = DocumentParseCacheManager.getInstance();
 
 
 /***/ }),
-/* 195 */
+/* 194 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -51761,7 +51658,7 @@ function handleCacheError(error, operation) {
 
 
 /***/ }),
-/* 196 */
+/* 195 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -51996,7 +51893,7 @@ function isVueTemplateContext(linePrefix) {
 
 
 /***/ }),
-/* 197 */
+/* 196 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52038,11 +51935,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueHoverProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
-const templateIndexer_1 = __webpack_require__(181);
-const templateContext_1 = __webpack_require__(178);
-const jsSymbolParser_1 = __webpack_require__(193);
-const templateLiteralHelper_1 = __webpack_require__(196);
-const codeLensProvider_1 = __webpack_require__(198);
+const templateIndexer_1 = __webpack_require__(180);
+const templateContext_1 = __webpack_require__(177);
+const jsSymbolParser_1 = __webpack_require__(192);
+const templateLiteralHelper_1 = __webpack_require__(195);
+const codeLensProvider_1 = __webpack_require__(206);
 class VueHoverProvider {
     constructor() {
         this.hoverTimeout = null;
@@ -52270,371 +52167,7 @@ exports.VueHoverProvider = VueHoverProvider;
 
 
 /***/ }),
-/* 198 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VueCodeLensProvider = void 0;
-exports.computeRefCounts = computeRefCounts;
-exports.updateInlineRefDecorations = updateInlineRefDecorations;
-exports.clearInlineRefDecorations = clearInlineRefDecorations;
-exports.getRefCountAtLine = getRefCountAtLine;
-/**
- * CodeLensProvider - 模板引用计数
- * 支持3种显示位置：
- *   - above: 在定义行上方显示 CodeLens（默认）
- *   - right: 在定义行右侧显示行末装饰
- *   - hover: 仅在鼠标悬停时显示引用次数
- *
- * 可通过 enableCodeLens + codeLensPosition 配置
- */
-const vscode = __importStar(__webpack_require__(2));
-const parseDocument_1 = __webpack_require__(7);
-const fs = __importStar(__webpack_require__(176));
-const path = __importStar(__webpack_require__(3));
-/** Windows 下路径大小写不敏感的规范化 */
-function normalizePath(p) {
-    return path.normalize(p).toLowerCase();
-}
-// ─── 工具函数 ───
-function escapeRegex(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-/**
- * 在 HTML 文本中计算某标识符被引用的次数
- */
-function countReferencesInHtml(text, identifier) {
-    const escaped = escapeRegex(identifier);
-    let count = 0;
-    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
-    let m;
-    while ((m = mustacheRegex.exec(text)) !== null) {
-        const inner = m[1];
-        const idRegex = new RegExp(`\\b${escaped}\\b`, 'g');
-        let im;
-        while ((im = idRegex.exec(inner)) !== null) {
-            count++;
-        }
-    }
-    const attrPatterns = [
-        /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g,
-        /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g,
-        /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g,
-        /v-for\s*=\s*"([^"]+)"/g,
-        /v-model\s*=\s*"([^"]+)"/g,
-    ];
-    for (const pattern of attrPatterns) {
-        pattern.lastIndex = 0;
-        while ((m = pattern.exec(text)) !== null) {
-            const inner = m[1];
-            const idRegex = new RegExp(`\\b${escaped}\\b`, 'g');
-            let im;
-            while ((im = idRegex.exec(inner)) !== null) {
-                count++;
-            }
-        }
-    }
-    return count;
-}
-/**
- * 在 JS 文本中计算 this.xxx 的引用次数（排除定义行）
- */
-function countReferencesInJs(text, identifier, definitionLine) {
-    const escaped = escapeRegex(identifier);
-    const regex = new RegExp(`(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escaped}\\b`, 'g');
-    let count = 0;
-    const lines = text.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-        if (i === definitionLine) {
-            continue;
-        }
-        regex.lastIndex = 0;
-        let m;
-        while ((m = regex.exec(lines[i])) !== null) {
-            count++;
-        }
-    }
-    return count;
-}
-/**
- * 查找关联 HTML 文件
- * 1. 扫描所有已打开的 HTML 文档，通过 dev.js 关联反向查找
- * 2. 回退到目录约定查找
- */
-function findAssociatedHtmlForJs(jsFilePath) {
-    const normalizedJs = normalizePath(jsFilePath);
-    const seen = new Set();
-    const result = [];
-    const addFile = (filePath) => {
-        const n = normalizePath(filePath);
-        if (!seen.has(n) && fs.existsSync(filePath)) {
-            seen.add(n);
-            result.push(path.normalize(filePath));
-        }
-    };
-    // 方法 1：遍历已打开的 HTML 文档，检查 dev.js 关联
-    for (const doc of vscode.workspace.textDocuments) {
-        if (doc.languageId === 'html' && !doc.isClosed) {
-            try {
-                const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(doc);
-                for (const sp of scriptPaths) {
-                    if (normalizePath(sp) === normalizedJs) {
-                        addFile(doc.uri.fsPath);
-                    }
-                }
-            }
-            catch { /* ignore */ }
-        }
-    }
-    // 方法 2：基于目录约定
-    const dir = path.dirname(jsFilePath);
-    const parentDir = path.dirname(dir);
-    const baseName = path.basename(jsFilePath).replace(/\.dev\.js$/, '').replace(/\.js$/, '');
-    const candidates = [
-        path.join(parentDir, `${baseName}.html`),
-        path.join(parentDir, 'index.html'),
-        path.join(dir, `${baseName}.html`),
-    ];
-    for (const c of candidates) {
-        addFile(c);
-    }
-    return result;
-}
-/**
- * 计算文档中所有 Vue 成员的引用次数
- */
-function computeRefCounts(document) {
-    let vueIndex = null;
-    let htmlText = '';
-    let jsText = '';
-    try {
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-            jsText = document.getText();
-            vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(jsText, document.uri, 0);
-            const htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
-            const htmlFileSet = new Set(htmlFiles.map(f => normalizePath(f)));
-            for (const hf of htmlFiles) {
-                try {
-                    // 优先使用已打开的文档（获取最新编辑内容）
-                    const openDoc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed);
-                    htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
-                }
-                catch { /* */ }
-            }
-            // 补充：未被目录约定找到的、但已打开的 HTML 文档
-            for (const doc of vscode.workspace.textDocuments) {
-                if (doc.languageId === 'html' && !doc.isClosed
-                    && !htmlFileSet.has(normalizePath(doc.uri.fsPath))) {
-                    htmlText += doc.getText() + '\n';
-                }
-            }
-        }
-        else if (document.languageId === 'html') {
-            htmlText = document.getText();
-            vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
-            if (vueIndex) {
-                const firstDef = vueIndex.data.values().next().value || vueIndex.methods.values().next().value;
-                if (firstDef && firstDef.uri.fsPath !== document.uri.fsPath) {
-                    try {
-                        jsText = fs.readFileSync(firstDef.uri.fsPath, 'utf8');
-                    }
-                    catch { /* */ }
-                }
-            }
-        }
-    }
-    catch { /* */ }
-    if (!vueIndex) {
-        return null;
-    }
-    const infos = [];
-    const collect = (map, category) => {
-        map.forEach((loc, name) => {
-            if (loc.uri.fsPath !== document.uri.fsPath) {
-                return;
-            }
-            let count = 0;
-            if (htmlText) {
-                count += countReferencesInHtml(htmlText, name);
-            }
-            if (jsText) {
-                count += countReferencesInJs(jsText, name, loc.range.start.line);
-            }
-            infos.push({ name, category, count, line: loc.range.start.line, loc });
-        });
-    };
-    collect(vueIndex.data, 'data');
-    collect(vueIndex.methods, 'methods');
-    collect(vueIndex.computed, 'computed');
-    collect(vueIndex.props, 'props');
-    return infos;
-}
-// ─── CodeLens Provider (above 模式) ───
-class VueCodeLensProvider {
-    constructor() {
-        this._onDidChangeCodeLenses = new vscode.EventEmitter();
-        this.onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
-        this.cache = new Map();
-    }
-    refresh() {
-        this.cache.clear();
-        this._onDidChangeCodeLenses.fire();
-    }
-    provideCodeLenses(document, _token) {
-        const config = vscode.workspace.getConfiguration('leidong-tools');
-        if (!config.get('enableCodeLens', false)) {
-            return null;
-        }
-        const pos = config.get('codeLensPosition', 'above');
-        if (pos !== 'above') {
-            return null;
-        }
-        const cacheKey = document.uri.toString();
-        const cached = this.cache.get(cacheKey);
-        if (cached && cached.version === document.version) {
-            return cached.lenses;
-        }
-        const infos = computeRefCounts(document);
-        if (!infos) {
-            return null;
-        }
-        const lenses = [];
-        for (const info of infos) {
-            const range = new vscode.Range(info.line, 0, info.line, 0);
-            const title = info.count > 0 ? `引用 ${info.count} 次` : '未引用';
-            lenses.push(new vscode.CodeLens(range, {
-                title: `$(references) ${title}`,
-                command: info.count > 0 ? 'editor.action.findReferences' : '',
-                arguments: info.count > 0 ? [document.uri, info.loc.range.start] : undefined,
-                tooltip: `${info.category}.${info.name} - ${title}`
-            }));
-        }
-        this.cache.set(cacheKey, { version: document.version, lenses });
-        return lenses;
-    }
-}
-exports.VueCodeLensProvider = VueCodeLensProvider;
-// ─── Inline Decoration（right 模式）───
-const refCountDecorationType = vscode.window.createTextEditorDecorationType({
-    after: {
-        margin: '0 0 0 2em',
-        color: new vscode.ThemeColor('editorCodeLens.foreground'),
-        fontStyle: 'italic',
-    },
-    isWholeLine: false,
-});
-let decorationDebounce = null;
-/**
- * 更新右侧行末装饰 (right 模式)
- */
-function updateInlineRefDecorations(editor) {
-    if (!editor) {
-        return;
-    }
-    const config = vscode.workspace.getConfiguration('leidong-tools');
-    if (!config.get('enableCodeLens', false)) {
-        editor.setDecorations(refCountDecorationType, []);
-        return;
-    }
-    const pos = config.get('codeLensPosition', 'above');
-    if (pos !== 'right') {
-        editor.setDecorations(refCountDecorationType, []);
-        return;
-    }
-    if (decorationDebounce) {
-        clearTimeout(decorationDebounce);
-    }
-    decorationDebounce = setTimeout(() => {
-        const infos = computeRefCounts(editor.document);
-        if (!infos) {
-            editor.setDecorations(refCountDecorationType, []);
-            return;
-        }
-        const decorations = [];
-        for (const info of infos) {
-            const line = editor.document.lineAt(info.line);
-            const label = info.count > 0 ? `  // 引用 ${info.count} 次` : '  // 未引用';
-            decorations.push({
-                range: new vscode.Range(info.line, line.text.length, info.line, line.text.length),
-                renderOptions: {
-                    after: {
-                        contentText: label,
-                        color: info.count > 0
-                            ? new vscode.ThemeColor('editorCodeLens.foreground')
-                            : new vscode.ThemeColor('editorUnnecessaryCode.opacity'),
-                    }
-                },
-            });
-        }
-        editor.setDecorations(refCountDecorationType, decorations);
-    }, 800);
-}
-/**
- * 清除所有右侧装饰
- */
-function clearInlineRefDecorations(editor) {
-    if (editor) {
-        editor.setDecorations(refCountDecorationType, []);
-    }
-}
-// ─── Hover 模式：外部可调用获取引用计数 ───
-/**
- * 获取指定行的引用计数信息（hover 模式用）
- */
-function getRefCountAtLine(document, line) {
-    const config = vscode.workspace.getConfiguration('leidong-tools');
-    if (!config.get('enableCodeLens', false)) {
-        return null;
-    }
-    const pos = config.get('codeLensPosition', 'above');
-    if (pos !== 'hover') {
-        return null;
-    }
-    const infos = computeRefCounts(document);
-    if (!infos) {
-        return null;
-    }
-    return infos.find(i => i.line === line) || null;
-}
-
-
-/***/ }),
-/* 199 */
+/* 197 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52682,11 +52215,11 @@ exports.VonCompletionProvider = exports.HtmlVueCompletionProvider = exports.Java
  */
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
-const templateContext_1 = __webpack_require__(178);
-const propertyInference_1 = __webpack_require__(200);
-const templateLiteralHelper_1 = __webpack_require__(196);
-const templateIndexer_1 = __webpack_require__(181);
-const fs = __importStar(__webpack_require__(176));
+const templateContext_1 = __webpack_require__(177);
+const propertyInference_1 = __webpack_require__(198);
+const templateLiteralHelper_1 = __webpack_require__(195);
+const templateIndexer_1 = __webpack_require__(180);
+const fs = __importStar(__webpack_require__(175));
 /**
  * 快速日志补全提供器 (重写版)
  * 参考 jaluik/dot-log 实现，使用命令替换文本
@@ -53502,7 +53035,7 @@ exports.VonCompletionProvider = VonCompletionProvider;
 
 
 /***/ }),
-/* 200 */
+/* 198 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -53532,630 +53065,7 @@ function inferObjectProperties(text, root) {
 
 
 /***/ }),
-/* 201 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VueDocumentSymbolProvider = void 0;
-/**
- * DocumentSymbolProvider - Breadcrumb / Outline 增强
- * 让 VS Code 的面包屑导航和大纲视图 (Ctrl+Shift+O) 识别
- * Vue 2 CDN 文件的结构层级: data > props > methods > computed > watch > lifecycle > filters
- */
-const vscode = __importStar(__webpack_require__(2));
-const parseDocument_1 = __webpack_require__(7);
-class VueDocumentSymbolProvider {
-    provideDocumentSymbols(document, _token) {
-        const config = vscode.workspace.getConfiguration('leidong-tools');
-        if (!config.get('enableOutlineSymbols', false)) {
-            return null;
-        }
-        let vueIndex = null;
-        try {
-            if (document.languageId === 'html') {
-                vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
-            }
-            else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
-            }
-        }
-        catch { /* ignore */ }
-        if (!vueIndex) {
-            return null;
-        }
-        const symbols = [];
-        const docUri = document.uri;
-        // Helper: 从 Map 创建子 symbols
-        const buildChildren = (map, kind, detail, metaMap) => {
-            const children = [];
-            // 按行号排序
-            const sorted = Array.from(map.entries())
-                .filter(([_, loc]) => loc.uri.fsPath === docUri.fsPath)
-                .sort((a, b) => a[1].range.start.line - b[1].range.start.line);
-            for (const [name, loc] of sorted) {
-                const range = new vscode.Range(loc.range.start, new vscode.Position(loc.range.start.line, loc.range.start.character + name.length + 20));
-                const selRange = new vscode.Range(loc.range.start, new vscode.Position(loc.range.start.line, loc.range.start.character + name.length));
-                let detailStr = detail || '';
-                if (metaMap) {
-                    const meta = metaMap.get(name);
-                    if (meta) {
-                        if (meta.params?.length) {
-                            detailStr = `(${meta.params.join(', ')})`;
-                        }
-                        if (meta.type) {
-                            detailStr = meta.type;
-                        }
-                    }
-                }
-                children.push(new vscode.DocumentSymbol(name, detailStr, kind, range, selRange));
-            }
-            return children;
-        };
-        // Helper: 创建分类父节点
-        const addCategory = (name, icon, map, childKind, childDetail, metaMap) => {
-            if (map.size === 0) {
-                return;
-            }
-            const children = buildChildren(map, childKind, childDetail, metaMap);
-            if (children.length === 0) {
-                return;
-            }
-            // 分类节点使用第一个子节点到最后一个子节点的范围
-            const first = children[0].range.start;
-            const last = children[children.length - 1].range.end;
-            const catRange = new vscode.Range(first, last);
-            const catSymbol = new vscode.DocumentSymbol(name, `${children.length}`, icon, catRange, catRange);
-            catSymbol.children = children;
-            symbols.push(catSymbol);
-        };
-        // Props
-        addCategory('Props', vscode.SymbolKind.Interface, vueIndex.props, vscode.SymbolKind.Field, '', vueIndex.propsMeta);
-        // Data
-        addCategory('Data', vscode.SymbolKind.Struct, vueIndex.data, vscode.SymbolKind.Property, '', vueIndex.dataMeta);
-        // Computed
-        addCategory('Computed', vscode.SymbolKind.Struct, vueIndex.computed, vscode.SymbolKind.Property, '', vueIndex.computedMeta);
-        // Methods
-        addCategory('Methods', vscode.SymbolKind.Module, vueIndex.methods, vscode.SymbolKind.Method, '', vueIndex.methodMeta);
-        // Watch
-        addCategory('Watch', vscode.SymbolKind.Event, vueIndex.watch, vscode.SymbolKind.Event, '', vueIndex.watchMeta);
-        // Filters
-        addCategory('Filters', vscode.SymbolKind.Namespace, vueIndex.filters, vscode.SymbolKind.Function, '', vueIndex.filtersMeta);
-        // Lifecycle
-        addCategory('Lifecycle', vscode.SymbolKind.Constructor, vueIndex.lifecycle, vscode.SymbolKind.Function);
-        // Mixin Data (展平)
-        if (vueIndex.mixinData.size > 0) {
-            addCategory('Mixin Data', vscode.SymbolKind.Struct, vueIndex.mixinData, vscode.SymbolKind.Property);
-        }
-        if (vueIndex.mixinMethods.size > 0) {
-            addCategory('Mixin Methods', vscode.SymbolKind.Module, vueIndex.mixinMethods, vscode.SymbolKind.Method);
-        }
-        if (vueIndex.mixinComputed.size > 0) {
-            addCategory('Mixin Computed', vscode.SymbolKind.Struct, vueIndex.mixinComputed, vscode.SymbolKind.Property);
-        }
-        return symbols.length > 0 ? symbols : null;
-    }
-}
-exports.VueDocumentSymbolProvider = VueDocumentSymbolProvider;
-
-
-/***/ }),
-/* 202 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VueReferenceProvider = void 0;
-/**
- * ReferenceProvider - 查找引用
- * 在 JS 文件中光标在 data/methods/computed 属性上时，
- * 列出 HTML 模板中所有引用该变量的位置。
- * 也支持从 HTML 模板中反向查找同一模板内所有引用。
- */
-const vscode = __importStar(__webpack_require__(2));
-const parseDocument_1 = __webpack_require__(7);
-const fs = __importStar(__webpack_require__(176));
-const path = __importStar(__webpack_require__(3));
-/**
- * 获取关联的 HTML 文件路径
- * 1. 检查所有可见 + 所有打开的 HTML 文档，看其关联 JS 是否包含目标 JS
- * 2. 回退到基于目录约定的查找
- */
-function findAssociatedHtmlFiles(jsFilePath) {
-    const normalizedJs = path.normalize(jsFilePath).toLowerCase();
-    const seen = new Set();
-    const result = [];
-    const addFile = (filePath) => {
-        const n = path.normalize(filePath).toLowerCase();
-        if (!seen.has(n) && fs.existsSync(filePath)) {
-            seen.add(n);
-            result.push(path.normalize(filePath));
-        }
-    };
-    // 方法 1：遍历所有已打开/可见的 HTML 文档，检查其 dev.js 关联
-    for (const doc of vscode.workspace.textDocuments) {
-        if (doc.languageId === 'html' && !doc.isClosed) {
-            try {
-                const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(doc);
-                for (const sp of scriptPaths) {
-                    if (path.normalize(sp).toLowerCase() === normalizedJs) {
-                        addFile(doc.uri.fsPath);
-                    }
-                }
-            }
-            catch { /* ignore */ }
-        }
-    }
-    // 方法 2：基于目录约定的回退查找
-    const dir = path.dirname(jsFilePath);
-    const parentDir = path.dirname(dir);
-    const baseName = path.basename(jsFilePath).replace(/\.dev\.js$/, '').replace(/\.js$/, '');
-    const candidates = [
-        path.join(parentDir, `${baseName}.html`),
-        path.join(parentDir, 'index.html'),
-        path.join(dir, `${baseName}.html`),
-    ];
-    for (const c of candidates) {
-        addFile(c);
-    }
-    return result;
-}
-/**
- * 在文本中搜索标识符的所有出现位置
- */
-function findIdentifierOccurrencesInHtml(text, identifier, uri) {
-    const locations = [];
-    const lines = text.split('\n');
-    // 匹配模板中的标识符引用
-    const patterns = [
-        // {{ identifier }} 或 {{ expr.identifier }}
-        new RegExp(`\\{\\{[^}]*\\b${escapeRegex(identifier)}\\b[^}]*\\}\\}`, 'g'),
-        // v-bind:xxx="identifier" / :xxx="identifier"
-        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-on:xxx="identifier" / @xxx="identifier"  
-        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-if/v-show/v-else-if="identifier"
-        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-for="... in identifier"
-        new RegExp(`v-for\\s*=\\s*"[^"]*\\b(?:in|of)\\s+[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-model="identifier"
-        new RegExp(`v-model\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-    ];
-    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-        const line = lines[lineNum];
-        // 跳过 <script> 标签内的内容
-        // (简单处理，更复杂场景可能需要完善)
-        for (const pattern of patterns) {
-            pattern.lastIndex = 0;
-            let match;
-            while ((match = pattern.exec(line)) !== null) {
-                // 精确定位标识符在行内的位置
-                const innerRegex = new RegExp(`\\b${escapeRegex(identifier)}\\b`, 'g');
-                const subText = match[0];
-                let innerMatch;
-                while ((innerMatch = innerRegex.exec(subText)) !== null) {
-                    const col = match.index + innerMatch.index;
-                    const range = new vscode.Range(lineNum, col, lineNum, col + identifier.length);
-                    // 去重
-                    if (!locations.some(l => l.range.start.line === lineNum && l.range.start.character === col)) {
-                        locations.push(new vscode.Location(uri, range));
-                    }
-                }
-            }
-        }
-    }
-    return locations;
-}
-/**
- * 在 JS 文件中搜索标识符的引用
- */
-function findIdentifierOccurrencesInJs(text, identifier, uri) {
-    const locations = [];
-    const lines = text.split('\n');
-    const regex = new RegExp(`(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escapeRegex(identifier)}\\b`, 'g');
-    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-        const line = lines[lineNum];
-        regex.lastIndex = 0;
-        let match;
-        while ((match = regex.exec(line)) !== null) {
-            // 定位到属性名
-            const dotIdx = match[0].lastIndexOf('.');
-            const col = match.index + dotIdx + 1;
-            const range = new vscode.Range(lineNum, col, lineNum, col + identifier.length);
-            locations.push(new vscode.Location(uri, range));
-        }
-    }
-    return locations;
-}
-function escapeRegex(s) {
-    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-class VueReferenceProvider {
-    async provideReferences(document, position, context, _token) {
-        const config = vscode.workspace.getConfiguration('leidong-tools');
-        // enableReferences 或 enableCodeLens 任一开启时都提供引用查找
-        if (!config.get('enableReferences', false)
-            && !config.get('enableCodeLens', false)) {
-            return null;
-        }
-        const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z_$][\w$]*/);
-        if (!wordRange) {
-            return null;
-        }
-        const word = document.getText(wordRange);
-        const locations = [];
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-            // 检查这个词是否是 Vue 索引中的成员
-            const vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
-            if (!vueIndex) {
-                return null;
-            }
-            const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
-                || vueIndex.computed.has(word) || vueIndex.props.has(word)
-                || vueIndex.filters.has(word) || vueIndex.watch.has(word);
-            if (!isDefined) {
-                return null;
-            }
-            // 在当前 JS 文件中查找 this.xxx / that.xxx 引用
-            const jsRefs = findIdentifierOccurrencesInJs(document.getText(), word, document.uri);
-            locations.push(...jsRefs);
-            // 查找关联的 HTML 文件
-            const htmlFiles = findAssociatedHtmlFiles(document.uri.fsPath);
-            const htmlFileSet = new Set(htmlFiles.map(f => path.normalize(f).toLowerCase()));
-            for (const htmlPath of htmlFiles) {
-                try {
-                    // 优先使用已打开的文档（获取最新内容）
-                    const openDoc = vscode.workspace.textDocuments.find(d => path.normalize(d.uri.fsPath).toLowerCase() === path.normalize(htmlPath).toLowerCase() && !d.isClosed);
-                    const htmlContent = openDoc ? openDoc.getText() : fs.readFileSync(htmlPath, 'utf8');
-                    const htmlUri = openDoc ? openDoc.uri : vscode.Uri.file(htmlPath);
-                    const htmlRefs = findIdentifierOccurrencesInHtml(htmlContent, word, htmlUri);
-                    locations.push(...htmlRefs);
-                }
-                catch { /* ignore read errors */ }
-            }
-            // 也搜索所有打开的 HTML 文档（可能不在常规路径中）
-            for (const doc of vscode.workspace.textDocuments) {
-                if (doc.languageId === 'html' && !doc.isClosed
-                    && !htmlFileSet.has(path.normalize(doc.uri.fsPath).toLowerCase())) {
-                    const htmlRefs = findIdentifierOccurrencesInHtml(doc.getText(), word, doc.uri);
-                    locations.push(...htmlRefs);
-                }
-            }
-            // 包含定义本身
-            if (context.includeDeclaration) {
-                const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
-                if (def) {
-                    locations.push(def);
-                }
-            }
-        }
-        if (document.languageId === 'html') {
-            // HTML 中查找同文件的所有引用
-            const htmlRefs = findIdentifierOccurrencesInHtml(document.getText(), word, document.uri);
-            locations.push(...htmlRefs);
-            // 也查找对应 JS 中的引用
-            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
-            if (vueIndex) {
-                const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
-                    || vueIndex.computed.has(word) || vueIndex.props.has(word)
-                    || vueIndex.filters.has(word);
-                if (isDefined) {
-                    // 查找定义位置
-                    if (context.includeDeclaration) {
-                        const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
-                        if (def) {
-                            locations.push(def);
-                        }
-                    }
-                    // 搜索关联的 JS 文件
-                    const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
-                    if (def && def.uri.fsPath !== document.uri.fsPath) {
-                        try {
-                            const jsContent = fs.readFileSync(def.uri.fsPath, 'utf8');
-                            const jsRefs = findIdentifierOccurrencesInJs(jsContent, word, def.uri);
-                            locations.push(...jsRefs);
-                        }
-                        catch { /* ignore */ }
-                    }
-                }
-            }
-        }
-        return locations.length > 0 ? locations : null;
-    }
-}
-exports.VueReferenceProvider = VueReferenceProvider;
-
-
-/***/ }),
-/* 203 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.VueColorProvider = void 0;
-/**
- * ColorProvider - 智能 Color Picker
- * 在 HTML/CSS 中检测颜色值，提供内联颜色块预览和颜色选择器
- * 支持 hex (#fff, #ffffff, #ffffffff), rgb/rgba, hsl/hsla, 命名颜色
- */
-const vscode = __importStar(__webpack_require__(2));
-// CSS 命名颜色 → hex
-const NAMED_COLORS = {
-    'red': '#ff0000', 'blue': '#0000ff', 'green': '#008000', 'white': '#ffffff',
-    'black': '#000000', 'yellow': '#ffff00', 'orange': '#ffa500', 'purple': '#800080',
-    'pink': '#ffc0cb', 'gray': '#808080', 'grey': '#808080', 'cyan': '#00ffff',
-    'magenta': '#ff00ff', 'lime': '#00ff00', 'navy': '#000080', 'teal': '#008080',
-    'maroon': '#800000', 'olive': '#808000', 'aqua': '#00ffff', 'silver': '#c0c0c0',
-    'gold': '#ffd700', 'coral': '#ff7f50', 'tomato': '#ff6347', 'salmon': '#fa8072',
-    'chocolate': '#d2691e', 'firebrick': '#b22222', 'indianred': '#cd5c5c',
-    'darkblue': '#00008b', 'darkgreen': '#006400', 'darkred': '#8b0000',
-    'lightblue': '#add8e6', 'lightgreen': '#90ee90', 'lightgray': '#d3d3d3',
-    'lightgrey': '#d3d3d3', 'darkgray': '#a9a9a9', 'darkgrey': '#a9a9a9',
-    'whitesmoke': '#f5f5f5', 'transparent': '#00000000',
-    'skyblue': '#87ceeb', 'steelblue': '#4682b4', 'royalblue': '#4169e1',
-    'dodgerblue': '#1e90ff', 'deepskyblue': '#00bfff', 'cornflowerblue': '#6495ed',
-    'cadetblue': '#5f9ea0', 'midnightblue': '#191970', 'slateblue': '#6a5acd',
-};
-function hexToColor(hex) {
-    hex = hex.replace('#', '');
-    let r, g, b, a = 1;
-    if (hex.length === 3) {
-        r = parseInt(hex[0] + hex[0], 16) / 255;
-        g = parseInt(hex[1] + hex[1], 16) / 255;
-        b = parseInt(hex[2] + hex[2], 16) / 255;
-    }
-    else if (hex.length === 6) {
-        r = parseInt(hex.substring(0, 2), 16) / 255;
-        g = parseInt(hex.substring(2, 4), 16) / 255;
-        b = parseInt(hex.substring(4, 6), 16) / 255;
-    }
-    else if (hex.length === 8) {
-        r = parseInt(hex.substring(0, 2), 16) / 255;
-        g = parseInt(hex.substring(2, 4), 16) / 255;
-        b = parseInt(hex.substring(4, 6), 16) / 255;
-        a = parseInt(hex.substring(6, 8), 16) / 255;
-    }
-    else {
-        return null;
-    }
-    if (isNaN(r) || isNaN(g) || isNaN(b)) {
-        return null;
-    }
-    return new vscode.Color(r, g, b, a);
-}
-function colorToHex(color) {
-    const r = Math.round(color.red * 255).toString(16).padStart(2, '0');
-    const g = Math.round(color.green * 255).toString(16).padStart(2, '0');
-    const b = Math.round(color.blue * 255).toString(16).padStart(2, '0');
-    if (color.alpha < 1) {
-        const a = Math.round(color.alpha * 255).toString(16).padStart(2, '0');
-        return `#${r}${g}${b}${a}`;
-    }
-    return `#${r}${g}${b}`;
-}
-function rgbToColor(r, g, b, a) {
-    return new vscode.Color(Math.min(255, Math.max(0, r)) / 255, Math.min(255, Math.max(0, g)) / 255, Math.min(255, Math.max(0, b)) / 255, a !== undefined ? Math.min(1, Math.max(0, a)) : 1);
-}
-function hslToRgb(h, s, l) {
-    h = h / 360;
-    s = s / 100;
-    l = l / 100;
-    let r, g, b;
-    if (s === 0) {
-        r = g = b = l;
-    }
-    else {
-        const hue2rgb = (p, q, t) => {
-            if (t < 0) {
-                t += 1;
-            }
-            if (t > 1) {
-                t -= 1;
-            }
-            if (t < 1 / 6) {
-                return p + (q - p) * 6 * t;
-            }
-            if (t < 1 / 2) {
-                return q;
-            }
-            if (t < 2 / 3) {
-                return p + (q - p) * (2 / 3 - t) * 6;
-            }
-            return p;
-        };
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        r = hue2rgb(p, q, h + 1 / 3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1 / 3);
-    }
-    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-}
-class VueColorProvider {
-    provideDocumentColors(document, _token) {
-        const config = vscode.workspace.getConfiguration('leidong-tools');
-        if (!config.get('enableColorPicker', false)) {
-            return [];
-        }
-        const text = document.getText();
-        const colors = [];
-        // Hex colors: #fff, #ffffff, #ffffffff
-        const hexRegex = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/g;
-        let match;
-        while ((match = hexRegex.exec(text)) !== null) {
-            const color = hexToColor(match[0]);
-            if (color) {
-                const pos = document.positionAt(match.index);
-                const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
-                colors.push(new vscode.ColorInformation(range, color));
-            }
-        }
-        // rgb(r, g, b) / rgba(r, g, b, a)
-        const rgbRegex = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([\d.]+))?\s*\)/g;
-        while ((match = rgbRegex.exec(text)) !== null) {
-            const r = parseInt(match[1]);
-            const g = parseInt(match[2]);
-            const b = parseInt(match[3]);
-            const a = match[4] !== undefined ? parseFloat(match[4]) : undefined;
-            const color = rgbToColor(r, g, b, a);
-            const pos = document.positionAt(match.index);
-            const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
-            colors.push(new vscode.ColorInformation(range, color));
-        }
-        // hsl(h, s%, l%) / hsla(h, s%, l%, a)
-        const hslRegex = /hsla?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%?\s*,\s*(\d{1,3})%?(?:\s*,\s*([\d.]+))?\s*\)/g;
-        while ((match = hslRegex.exec(text)) !== null) {
-            const h = parseInt(match[1]);
-            const s = parseInt(match[2]);
-            const l = parseInt(match[3]);
-            const a = match[4] !== undefined ? parseFloat(match[4]) : undefined;
-            const [r, g, b] = hslToRgb(h, s, l);
-            const color = rgbToColor(r, g, b, a);
-            const pos = document.positionAt(match.index);
-            const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
-            colors.push(new vscode.ColorInformation(range, color));
-        }
-        // 命名颜色 (只在 style 属性或 CSS 上下文中)
-        if (document.languageId === 'css' || document.languageId === 'html') {
-            for (const [name, hex] of Object.entries(NAMED_COLORS)) {
-                const namedRegex = new RegExp(`(?<=[:;,\\s])\\b${name}\\b(?=[;,\\s}!])`, 'gi');
-                while ((match = namedRegex.exec(text)) !== null) {
-                    const color = hexToColor(hex);
-                    if (color) {
-                        const pos = document.positionAt(match.index);
-                        const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
-                        colors.push(new vscode.ColorInformation(range, color));
-                    }
-                }
-            }
-        }
-        return colors;
-    }
-    provideColorPresentations(color, context, _token) {
-        const presentations = [];
-        const r = Math.round(color.red * 255);
-        const g = Math.round(color.green * 255);
-        const b = Math.round(color.blue * 255);
-        const a = color.alpha;
-        // Hex
-        presentations.push(new vscode.ColorPresentation(colorToHex(color)));
-        // RGB / RGBA
-        if (a < 1) {
-            presentations.push(new vscode.ColorPresentation(`rgba(${r}, ${g}, ${b}, ${a.toFixed(2)})`));
-        }
-        else {
-            presentations.push(new vscode.ColorPresentation(`rgb(${r}, ${g}, ${b})`));
-        }
-        return presentations;
-    }
-}
-exports.VueColorProvider = VueColorProvider;
-
-
-/***/ }),
-/* 204 */
+/* 199 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54202,11 +53112,11 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VariableIndexWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const jsSymbolParser_1 = __webpack_require__(193);
+const jsSymbolParser_1 = __webpack_require__(192);
 const parseDocument_1 = __webpack_require__(7);
-const performanceMonitor_1 = __webpack_require__(179);
+const performanceMonitor_1 = __webpack_require__(178);
 const path = __importStar(__webpack_require__(3));
-const fs = __importStar(__webpack_require__(176));
+const fs = __importStar(__webpack_require__(175));
 /**
  * 变量索引 WebView 提供器
  * 支持虚拟滚动，轻松处理万级变量
@@ -54568,7 +53478,7 @@ __decorate([
 
 
 /***/ }),
-/* 205 */
+/* 200 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54610,8 +53520,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DiagnosticsWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
-const templateIndexer_1 = __webpack_require__(181);
-const cacheManager_1 = __webpack_require__(194);
+const templateIndexer_1 = __webpack_require__(180);
+const cacheManager_1 = __webpack_require__(193);
 class DiagnosticsWebviewProvider {
     static { this.viewType = 'leidong-tools.diagnosticsWebview'; }
     constructor(extensionUri) {
@@ -54711,7 +53621,7 @@ exports.DiagnosticsWebviewProvider = DiagnosticsWebviewProvider;
 
 
 /***/ }),
-/* 206 */
+/* 201 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54826,7 +53736,7 @@ exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
 
 
 /***/ }),
-/* 207 */
+/* 202 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54866,7 +53776,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.registerIndexLifecycle = registerIndexLifecycle;
-const templateIndexer_1 = __webpack_require__(181);
+const templateIndexer_1 = __webpack_require__(180);
 const parseDocument_1 = __webpack_require__(7);
 const vscode = __importStar(__webpack_require__(2));
 /** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */
@@ -54936,7 +53846,7 @@ function registerIndexLifecycle(context) {
 
 
 /***/ }),
-/* 208 */
+/* 203 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54985,7 +53895,7 @@ exports.initVueDiagnostics = initVueDiagnostics;
  * 可通过设置 leidong-tools.enableVueDiagnostics 关闭
  */
 const vscode = __importStar(__webpack_require__(2));
-const fs = __importStar(__webpack_require__(176));
+const fs = __importStar(__webpack_require__(175));
 const parseDocument_1 = __webpack_require__(7);
 const DIAGNOSTICS_SOURCE = '雷动三千';
 let diagnosticCollection;
@@ -55313,6 +54223,1946 @@ function initVueDiagnostics(context) {
 }
 
 
+/***/ }),
+/* 204 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VueDocumentSymbolProvider = void 0;
+/**
+ * DocumentSymbolProvider - Breadcrumb / Outline 增强
+ * 让 VS Code 的面包屑导航和大纲视图 (Ctrl+Shift+O) 识别
+ * Vue 2 CDN 文件的结构层级: data > props > methods > computed > watch > lifecycle > filters
+ */
+const vscode = __importStar(__webpack_require__(2));
+const parseDocument_1 = __webpack_require__(7);
+class VueDocumentSymbolProvider {
+    provideDocumentSymbols(document, _token) {
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        if (!config.get('enableOutlineSymbols', false)) {
+            return null;
+        }
+        let vueIndex = null;
+        try {
+            if (document.languageId === 'html') {
+                vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            }
+            else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+                vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
+            }
+        }
+        catch { /* ignore */ }
+        if (!vueIndex) {
+            return null;
+        }
+        const symbols = [];
+        const docUri = document.uri;
+        // Helper: 从 Map 创建子 symbols
+        const buildChildren = (map, kind, detail, metaMap) => {
+            const children = [];
+            // 按行号排序
+            const sorted = Array.from(map.entries())
+                .filter(([_, loc]) => loc.uri.fsPath === docUri.fsPath)
+                .sort((a, b) => a[1].range.start.line - b[1].range.start.line);
+            for (const [name, loc] of sorted) {
+                const range = new vscode.Range(loc.range.start, new vscode.Position(loc.range.start.line, loc.range.start.character + name.length + 20));
+                const selRange = new vscode.Range(loc.range.start, new vscode.Position(loc.range.start.line, loc.range.start.character + name.length));
+                let detailStr = detail || '';
+                if (metaMap) {
+                    const meta = metaMap.get(name);
+                    if (meta) {
+                        if (meta.params?.length) {
+                            detailStr = `(${meta.params.join(', ')})`;
+                        }
+                        if (meta.type) {
+                            detailStr = meta.type;
+                        }
+                    }
+                }
+                children.push(new vscode.DocumentSymbol(name, detailStr, kind, range, selRange));
+            }
+            return children;
+        };
+        // Helper: 创建分类父节点
+        const addCategory = (name, icon, map, childKind, childDetail, metaMap) => {
+            if (map.size === 0) {
+                return;
+            }
+            const children = buildChildren(map, childKind, childDetail, metaMap);
+            if (children.length === 0) {
+                return;
+            }
+            // 分类节点使用第一个子节点到最后一个子节点的范围
+            const first = children[0].range.start;
+            const last = children[children.length - 1].range.end;
+            const catRange = new vscode.Range(first, last);
+            const catSymbol = new vscode.DocumentSymbol(name, `${children.length}`, icon, catRange, catRange);
+            catSymbol.children = children;
+            symbols.push(catSymbol);
+        };
+        // Props
+        addCategory('Props', vscode.SymbolKind.Interface, vueIndex.props, vscode.SymbolKind.Field, '', vueIndex.propsMeta);
+        // Data
+        addCategory('Data', vscode.SymbolKind.Struct, vueIndex.data, vscode.SymbolKind.Property, '', vueIndex.dataMeta);
+        // Computed
+        addCategory('Computed', vscode.SymbolKind.Struct, vueIndex.computed, vscode.SymbolKind.Property, '', vueIndex.computedMeta);
+        // Methods
+        addCategory('Methods', vscode.SymbolKind.Module, vueIndex.methods, vscode.SymbolKind.Method, '', vueIndex.methodMeta);
+        // Watch
+        addCategory('Watch', vscode.SymbolKind.Event, vueIndex.watch, vscode.SymbolKind.Event, '', vueIndex.watchMeta);
+        // Filters
+        addCategory('Filters', vscode.SymbolKind.Namespace, vueIndex.filters, vscode.SymbolKind.Function, '', vueIndex.filtersMeta);
+        // Lifecycle
+        addCategory('Lifecycle', vscode.SymbolKind.Constructor, vueIndex.lifecycle, vscode.SymbolKind.Function);
+        // Mixin Data (展平)
+        if (vueIndex.mixinData.size > 0) {
+            addCategory('Mixin Data', vscode.SymbolKind.Struct, vueIndex.mixinData, vscode.SymbolKind.Property);
+        }
+        if (vueIndex.mixinMethods.size > 0) {
+            addCategory('Mixin Methods', vscode.SymbolKind.Module, vueIndex.mixinMethods, vscode.SymbolKind.Method);
+        }
+        if (vueIndex.mixinComputed.size > 0) {
+            addCategory('Mixin Computed', vscode.SymbolKind.Struct, vueIndex.mixinComputed, vscode.SymbolKind.Property);
+        }
+        return symbols.length > 0 ? symbols : null;
+    }
+}
+exports.VueDocumentSymbolProvider = VueDocumentSymbolProvider;
+
+
+/***/ }),
+/* 205 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VueReferenceProvider = void 0;
+/**
+ * ReferenceProvider - 查找引用
+ * 在 JS 文件中光标在 data/methods/computed 属性上时，
+ * 列出 HTML 模板中所有引用该变量的位置。
+ * 也支持从 HTML 模板中反向查找同一模板内所有引用。
+ */
+const vscode = __importStar(__webpack_require__(2));
+const parseDocument_1 = __webpack_require__(7);
+const fs = __importStar(__webpack_require__(175));
+const path = __importStar(__webpack_require__(3));
+/**
+ * 获取关联的 HTML 文件路径
+ * 1. 检查所有可见 + 所有打开的 HTML 文档，看其关联 JS 是否包含目标 JS
+ * 2. 回退到基于目录约定的查找
+ */
+function findAssociatedHtmlFiles(jsFilePath) {
+    const normalizedJs = path.normalize(jsFilePath).toLowerCase();
+    const seen = new Set();
+    const result = [];
+    const addFile = (filePath) => {
+        const n = path.normalize(filePath).toLowerCase();
+        if (!seen.has(n) && fs.existsSync(filePath)) {
+            seen.add(n);
+            result.push(path.normalize(filePath));
+        }
+    };
+    // 方法 1：遍历所有已打开/可见的 HTML 文档，检查其 dev.js 关联
+    for (const doc of vscode.workspace.textDocuments) {
+        if (doc.languageId === 'html' && !doc.isClosed) {
+            try {
+                const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(doc);
+                for (const sp of scriptPaths) {
+                    if (path.normalize(sp).toLowerCase() === normalizedJs) {
+                        addFile(doc.uri.fsPath);
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+    }
+    // 方法 2：基于目录约定的回退查找
+    const dir = path.dirname(jsFilePath);
+    const parentDir = path.dirname(dir);
+    const baseName = path.basename(jsFilePath).replace(/\.dev\.js$/, '').replace(/\.js$/, '');
+    const candidates = [
+        path.join(parentDir, `${baseName}.html`),
+        path.join(parentDir, 'index.html'),
+        path.join(dir, `${baseName}.html`),
+    ];
+    for (const c of candidates) {
+        addFile(c);
+    }
+    return result;
+}
+/**
+ * 在文本中搜索标识符的所有出现位置
+ */
+function findIdentifierOccurrencesInHtml(text, identifier, uri) {
+    const locations = [];
+    const lines = text.split('\n');
+    // 匹配模板中的标识符引用
+    const patterns = [
+        // {{ identifier }} 或 {{ expr.identifier }}
+        new RegExp(`\\{\\{[^}]*\\b${escapeRegex(identifier)}\\b[^}]*\\}\\}`, 'g'),
+        // v-bind:xxx="identifier" / :xxx="identifier"
+        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
+        // v-on:xxx="identifier" / @xxx="identifier"  
+        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
+        // v-if/v-show/v-else-if="identifier"
+        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
+        // v-for="... in identifier"
+        new RegExp(`v-for\\s*=\\s*"[^"]*\\b(?:in|of)\\s+[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
+        // v-model="identifier"
+        new RegExp(`v-model\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
+    ];
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+        const line = lines[lineNum];
+        // 跳过 <script> 标签内的内容
+        // (简单处理，更复杂场景可能需要完善)
+        for (const pattern of patterns) {
+            pattern.lastIndex = 0;
+            let match;
+            while ((match = pattern.exec(line)) !== null) {
+                // 精确定位标识符在行内的位置
+                const innerRegex = new RegExp(`\\b${escapeRegex(identifier)}\\b`, 'g');
+                const subText = match[0];
+                let innerMatch;
+                while ((innerMatch = innerRegex.exec(subText)) !== null) {
+                    const col = match.index + innerMatch.index;
+                    const range = new vscode.Range(lineNum, col, lineNum, col + identifier.length);
+                    // 去重
+                    if (!locations.some(l => l.range.start.line === lineNum && l.range.start.character === col)) {
+                        locations.push(new vscode.Location(uri, range));
+                    }
+                }
+            }
+        }
+    }
+    return locations;
+}
+/**
+ * 在 JS 文件中搜索标识符的引用
+ */
+function findIdentifierOccurrencesInJs(text, identifier, uri) {
+    const locations = [];
+    const lines = text.split('\n');
+    const regex = new RegExp(`(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escapeRegex(identifier)}\\b`, 'g');
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+        const line = lines[lineNum];
+        regex.lastIndex = 0;
+        let match;
+        while ((match = regex.exec(line)) !== null) {
+            // 定位到属性名
+            const dotIdx = match[0].lastIndexOf('.');
+            const col = match.index + dotIdx + 1;
+            const range = new vscode.Range(lineNum, col, lineNum, col + identifier.length);
+            locations.push(new vscode.Location(uri, range));
+        }
+    }
+    return locations;
+}
+function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+class VueReferenceProvider {
+    async provideReferences(document, position, context, _token) {
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        // enableReferences 或 enableCodeLens 任一开启时都提供引用查找
+        if (!config.get('enableReferences', false)
+            && !config.get('enableCodeLens', false)) {
+            return null;
+        }
+        const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z_$][\w$]*/);
+        if (!wordRange) {
+            return null;
+        }
+        const word = document.getText(wordRange);
+        const locations = [];
+        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            // 检查这个词是否是 Vue 索引中的成员
+            const vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
+            if (!vueIndex) {
+                return null;
+            }
+            const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
+                || vueIndex.computed.has(word) || vueIndex.props.has(word)
+                || vueIndex.filters.has(word) || vueIndex.watch.has(word)
+                || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
+                || vueIndex.mixinComputed.has(word);
+            if (!isDefined) {
+                // 检查是否为全局函数
+                const globalFuncRegex = new RegExp(`^function\\s+${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`, 'm');
+                if (!globalFuncRegex.test(document.getText())) {
+                    return null;
+                }
+            }
+            // 在当前 JS 文件中查找 this.xxx / that.xxx 引用
+            const jsRefs = findIdentifierOccurrencesInJs(document.getText(), word, document.uri);
+            locations.push(...jsRefs);
+            // 查找关联的 HTML 文件
+            const htmlFiles = findAssociatedHtmlFiles(document.uri.fsPath);
+            const htmlFileSet = new Set(htmlFiles.map(f => path.normalize(f).toLowerCase()));
+            for (const htmlPath of htmlFiles) {
+                try {
+                    // 优先使用已打开的文档（获取最新内容）
+                    const openDoc = vscode.workspace.textDocuments.find(d => path.normalize(d.uri.fsPath).toLowerCase() === path.normalize(htmlPath).toLowerCase() && !d.isClosed);
+                    const htmlContent = openDoc ? openDoc.getText() : fs.readFileSync(htmlPath, 'utf8');
+                    const htmlUri = openDoc ? openDoc.uri : vscode.Uri.file(htmlPath);
+                    const htmlRefs = findIdentifierOccurrencesInHtml(htmlContent, word, htmlUri);
+                    locations.push(...htmlRefs);
+                }
+                catch { /* ignore read errors */ }
+            }
+            // 也搜索所有打开的 HTML 文档（可能不在常规路径中）
+            for (const doc of vscode.workspace.textDocuments) {
+                if (doc.languageId === 'html' && !doc.isClosed
+                    && !htmlFileSet.has(path.normalize(doc.uri.fsPath).toLowerCase())) {
+                    const htmlRefs = findIdentifierOccurrencesInHtml(doc.getText(), word, doc.uri);
+                    locations.push(...htmlRefs);
+                }
+            }
+            // 包含定义本身
+            if (context.includeDeclaration) {
+                const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
+                if (def) {
+                    locations.push(def);
+                }
+            }
+        }
+        if (document.languageId === 'html') {
+            // HTML 中查找同文件的所有引用
+            const htmlRefs = findIdentifierOccurrencesInHtml(document.getText(), word, document.uri);
+            locations.push(...htmlRefs);
+            // 也查找对应 JS 中的引用
+            const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            if (vueIndex) {
+                const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
+                    || vueIndex.computed.has(word) || vueIndex.props.has(word)
+                    || vueIndex.filters.has(word)
+                    || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
+                    || vueIndex.mixinComputed.has(word);
+                if (isDefined) {
+                    // 查找定义位置
+                    if (context.includeDeclaration) {
+                        const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
+                        if (def) {
+                            locations.push(def);
+                        }
+                    }
+                    // 搜索关联的 JS 文件
+                    const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
+                    if (def && def.uri.fsPath !== document.uri.fsPath) {
+                        try {
+                            const jsContent = fs.readFileSync(def.uri.fsPath, 'utf8');
+                            const jsRefs = findIdentifierOccurrencesInJs(jsContent, word, def.uri);
+                            locations.push(...jsRefs);
+                        }
+                        catch { /* ignore */ }
+                    }
+                }
+            }
+        }
+        return locations.length > 0 ? locations : null;
+    }
+}
+exports.VueReferenceProvider = VueReferenceProvider;
+
+
+/***/ }),
+/* 206 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VueCodeLensProvider = void 0;
+exports.computeRefCounts = computeRefCounts;
+exports.updateInlineRefDecorations = updateInlineRefDecorations;
+exports.clearInlineRefDecorations = clearInlineRefDecorations;
+exports.getRefCountAtLine = getRefCountAtLine;
+/**
+ * CodeLensProvider - 模板引用计数
+ * 支持3种显示位置：
+ *   - above: 在定义行上方显示 CodeLens（默认）
+ *   - right: 在定义行右侧显示行末装饰
+ *   - hover: 仅在鼠标悬停时显示引用次数
+ *
+ * 可通过 enableCodeLens + codeLensPosition 配置
+ */
+const vscode = __importStar(__webpack_require__(2));
+const parseDocument_1 = __webpack_require__(7);
+const fs = __importStar(__webpack_require__(175));
+const path = __importStar(__webpack_require__(3));
+/** Windows 下路径大小写不敏感的规范化 */
+function normalizePath(p) {
+    return path.normalize(p).toLowerCase();
+}
+// ─── 工具函数 ───
+function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+/**
+ * 在 HTML 文本中计算某标识符被引用的次数
+ */
+function countReferencesInHtml(text, identifier) {
+    const escaped = escapeRegex(identifier);
+    let count = 0;
+    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
+    let m;
+    while ((m = mustacheRegex.exec(text)) !== null) {
+        const inner = m[1];
+        const idRegex = new RegExp(`\\b${escaped}\\b`, 'g');
+        let im;
+        while ((im = idRegex.exec(inner)) !== null) {
+            count++;
+        }
+    }
+    const attrPatterns = [
+        /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g,
+        /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g,
+        /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g,
+        /v-for\s*=\s*"([^"]+)"/g,
+        /v-model\s*=\s*"([^"]+)"/g,
+    ];
+    for (const pattern of attrPatterns) {
+        pattern.lastIndex = 0;
+        while ((m = pattern.exec(text)) !== null) {
+            const inner = m[1];
+            const idRegex = new RegExp(`\\b${escaped}\\b`, 'g');
+            let im;
+            while ((im = idRegex.exec(inner)) !== null) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+/**
+ * 在 JS 文本中计算 this.xxx 的引用次数（排除定义行）
+ */
+function countReferencesInJs(text, identifier, definitionLine) {
+    const escaped = escapeRegex(identifier);
+    const regex = new RegExp(`(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escaped}\\b`, 'g');
+    let count = 0;
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+        if (i === definitionLine) {
+            continue;
+        }
+        regex.lastIndex = 0;
+        let m;
+        while ((m = regex.exec(lines[i])) !== null) {
+            count++;
+        }
+    }
+    return count;
+}
+/**
+ * 查找关联 HTML 文件
+ * 1. 扫描所有已打开的 HTML 文档，通过 dev.js 关联反向查找
+ * 2. 回退到目录约定查找
+ */
+function findAssociatedHtmlForJs(jsFilePath) {
+    const normalizedJs = normalizePath(jsFilePath);
+    const seen = new Set();
+    const result = [];
+    const addFile = (filePath) => {
+        const n = normalizePath(filePath);
+        if (!seen.has(n) && fs.existsSync(filePath)) {
+            seen.add(n);
+            result.push(path.normalize(filePath));
+        }
+    };
+    // 方法 1：遍历已打开的 HTML 文档，检查 dev.js 关联
+    for (const doc of vscode.workspace.textDocuments) {
+        if (doc.languageId === 'html' && !doc.isClosed) {
+            try {
+                const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(doc);
+                for (const sp of scriptPaths) {
+                    if (normalizePath(sp) === normalizedJs) {
+                        addFile(doc.uri.fsPath);
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+    }
+    // 方法 2：基于目录约定
+    const dir = path.dirname(jsFilePath);
+    const parentDir = path.dirname(dir);
+    const baseName = path.basename(jsFilePath).replace(/\.dev\.js$/, '').replace(/\.js$/, '');
+    const candidates = [
+        path.join(parentDir, `${baseName}.html`),
+        path.join(parentDir, 'index.html'),
+        path.join(dir, `${baseName}.html`),
+    ];
+    for (const c of candidates) {
+        addFile(c);
+    }
+    return result;
+}
+/**
+ * 计算文档中所有 Vue 成员的引用次数
+ */
+function computeRefCounts(document) {
+    let vueIndex = null;
+    let htmlText = '';
+    let jsText = '';
+    try {
+        if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
+            jsText = document.getText();
+            vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(jsText, document.uri, 0);
+            // 找关联 HTML (对独立 JS/Vue 而言)
+            const htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
+            const htmlFileSet = new Set(htmlFiles.map(f => normalizePath(f)));
+            for (const hf of htmlFiles) {
+                try {
+                    const openDoc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed);
+                    htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
+                }
+                catch { /* */ }
+            }
+            // 补充 HTML 文档
+            for (const doc of vscode.workspace.textDocuments) {
+                if (doc.languageId === 'html' && !doc.isClosed
+                    && !htmlFileSet.has(normalizePath(doc.uri.fsPath))) {
+                    htmlText += doc.getText() + '\n';
+                }
+            }
+        }
+        else if (document.languageId === 'html') {
+            htmlText = document.getText();
+            vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            if (vueIndex) {
+                const firstDef = vueIndex.data.values().next().value || vueIndex.methods.values().next().value;
+                if (firstDef && firstDef.uri.fsPath !== document.uri.fsPath) {
+                    try {
+                        jsText = fs.readFileSync(firstDef.uri.fsPath, 'utf8');
+                    }
+                    catch { /* */ }
+                }
+            }
+        }
+    }
+    catch { /* */ }
+    if (!vueIndex) {
+        return null;
+    }
+    const infos = [];
+    const normalizedCurrentPath = normalizePath(document.uri.fsPath);
+    const collect = (map, category) => {
+        map.forEach((loc, name) => {
+            if (normalizePath(loc.uri.fsPath) !== normalizedCurrentPath) {
+                return;
+            }
+            let count = 0;
+            if (htmlText) {
+                count += countReferencesInHtml(htmlText, name);
+            }
+            if (jsText) {
+                count += countReferencesInJs(jsText, name, loc.range.start.line);
+            }
+            infos.push({ name, category, count, line: loc.range.start.line, loc });
+        });
+    };
+    collect(vueIndex.data, 'data');
+    collect(vueIndex.methods, 'methods');
+    collect(vueIndex.computed, 'computed');
+    collect(vueIndex.props, 'props');
+    collect(vueIndex.mixinData, 'mixin data');
+    collect(vueIndex.mixinMethods, 'mixin methods');
+    collect(vueIndex.mixinComputed, 'mixin computed');
+    collect(vueIndex.filters, 'filters');
+    // 全局函数引用计数（定义在 Vue 实例外部的 function）
+    if (jsText) {
+        const funcDeclRegex = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
+        let fm;
+        const jsLines = jsText.split('\n');
+        while ((fm = funcDeclRegex.exec(jsText)) !== null) {
+            const funcName = fm[1];
+            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            let count = 0;
+            if (htmlText) {
+                count += countReferencesInHtml(htmlText, funcName);
+            }
+            // JS 中直接调用（不含 this.）
+            const callRegex = new RegExp(`\\b${escapeRegex(funcName)}\\s*\\(`, 'g');
+            for (let i = 0; i < jsLines.length; i++) {
+                if (i === defLine) {
+                    continue;
+                }
+                callRegex.lastIndex = 0;
+                let cm;
+                while ((cm = callRegex.exec(jsLines[i])) !== null) {
+                    count++;
+                }
+            }
+            const defPos = new vscode.Position(defLine, 0);
+            const loc = new vscode.Location(document.uri, new vscode.Range(defPos, defPos));
+            infos.push({ name: funcName, category: 'function', count, line: defLine, loc });
+        }
+    }
+    return infos;
+}
+// ─── CodeLens Provider (above 模式) ───
+class VueCodeLensProvider {
+    constructor() {
+        this._onDidChangeCodeLenses = new vscode.EventEmitter();
+        this.onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
+        this.cache = new Map();
+    }
+    refresh() {
+        this.cache.clear();
+        this._onDidChangeCodeLenses.fire();
+    }
+    provideCodeLenses(document, _token) {
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        const enableRefCount = config.get('enableCodeLens', false);
+        const enableAI = config.get('enableAIAnalysis', false);
+        const pos = config.get('codeLensPosition', 'above');
+        // 如果两个都关了，或者不是 above 模式且 AI 没开启（AI 目前只通过 CodeLens 展示），则返回 null
+        if (!enableRefCount && !enableAI) {
+            return null;
+        }
+        if (pos !== 'above' && !enableAI) {
+            return null;
+        }
+        const cacheKey = document.uri.toString();
+        const cached = this.cache.get(cacheKey);
+        if (cached && cached.version === document.version) {
+            return cached.lenses;
+        }
+        const infos = computeRefCounts(document);
+        if (!infos) {
+            return null;
+        }
+        const lenses = [];
+        for (const info of infos) {
+            const range = new vscode.Range(info.line, 0, info.line, 0);
+            // 1. 引用计数按钮 (仅且仅当 enableCodeLens=true 且 pos=above)
+            if (enableRefCount && pos === 'above') {
+                const title = info.count > 0 ? `引用 ${info.count} 次` : '未引用';
+                lenses.push(new vscode.CodeLens(range, {
+                    title: `$(references) ${title}`,
+                    command: info.count > 0 ? 'editor.action.findReferences' : '',
+                    arguments: info.count > 0 ? [document.uri, info.loc.range.start] : undefined,
+                    tooltip: `${info.category}.${info.name} - ${title}`
+                }));
+            }
+            // 2. AI 分析按钮 (仅当 enableAIAnalysis=true)
+            if (enableAI) {
+                lenses.push(new vscode.CodeLens(range, {
+                    title: `$(sparkle) AI 分析`,
+                    command: 'leidong-tools.analyzeWithCopilot',
+                    arguments: [info.name, document.uri],
+                    tooltip: `使用 AI 深度分析 ${info.name}`
+                }));
+            }
+        }
+        this.cache.set(cacheKey, { version: document.version, lenses });
+        return lenses;
+    }
+}
+exports.VueCodeLensProvider = VueCodeLensProvider;
+// ─── Inline Decoration（right 模式）───
+const refCountDecorationType = vscode.window.createTextEditorDecorationType({
+    after: {
+        margin: '0 0 0 2em',
+        color: new vscode.ThemeColor('editorCodeLens.foreground'),
+        fontStyle: 'italic',
+    },
+    isWholeLine: false,
+});
+let decorationDebounce = null;
+/**
+ * 更新右侧行末装饰 (right 模式)
+ */
+function updateInlineRefDecorations(editor) {
+    if (!editor) {
+        return;
+    }
+    const config = vscode.workspace.getConfiguration('leidong-tools');
+    if (!config.get('enableCodeLens', false)) {
+        editor.setDecorations(refCountDecorationType, []);
+        return;
+    }
+    const pos = config.get('codeLensPosition', 'above');
+    if (pos !== 'right') {
+        editor.setDecorations(refCountDecorationType, []);
+        return;
+    }
+    if (decorationDebounce) {
+        clearTimeout(decorationDebounce);
+    }
+    decorationDebounce = setTimeout(() => {
+        const infos = computeRefCounts(editor.document);
+        if (!infos) {
+            editor.setDecorations(refCountDecorationType, []);
+            return;
+        }
+        const decorations = [];
+        for (const info of infos) {
+            const line = editor.document.lineAt(info.line);
+            const label = info.count > 0 ? `  // 引用 ${info.count} 次` : '  // 未引用';
+            decorations.push({
+                range: new vscode.Range(info.line, line.text.length, info.line, line.text.length),
+                renderOptions: {
+                    after: {
+                        contentText: label,
+                        color: info.count > 0
+                            ? new vscode.ThemeColor('editorCodeLens.foreground')
+                            : new vscode.ThemeColor('editorUnnecessaryCode.opacity'),
+                    }
+                },
+            });
+        }
+        editor.setDecorations(refCountDecorationType, decorations);
+    }, 800);
+}
+/**
+ * 清除所有右侧装饰
+ */
+function clearInlineRefDecorations(editor) {
+    if (editor) {
+        editor.setDecorations(refCountDecorationType, []);
+    }
+}
+// ─── Hover 模式：外部可调用获取引用计数 ───
+/**
+ * 获取指定行的引用计数信息（hover 模式用）
+ */
+function getRefCountAtLine(document, line) {
+    const config = vscode.workspace.getConfiguration('leidong-tools');
+    if (!config.get('enableCodeLens', false)) {
+        return null;
+    }
+    const pos = config.get('codeLensPosition', 'above');
+    if (pos !== 'hover') {
+        return null;
+    }
+    const infos = computeRefCounts(document);
+    if (!infos) {
+        return null;
+    }
+    return infos.find(i => i.line === line) || null;
+}
+
+
+/***/ }),
+/* 207 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VueColorProvider = void 0;
+/**
+ * ColorProvider - 智能 Color Picker
+ * 在 HTML/CSS 中检测颜色值，提供内联颜色块预览和颜色选择器
+ * 支持 hex (#fff, #ffffff, #ffffffff), rgb/rgba, hsl/hsla, 命名颜色
+ */
+const vscode = __importStar(__webpack_require__(2));
+// CSS 命名颜色 → hex
+const NAMED_COLORS = {
+    'red': '#ff0000', 'blue': '#0000ff', 'green': '#008000', 'white': '#ffffff',
+    'black': '#000000', 'yellow': '#ffff00', 'orange': '#ffa500', 'purple': '#800080',
+    'pink': '#ffc0cb', 'gray': '#808080', 'grey': '#808080', 'cyan': '#00ffff',
+    'magenta': '#ff00ff', 'lime': '#00ff00', 'navy': '#000080', 'teal': '#008080',
+    'maroon': '#800000', 'olive': '#808000', 'aqua': '#00ffff', 'silver': '#c0c0c0',
+    'gold': '#ffd700', 'coral': '#ff7f50', 'tomato': '#ff6347', 'salmon': '#fa8072',
+    'chocolate': '#d2691e', 'firebrick': '#b22222', 'indianred': '#cd5c5c',
+    'darkblue': '#00008b', 'darkgreen': '#006400', 'darkred': '#8b0000',
+    'lightblue': '#add8e6', 'lightgreen': '#90ee90', 'lightgray': '#d3d3d3',
+    'lightgrey': '#d3d3d3', 'darkgray': '#a9a9a9', 'darkgrey': '#a9a9a9',
+    'whitesmoke': '#f5f5f5', 'transparent': '#00000000',
+    'skyblue': '#87ceeb', 'steelblue': '#4682b4', 'royalblue': '#4169e1',
+    'dodgerblue': '#1e90ff', 'deepskyblue': '#00bfff', 'cornflowerblue': '#6495ed',
+    'cadetblue': '#5f9ea0', 'midnightblue': '#191970', 'slateblue': '#6a5acd',
+};
+function hexToColor(hex) {
+    hex = hex.replace('#', '');
+    let r, g, b, a = 1;
+    if (hex.length === 3) {
+        r = parseInt(hex[0] + hex[0], 16) / 255;
+        g = parseInt(hex[1] + hex[1], 16) / 255;
+        b = parseInt(hex[2] + hex[2], 16) / 255;
+    }
+    else if (hex.length === 6) {
+        r = parseInt(hex.substring(0, 2), 16) / 255;
+        g = parseInt(hex.substring(2, 4), 16) / 255;
+        b = parseInt(hex.substring(4, 6), 16) / 255;
+    }
+    else if (hex.length === 8) {
+        r = parseInt(hex.substring(0, 2), 16) / 255;
+        g = parseInt(hex.substring(2, 4), 16) / 255;
+        b = parseInt(hex.substring(4, 6), 16) / 255;
+        a = parseInt(hex.substring(6, 8), 16) / 255;
+    }
+    else {
+        return null;
+    }
+    if (isNaN(r) || isNaN(g) || isNaN(b)) {
+        return null;
+    }
+    return new vscode.Color(r, g, b, a);
+}
+function colorToHex(color) {
+    const r = Math.round(color.red * 255).toString(16).padStart(2, '0');
+    const g = Math.round(color.green * 255).toString(16).padStart(2, '0');
+    const b = Math.round(color.blue * 255).toString(16).padStart(2, '0');
+    if (color.alpha < 1) {
+        const a = Math.round(color.alpha * 255).toString(16).padStart(2, '0');
+        return `#${r}${g}${b}${a}`;
+    }
+    return `#${r}${g}${b}`;
+}
+function rgbToColor(r, g, b, a) {
+    return new vscode.Color(Math.min(255, Math.max(0, r)) / 255, Math.min(255, Math.max(0, g)) / 255, Math.min(255, Math.max(0, b)) / 255, a !== undefined ? Math.min(1, Math.max(0, a)) : 1);
+}
+function hslToRgb(h, s, l) {
+    h = h / 360;
+    s = s / 100;
+    l = l / 100;
+    let r, g, b;
+    if (s === 0) {
+        r = g = b = l;
+    }
+    else {
+        const hue2rgb = (p, q, t) => {
+            if (t < 0) {
+                t += 1;
+            }
+            if (t > 1) {
+                t -= 1;
+            }
+            if (t < 1 / 6) {
+                return p + (q - p) * 6 * t;
+            }
+            if (t < 1 / 2) {
+                return q;
+            }
+            if (t < 2 / 3) {
+                return p + (q - p) * (2 / 3 - t) * 6;
+            }
+            return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        r = hue2rgb(p, q, h + 1 / 3);
+        g = hue2rgb(p, q, h);
+        b = hue2rgb(p, q, h - 1 / 3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+}
+class VueColorProvider {
+    provideDocumentColors(document, _token) {
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        if (!config.get('enableColorPicker', false)) {
+            return [];
+        }
+        const text = document.getText();
+        const colors = [];
+        // Hex colors: #fff, #ffffff, #ffffffff
+        const hexRegex = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/g;
+        let match;
+        while ((match = hexRegex.exec(text)) !== null) {
+            const color = hexToColor(match[0]);
+            if (color) {
+                const pos = document.positionAt(match.index);
+                const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
+                colors.push(new vscode.ColorInformation(range, color));
+            }
+        }
+        // rgb(r, g, b) / rgba(r, g, b, a)
+        const rgbRegex = /rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([\d.]+))?\s*\)/g;
+        while ((match = rgbRegex.exec(text)) !== null) {
+            const r = parseInt(match[1]);
+            const g = parseInt(match[2]);
+            const b = parseInt(match[3]);
+            const a = match[4] !== undefined ? parseFloat(match[4]) : undefined;
+            const color = rgbToColor(r, g, b, a);
+            const pos = document.positionAt(match.index);
+            const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
+            colors.push(new vscode.ColorInformation(range, color));
+        }
+        // hsl(h, s%, l%) / hsla(h, s%, l%, a)
+        const hslRegex = /hsla?\(\s*(\d{1,3})\s*,\s*(\d{1,3})%?\s*,\s*(\d{1,3})%?(?:\s*,\s*([\d.]+))?\s*\)/g;
+        while ((match = hslRegex.exec(text)) !== null) {
+            const h = parseInt(match[1]);
+            const s = parseInt(match[2]);
+            const l = parseInt(match[3]);
+            const a = match[4] !== undefined ? parseFloat(match[4]) : undefined;
+            const [r, g, b] = hslToRgb(h, s, l);
+            const color = rgbToColor(r, g, b, a);
+            const pos = document.positionAt(match.index);
+            const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
+            colors.push(new vscode.ColorInformation(range, color));
+        }
+        // 命名颜色 (只在 style 属性或 CSS 上下文中)
+        if (document.languageId === 'css' || document.languageId === 'html') {
+            for (const [name, hex] of Object.entries(NAMED_COLORS)) {
+                const namedRegex = new RegExp(`(?<=[:;,\\s])\\b${name}\\b(?=[;,\\s}!])`, 'gi');
+                while ((match = namedRegex.exec(text)) !== null) {
+                    const color = hexToColor(hex);
+                    if (color) {
+                        const pos = document.positionAt(match.index);
+                        const range = new vscode.Range(pos, document.positionAt(match.index + match[0].length));
+                        colors.push(new vscode.ColorInformation(range, color));
+                    }
+                }
+            }
+        }
+        return colors;
+    }
+    provideColorPresentations(color, context, _token) {
+        const presentations = [];
+        const r = Math.round(color.red * 255);
+        const g = Math.round(color.green * 255);
+        const b = Math.round(color.blue * 255);
+        const a = color.alpha;
+        // Hex
+        presentations.push(new vscode.ColorPresentation(colorToHex(color)));
+        // RGB / RGBA
+        if (a < 1) {
+            presentations.push(new vscode.ColorPresentation(`rgba(${r}, ${g}, ${b}, ${a.toFixed(2)})`));
+        }
+        else {
+            presentations.push(new vscode.ColorPresentation(`rgb(${r}, ${g}, ${b})`));
+        }
+        return presentations;
+    }
+}
+exports.VueColorProvider = VueColorProvider;
+
+
+/***/ }),
+/* 208 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resilientParse = resilientParse;
+/**
+ * @file resilientParse.ts
+ * @description 容错式 Babel 解析器
+ *
+ * @babel/parser 的 errorRecovery 选项只处理 **parser 级别** 的结构错误，
+ * 不处理 **tokenizer 级别** 的致命错误（如未终止的字符串、正则、模板字面量等）。
+ *
+ * 本模块通过迭代修复策略处理 tokenizer 级别错误：
+ * 1. 首次尝试：正常解析（errorRecovery: true）
+ * 2. 若因 tokenizer 错误失败：mask 错误所在行 → 重试（最多 N 次）
+ * 3. 所有重试均失败后抛出最后一个错误
+ *
+ * 这样即使部分行不可解析，其余代码仍能产出有效 AST。
+ */
+const parser = __importStar(__webpack_require__(8));
+/** 最大修复重试次数（每次修复一行） */
+const MAX_FIX_RETRIES = 15;
+/**
+ * 容错式 Babel 解析
+ *
+ * 用法与 parser.parse() 相同，但遇到 tokenizer 级别错误时
+ * 会自动 mask 出错行并重试。
+ *
+ * @param content  待解析的 JS/TS 源码
+ * @param options  传递给 @babel/parser 的选项（errorRecovery 会被强制打开）
+ * @returns        解析后的 AST（File 节点）
+ */
+function resilientParse(content, options) {
+    const parseOptions = {
+        sourceType: 'module',
+        plugins: [
+            'jsx',
+            'typescript',
+            'decorators-legacy',
+            'classProperties',
+            'classPrivateProperties',
+            'classPrivateMethods',
+            'topLevelAwait',
+            'asyncGenerators',
+            'dynamicImport',
+            'objectRestSpread'
+        ],
+        ...options,
+        errorRecovery: true, // 始终开启
+    };
+    let currentContent = content;
+    const maskedLines = new Set();
+    for (let attempt = 0; attempt <= MAX_FIX_RETRIES; attempt++) {
+        try {
+            return parser.parse(currentContent, parseOptions);
+        }
+        catch (error) {
+            const lineNum = extractErrorLine(error);
+            // 无法定位 or 该行已 mask 过 → 无法继续修复
+            if (lineNum === null || maskedLines.has(lineNum)) {
+                throw error;
+            }
+            maskedLines.add(lineNum);
+            // 仅前几次打印日志，避免刷屏
+            if (maskedLines.size <= 5) {
+                const snippet = (error.message || '').substring(0, 80);
+                console.log(`[resilientParse] 修复第 ${lineNum} 行 (attempt ${attempt + 1}): ${snippet}`);
+            }
+            currentContent = maskLineInContent(currentContent, lineNum);
+        }
+    }
+    // fallback：不应到达此处（循环内最后一次迭代会 throw）
+    throw new Error(`[resilientParse] 超过最大修复次数 (${MAX_FIX_RETRIES})`);
+}
+// ─── helpers ───────────────────────────────────────────────
+/**
+ * 从 babel SyntaxError 中提取出错行号（1-based）
+ */
+function extractErrorLine(error) {
+    // babel 错误通常挂 .loc.line
+    if (error?.loc?.line && typeof error.loc.line === 'number') {
+        return error.loc.line;
+    }
+    // 降级：从 message 里匹配 "(line:column)"
+    const match = error?.message?.match(/\((\d+):\d+\)/);
+    return match ? parseInt(match[1], 10) : null;
+}
+/**
+ * 将指定行（1-based）替换为等长空格，保留换行符以维持行号对应关系
+ */
+function maskLineInContent(content, line) {
+    const lines = content.split('\n');
+    const idx = line - 1;
+    if (idx >= 0 && idx < lines.length) {
+        lines[idx] = ' '.repeat(lines[idx].length);
+    }
+    return lines.join('\n');
+}
+
+
+/***/ }),
+/* 209 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectReferenceContext = collectReferenceContext;
+exports.registerCopilotAnalyzer = registerCopilotAnalyzer;
+/**
+ * @file copilotAnalyzer.ts
+ * @description 接入 GitHub Copilot Chat，分析 Vue 变量/方法的引用上下文和逻辑关系
+ *
+ * 两种触发方式：
+ *   1. CodeLens 上的「🔍 分析」按钮 → 调用命令 leidong-tools.analyzeWithCopilot
+ *   2. Chat 参与者 @leidong-tools /analyze variableName
+ */
+const vscode = __importStar(__webpack_require__(2));
+const fs = __importStar(__webpack_require__(175));
+const path = __importStar(__webpack_require__(3));
+const parseDocument_1 = __webpack_require__(7);
+const CONTEXT_LINES = 10; // 默认较多
+function escapeRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+/**
+ * 获取带行号的代码片段（用于用户预览）
+ */
+function getSnippetWithLineNumbers(lines, startLine, endLine, highlightLine) {
+    const result = [];
+    for (let i = startLine; i <= endLine; i++) {
+        if (i < 0 || i >= lines.length)
+            continue;
+        const marker = (highlightLine !== undefined && i === highlightLine) ? ' >> ' : '    ';
+        result.push(`${marker}${i + 1}: ${lines[i]}`);
+    }
+    return result.join('\n');
+}
+/**
+ * 获取纯净的代码块（用于发送给 AI）
+ */
+function getCleanCodeBlock(lines, startLine, endLine) {
+    const result = [];
+    for (let i = startLine; i <= endLine; i++) {
+        if (i < 0 || i >= lines.length)
+            continue;
+        result.push(lines[i]);
+    }
+    return result.join('\n');
+}
+/**
+ * 收集某个标识符的所有引用上下文
+ */
+function collectReferenceContext(identifier, document) {
+    let vueIndex = null;
+    let jsText = '';
+    let jsFilePath = '';
+    let htmlTexts = [];
+    try {
+        if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
+            jsText = document.getText();
+            jsFilePath = document.uri.fsPath;
+            vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(jsText, document.uri, 0);
+            // 找关联 HTML
+            for (const doc of vscode.workspace.textDocuments) {
+                if (doc.languageId === 'html' && !doc.isClosed) {
+                    try {
+                        const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(doc);
+                        for (const sp of scriptPaths) {
+                            if (path.normalize(sp).toLowerCase() === path.normalize(jsFilePath).toLowerCase()) {
+                                htmlTexts.push({ file: doc.uri.fsPath, text: doc.getText() });
+                            }
+                        }
+                    }
+                    catch { /* */ }
+                }
+            }
+            // 目录约定
+            const dir = path.dirname(jsFilePath);
+            const parentDir = path.dirname(dir);
+            const baseName = path.basename(jsFilePath).replace(/\.dev\.js$/, '').replace(/\.js$/, '');
+            for (const c of [
+                path.join(parentDir, `${baseName}.html`),
+                path.join(parentDir, 'index.html'),
+            ]) {
+                if (fs.existsSync(c) && !htmlTexts.some(h => path.normalize(h.file).toLowerCase() === path.normalize(c).toLowerCase())) {
+                    try {
+                        htmlTexts.push({ file: c, text: fs.readFileSync(c, 'utf8') });
+                    }
+                    catch { /* */ }
+                }
+            }
+        }
+        else if (document.languageId === 'html') {
+            htmlTexts.push({ file: document.uri.fsPath, text: document.getText() });
+            vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            if (vueIndex) {
+                const def = (0, parseDocument_1.findDefinitionInIndex)(identifier, vueIndex);
+                if (def && def.uri.fsPath !== document.uri.fsPath) {
+                    jsFilePath = def.uri.fsPath;
+                    try {
+                        jsText = fs.readFileSync(jsFilePath, 'utf8');
+                    }
+                    catch { /* */ }
+                }
+            }
+        }
+    }
+    catch { /* */ }
+    // 确定 category
+    let category = 'unknown';
+    let componentSummary = '';
+    if (vueIndex) {
+        if (vueIndex.data.has(identifier)) {
+            category = 'data';
+        }
+        else if (vueIndex.methods.has(identifier)) {
+            category = 'methods';
+        }
+        else if (vueIndex.computed.has(identifier)) {
+            category = 'computed';
+        }
+        else if (vueIndex.props.has(identifier)) {
+            category = 'props';
+        }
+        else if (vueIndex.filters.has(identifier)) {
+            category = 'filters';
+        }
+        else if (vueIndex.mixinData.has(identifier)) {
+            category = 'mixin data';
+        }
+        else if (vueIndex.mixinMethods.has(identifier)) {
+            category = 'mixin methods';
+        }
+        else if (vueIndex.mixinComputed.has(identifier)) {
+            category = 'mixin computed';
+        }
+        // 构建组件概览，让 AI 理解大的上下文
+        const summaryParts = [];
+        if (vueIndex.props.size) {
+            summaryParts.push(`Props: ${Array.from(vueIndex.props.keys()).join(', ')}`);
+        }
+        if (vueIndex.data.size) {
+            summaryParts.push(`Data: ${Array.from(vueIndex.data.keys()).join(', ')}`);
+        }
+        if (vueIndex.computed.size) {
+            summaryParts.push(`Computed: ${Array.from(vueIndex.computed.keys()).join(', ')}`);
+        }
+        if (vueIndex.methods.size) {
+            summaryParts.push(`Methods: ${Array.from(vueIndex.methods.keys()).join(', ')}`);
+        }
+        componentSummary = summaryParts.join('\n');
+    }
+    // 全局函数
+    if (category === 'unknown' && jsText) {
+        const funcRe = new RegExp(`^function\\s+${escapeRegex(identifier)}\\s*\\(`, 'm');
+        if (funcRe.test(jsText)) {
+            category = 'function';
+        }
+    }
+    if (category === 'unknown' && !vueIndex) {
+        return null;
+    }
+    // 定义片段
+    let definitionSnippet = '';
+    let definitionLine = 0;
+    const jsLines = jsText ? jsText.split('\n') : [];
+    if (vueIndex) {
+        const loc = (0, parseDocument_1.findDefinitionInIndex)(identifier, vueIndex);
+        if (loc) {
+            definitionLine = loc.range.start.line;
+            // 使用 full range 获取完整定义
+            definitionSnippet = getCleanCodeBlock(jsLines, loc.range.start.line, loc.range.end.line);
+        }
+    }
+    if (!definitionSnippet && jsText) {
+        // 全局函数
+        const funcRe = new RegExp(`^function\\s+${escapeRegex(identifier)}\\s*\\(`, 'gm');
+        const fm = funcRe.exec(jsText);
+        if (fm) {
+            definitionLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            // 尝试找到函数结束
+            let braceCount = 0;
+            let endLine = definitionLine;
+            for (let i = definitionLine; i < jsLines.length && i < definitionLine + 300; i++) {
+                for (const ch of jsLines[i]) {
+                    if (ch === '{') {
+                        braceCount++;
+                    }
+                    if (ch === '}') {
+                        braceCount--;
+                    }
+                }
+                endLine = i;
+                if (braceCount <= 0 && i > definitionLine) {
+                    break;
+                }
+            }
+            definitionSnippet = getCleanCodeBlock(jsLines, definitionLine, endLine);
+        }
+    }
+    // JS 引用
+    const jsReferences = [];
+    if (jsText) {
+        const aliasPattern = `(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escapeRegex(identifier)}\\b`;
+        const directCallPattern = `\\b${escapeRegex(identifier)}\\s*\\(`;
+        const combined = new RegExp(`${aliasPattern}|${directCallPattern}`, 'g');
+        for (let i = 0; i < jsLines.length; i++) {
+            if (i === definitionLine) {
+                continue;
+            }
+            combined.lastIndex = 0;
+            if (combined.test(jsLines[i])) {
+                // 对于引用，我们也给一个较大的块（上下各 10 行）
+                const start = Math.max(0, i - 10);
+                const end = Math.min(jsLines.length - 1, i + 10);
+                jsReferences.push({
+                    file: jsFilePath,
+                    line: i + 1,
+                    snippet: getCleanCodeBlock(jsLines, start, end), // 给 AI 发纯净代码
+                });
+            }
+        }
+    }
+    // HTML 引用
+    const htmlReferences = [];
+    const identifierRe = new RegExp(`\\b${escapeRegex(identifier)}\\b`);
+    for (const { file, text } of htmlTexts) {
+        const hLines = text.split('\n');
+        for (let i = 0; i < hLines.length; i++) {
+            if (identifierRe.test(hLines[i])) {
+                // 查找该行所属的完整标签块
+                let start = i;
+                let end = i;
+                // 向上找 <
+                for (let k = i; k >= Math.max(0, i - 15); k--) {
+                    if (hLines[k].includes('<')) {
+                        start = k;
+                        break;
+                    }
+                }
+                // 向下找 >
+                for (let k = i; k < Math.min(hLines.length, i + 15); k++) {
+                    if (hLines[k].includes('>')) {
+                        end = k;
+                        break;
+                    }
+                }
+                htmlReferences.push({
+                    file,
+                    line: i + 1,
+                    snippet: getCleanCodeBlock(hLines, start, end),
+                });
+            }
+        }
+    }
+    return {
+        identifier,
+        category,
+        definitionSnippet,
+        definitionFile: jsFilePath,
+        definitionLine: definitionLine + 1,
+        componentSummary,
+        htmlReferences,
+        jsReferences,
+    };
+}
+// ─── 构建 Prompt ───
+/**
+ * 优化后的系统提示词：更专业、结构化、高效
+ */
+const SYSTEM_PROMPT = `你是一个资深的 Vue.js 与前端架构专家。你的任务是深度分析用户提供的代码标识符（变量、方法、计算属性等）在其所属 Vue 组件中的逻辑角色与生命周期。
+
+分析要求：
+1. **角色定义**：精准描述该标识符的业务含义与技术类型（如组件状态、副作用触发器、复杂逻辑封装等）。
+2. **数据追踪**：追踪其数据流（Sources -> Sinks）。它是如何初始化的？在何处被更改？通过什么事件或属性响应？
+3. **上下文依赖**：分析它与其他组件属性（data/props/computed/methods）或全局变量（Vuex/Store/EventBus）的交互关系。
+4. **DOM/模板映射**：详细说明在 HTML 模板中的具体表现（指令绑定、事件处理逻辑、条件渲染等）。
+5. **代码健康诊断**：指出潜在的风险点，如死代码、竞态条件、逻辑耦合度过高、类型不安全或 Vue 版本兼容性隐患。
+6. **优化建议**：提出具体的重构思路（如拆分子组件、改写为计算属性、内存管理建议等）。
+
+输出规范：
+- 使用结构清晰、美观的 Markdown 格式。
+- 采用专业、客观、简洁的风格，不要有废话。
+- 如果逻辑复杂，建议推荐使用 Mermaid 图表描述流程。
+- **重要：Mermaid 图表中的节点名称、连线描述必须全部使用中文。**
+- 必须使用中文回复。`;
+function buildAnalysisPrompt(ctx) {
+    const parts = [];
+    parts.push(`## 分析目标：\`${ctx.identifier}\`（${ctx.category}）\n`);
+    if (ctx.componentSummary) {
+        parts.push(`### 组件整体环境概览\n此标识符运行在如下环境中，请结合相关成员分析：\n\`\`\`text\n${ctx.componentSummary}\n\`\`\`\n`);
+    }
+    if (ctx.definitionSnippet) {
+        parts.push(`### 定义位置\n文件: ${path.basename(ctx.definitionFile)} 第 ${ctx.definitionLine} 行\n\`\`\`javascript\n${ctx.definitionSnippet}\n\`\`\`\n`);
+    }
+    if (ctx.jsReferences.length > 0) {
+        parts.push(`### JS 中的引用 (显示前 50 处)\n`);
+        const refs = ctx.jsReferences.slice(0, 50);
+        for (const ref of refs) {
+            parts.push(`**${path.basename(ref.file)}:${ref.line}**\n\`\`\`javascript\n${ref.snippet}\n\`\`\`\n`);
+        }
+        if (ctx.jsReferences.length > 50) {
+            parts.push(`... 以及其他 ${ctx.jsReferences.length - 50} 处 JS 引用\n`);
+        }
+    }
+    if (ctx.htmlReferences.length > 0) {
+        parts.push(`### HTML 模板中的引用 (显示前 30 处)\n`);
+        const refs = ctx.htmlReferences.slice(0, 30);
+        for (const ref of refs) {
+            parts.push(`**${path.basename(ref.file)}:${ref.line}**\n\`\`\`html\n${ref.snippet}\n\`\`\`\n`);
+        }
+        if (ctx.htmlReferences.length > 30) {
+            parts.push(`... 以及其他 ${ctx.htmlReferences.length - 30} 处 HTML 引用\n`);
+        }
+    }
+    return parts.join('\n');
+}
+// ─── Webview 渲染逻辑 ───
+/**
+ * 获取用于 Markdown 渲染的 HTML（使用 CDN 上的 marked.js）
+ */
+function getHtmlForAnalysis(webview, identifier) {
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' ${webview.cspSource}; script-src 'unsafe-inline' https://cdn.jsdelivr.net ${webview.cspSource};">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-editor-foreground);
+            padding: 24px;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        pre {
+            background-color: var(--vscode-textCodeBlock-background);
+            padding: 14px;
+            border-radius: 6px;
+            overflow: auto;
+            border: 1px solid var(--vscode-widget-border);
+        }
+        /* Mermaid 图表容器样式 - 黑色主题优化 */
+        .mermaid {
+            background-color: #1e1e1e; /* 深黑色背景 */
+            padding: 16px;
+            border-radius: 8px;
+            margin: 16px 0;
+            text-align: center;
+            border: 1px solid #333;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        code {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 0.9em;
+        }
+        h1, h2, h3 {
+            color: var(--vscode-symbolIcon-methodForeground);
+            border-bottom: 1px solid var(--vscode-textSeparator-foreground);
+            padding-bottom: 10px;
+            margin-top: 32px;
+        }
+        h1 { font-size: 1.8em; margin-top: 0; }
+
+        /* 代码预览区域样式 */
+        #preview-area {
+            margin-bottom: 24px;
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 6px;
+            background-color: var(--vscode-sideBar-background);
+            overflow: hidden;
+        }
+        .preview-header {
+            padding: 10px 16px;
+            background-color: var(--vscode-editor-lineHighlightBackground);
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: bold;
+            font-size: 0.9em;
+            color: var(--vscode-descriptionForeground);
+        }
+        .preview-header:hover {
+            background-color: var(--vscode-list-hoverBackground);
+        }
+        .preview-content {
+            padding: 12px;
+            display: none; /* 默认隐藏 */
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .preview-item {
+            margin-bottom: 16px;
+        }
+        .preview-item-title {
+            font-size: 0.8em;
+            color: var(--vscode-textLink-foreground);
+            margin-bottom: 4px;
+        }
+        .preview-item pre {
+            margin: 0;
+            padding: 8px;
+            font-size: 0.85em;
+        }
+
+        blockquote {
+            background: var(--vscode-textBlockQuote-background);
+        .loading {
+            font-style: italic;
+            opacity: 0.7;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 20px;
+            padding: 10px;
+            background: var(--vscode-badge-background);
+            border-radius: 4px;
+            width: fit-content;
+        }
+        .loading::after {
+            content: "";
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--vscode-progressBar-background);
+            border-top: 2px solid transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #content {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>AI 深度分析: ${identifier}</h1>
+    </div>
+
+    <!-- 新增：上下文预览区域（默认折叠） -->
+    <div id="preview-area">
+        <div class="preview-header" onclick="togglePreview()">
+            <span>📦 本次分析收集的上下文 (供 AI 参考)</span>
+            <span id="preview-arrow">▼</span>
+        </div>
+        <div id="preview-content" class="preview-content">
+            <p style="font-size: 0.85em; opacity: 0.7;">正在整理定义与引用信息...</p>
+        </div>
+    </div>
+
+    <div id="content">正在收集数据流与上下文信息...</div>
+    <div id="status" class="loading">AI 思考中...</div>
+
+    <script>
+        const contentDiv = document.getElementById('content');
+        const previewContent = document.getElementById('preview-content');
+        const statusDiv = document.getElementById('status');
+        const arrow = document.getElementById('preview-arrow');
+        let fullMarkdown = "";
+        let isFirstFragment = true;
+
+        function togglePreview() {
+            const isVisible = previewContent.style.display === 'block';
+            previewContent.style.display = isVisible ? 'none' : 'block';
+            arrow.innerText = isVisible ? '▼' : '▲';
+        }
+
+        const isDark = document.body.classList.contains('vscode-dark');
+        mermaid.initialize({ 
+            startOnLoad: false, 
+            theme: 'dark', // 强制使用黑色主题
+            securityLevel: 'loose' 
+        });
+
+        const renderer = new marked.Renderer();
+        const baseCode = renderer.code.bind(renderer);
+        renderer.code = function(code, lang) {
+            // 老版本 marked 为 (code, lang)，新版本为 (token)
+            const text = typeof code === 'object' ? code.text : code;
+            const infostring = typeof code === 'object' ? code.lang : lang;
+            if (infostring === 'mermaid') {
+                return '<div class="mermaid">' + text + '</div>';
+            }
+            return baseCode(code, lang);
+        };
+        marked.setOptions({ renderer });
+
+        async function render() {
+            contentDiv.innerHTML = marked.parse(fullMarkdown);
+            try {
+                // 如果图表还不完整（还在流式输出中），mermaid.run 可能抛错，我们将其静默
+                await mermaid.run({ querySelector: '.mermaid' });
+            } catch (e) {
+                // 静默由于流式输出导致的图变解析错误
+            }
+        }
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            switch (message.type) {
+                case 'refCtx':
+                    renderRefCtx(message.data);
+                    break;
+                case 'append':
+                    if (isFirstFragment && message.text) {
+                        contentDiv.innerHTML = "";
+                        isFirstFragment = false;
+                    }
+                    fullMarkdown += message.text;
+                    render();
+                    window.scrollTo(0, document.body.scrollHeight);
+                    break;
+                case 'done':
+                    statusDiv.style.display = 'none';
+                    render(); // 最终渲染一次，确保图表闭合
+                    break;
+                case 'error':
+                    statusDiv.innerHTML = '<span style="color:var(--vscode-errorForeground)">❌ 分析中止: ' + message.text + '</span>';
+                    statusDiv.classList.remove('loading');
+                    break;
+            }
+        });
+
+        function renderRefCtx(ctx) {
+            let html = "";
+            
+            // 定义
+            if (ctx.definitionSnippet) {
+                html += '<div class="preview-item">';
+                html += '<div class="preview-item-title">定义: ' + (ctx.definitionFile.split("/").pop().split("\\\\").pop()) + ':' + ctx.definitionLine + '</div>';
+                html += '<pre>' + escapeHtml(ctx.definitionSnippet) + '</pre>';
+                html += '</div>';
+            }
+
+            // JS 引用
+            if (ctx.jsReferences && ctx.jsReferences.length > 0) {
+                ctx.jsReferences.forEach((ref, idx) => {
+                   html += '<div class="preview-item">';
+                   html += '<div class="preview-item-title">JS 引用 #' + (idx+1) + ': ' + (ref.file.split("/").pop().split("\\\\").pop()) + ':' + ref.line + '</div>';
+                   html += '<pre>' + escapeHtml(ref.snippet) + '</pre>';
+                   html += '</div>';
+                });
+            }
+
+            // HTML 引用
+            if (ctx.htmlReferences && ctx.htmlReferences.length > 0) {
+                ctx.htmlReferences.forEach((ref, idx) => {
+                   html += '<div class="preview-item">';
+                   html += '<div class="preview-item-title">HTML 引用 #' + (idx+1) + ': ' + (ref.file.split("/").pop().split("\\\\").pop()) + ':' + ref.line + '</div>';
+                   html += '<pre>' + escapeHtml(ref.snippet) + '</pre>';
+                   html += '</div>';
+                });
+            }
+
+            previewContent.innerHTML = html;
+        }
+
+        function escapeHtml(text) {
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+    </script>
+</body>
+</html>`;
+}
+// ─── 模型选择逻辑 ───
+const LAST_MODEL_KEY = 'leidong-tools.lastSelectedModelId';
+async function selectChatModel(context) {
+    const config = vscode.workspace.getConfiguration('leidong-tools');
+    const configModelId = config.get('aiModel');
+    const allModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+    if (allModels.length === 0) {
+        return undefined;
+    }
+    // 1. 优先使用「设置」里手动指定的模型（用户强力干预）
+    if (configModelId) {
+        const found = allModels.find(m => m.id === configModelId || m.name === configModelId);
+        if (found) {
+            return found;
+        }
+    }
+    // 2. 其次使用「上次选择」的模型（保持一致性）
+    const lastModelId = context.globalState.get(LAST_MODEL_KEY);
+    if (lastModelId) {
+        const found = allModels.find(m => m.id === lastModelId);
+        if (found) {
+            return found;
+        }
+    }
+    // 3. 都没有，则弹框让用户明确选择一次，并保存
+    const items = allModels.map(m => ({
+        label: `$(sparkle) ${m.name || m.id}`,
+        description: `${m.vendor} / ${m.family}`,
+        detail: `API 版本: ${m.version}`,
+        model: m
+    }));
+    const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: '请选择本次分析使用的 AI 模型',
+        title: '雷动三千 - AI 模型选择'
+    });
+    if (selected) {
+        // 保存本次选择，下次默认跳过弹框
+        context.globalState.update(LAST_MODEL_KEY, selected.model.id);
+        return selected.model;
+    }
+    return undefined;
+}
+// ─── Chat Participant ───
+const PARTICIPANT_ID = 'leidong-tools.analyzer';
+function registerCopilotAnalyzer(context) {
+    // 1. 注册 Chat 参与者 @leidong-tools (保持兼容，但优化 Prompt)
+    const handler = async (request, chatContext, stream, token) => {
+        const identifier = request.prompt.trim();
+        if (!identifier) {
+            stream.markdown('请提供分析目标。用法：`@leidong-tools /analyze variableName`');
+            return { metadata: { command: '' } };
+        }
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            stream.markdown('请先打开一个 Vue/JS/HTML 文件。');
+            return { metadata: { command: '' } };
+        }
+        const refCtx = collectReferenceContext(identifier, editor.document);
+        if (!refCtx) {
+            stream.markdown(`未能解析 \`${identifier}\` 的上下文。`);
+            return { metadata: { command: '' } };
+        }
+        const contextText = buildAnalysisPrompt(refCtx);
+        try {
+            const model = await selectChatModel(context);
+            if (!model) {
+                stream.markdown('❌ 未选择模型或无可用模型。');
+                return { metadata: { command: 'analyze' } };
+            }
+            const messages = [
+                vscode.LanguageModelChatMessage.User(SYSTEM_PROMPT),
+                vscode.LanguageModelChatMessage.User(contextText),
+            ];
+            const response = await model.sendRequest(messages, {}, token);
+            for await (const fragment of response.text) {
+                stream.markdown(fragment);
+            }
+        }
+        catch (err) {
+            stream.markdown(`⚠️ 异常: ${err.message}`);
+        }
+        return { metadata: { command: 'analyze' } };
+    };
+    const participant = vscode.chat.createChatParticipant(PARTICIPANT_ID, handler);
+    participant.iconPath = new vscode.ThemeIcon('hubot');
+    context.subscriptions.push(participant);
+    // 2. 注册核心命令：独立窗口 AI 分析分析
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.analyzeWithCopilot', async (identifier, documentUri) => {
+        // 检查开关
+        const isEnabled = vscode.workspace.getConfiguration('leidong-tools').get('enableAIAnalysis', false);
+        if (!isEnabled) {
+            const act = await vscode.window.showWarningMessage('AI 分析功能尚未开启，是否前往设置开启？', '去开启');
+            if (act === '去开启') {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'leidong-tools.enableAIAnalysis');
+            }
+            return;
+        }
+        // 获取当前正在编辑的文件或传入的文件
+        let doc;
+        if (documentUri) {
+            doc = await vscode.workspace.openTextDocument(documentUri);
+        }
+        else {
+            doc = vscode.window.activeTextEditor?.document;
+        }
+        if (!doc) {
+            vscode.window.showErrorMessage('无法获取待分析文档。');
+            return;
+        }
+        // 如果 identifier 是空的，提示输入
+        if (!identifier) {
+            identifier = await vscode.window.showInputBox({ prompt: '请输入要分析的变量或方法名' }) || '';
+        }
+        if (!identifier) {
+            return;
+        }
+        // 准备 Webview 窗口
+        const panel = vscode.window.createWebviewPanel('aiAnalysis', `AI 分析: ${identifier}`, vscode.ViewColumn.Beside, {
+            enableScripts: true,
+            retainContextWhenHidden: true
+        });
+        panel.webview.html = getHtmlForAnalysis(panel.webview, identifier);
+        // 逻辑执行
+        try {
+            const refCtx = collectReferenceContext(identifier, doc);
+            if (!refCtx) {
+                panel.webview.postMessage({ type: 'error', text: '未找到该标识符的定义或引用上下文。' });
+                return;
+            }
+            // 展示在预览区域
+            panel.webview.postMessage({ type: 'refCtx', data: refCtx });
+            const model = await selectChatModel(context);
+            if (!model) {
+                panel.webview.postMessage({ type: 'error', text: '已取消模型选择。' });
+                return;
+            }
+            const contextText = buildAnalysisPrompt(refCtx);
+            const messages = [
+                vscode.LanguageModelChatMessage.User(SYSTEM_PROMPT),
+                vscode.LanguageModelChatMessage.User(contextText),
+            ];
+            const response = await model.sendRequest(messages, {}, new vscode.CancellationTokenSource().token);
+            panel.webview.postMessage({ type: 'append', text: '' }); // 清除初始文字
+            for await (const fragment of response.text) {
+                panel.webview.postMessage({ type: 'append', text: fragment });
+            }
+            panel.webview.postMessage({ type: 'done' });
+        }
+        catch (err) {
+            panel.webview.postMessage({ type: 'error', text: err.message || '未知错误' });
+        }
+    }));
+}
+
+
 /***/ })
 /******/ 	]);
 /************************************************************************/
@@ -55393,9 +56243,9 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
-const providers_1 = __webpack_require__(190);
-const indexManager_1 = __webpack_require__(207);
-const vueDiagnosticsProvider_1 = __webpack_require__(208);
+const providers_1 = __webpack_require__(189);
+const indexManager_1 = __webpack_require__(202);
+const vueDiagnosticsProvider_1 = __webpack_require__(203);
 /**
  * Extension activation function
  */

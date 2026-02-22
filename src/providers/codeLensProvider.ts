@@ -142,21 +142,22 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
     let jsText = '';
 
     try {
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+        if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
             vueIndex = getOrCreateVueIndexFromContent(jsText, document.uri, 0);
+            
+            // 找关联 HTML (对独立 JS/Vue 而言)
             const htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
             const htmlFileSet = new Set(htmlFiles.map(f => normalizePath(f)));
             for (const hf of htmlFiles) {
                 try {
-                    // 优先使用已打开的文档（获取最新编辑内容）
                     const openDoc = vscode.workspace.textDocuments.find(
                         d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed
                     );
                     htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
                 } catch { /* */ }
             }
-            // 补充：未被目录约定找到的、但已打开的 HTML 文档
+            // 补充 HTML 文档
             for (const doc of vscode.workspace.textDocuments) {
                 if (doc.languageId === 'html' && !doc.isClosed
                     && !htmlFileSet.has(normalizePath(doc.uri.fsPath))) {
@@ -179,9 +180,10 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
 
     const infos: RefCountInfo[] = [];
 
+    const normalizedCurrentPath = normalizePath(document.uri.fsPath);
     const collect = (map: Map<string, vscode.Location>, category: string) => {
         map.forEach((loc, name) => {
-            if (loc.uri.fsPath !== document.uri.fsPath) { return; }
+            if (normalizePath(loc.uri.fsPath) !== normalizedCurrentPath) { return; }
             let count = 0;
             if (htmlText) { count += countReferencesInHtml(htmlText, name); }
             if (jsText) { count += countReferencesInJs(jsText, name, loc.range.start.line); }
@@ -242,9 +244,13 @@ export class VueCodeLensProvider implements vscode.CodeLensProvider {
         _token: vscode.CancellationToken
     ): vscode.CodeLens[] | null {
         const config = vscode.workspace.getConfiguration('leidong-tools');
-        if (!config.get<boolean>('enableCodeLens', false)) { return null; }
+        const enableRefCount = config.get<boolean>('enableCodeLens', false);
+        const enableAI = config.get<boolean>('enableAIAnalysis', false);
         const pos = config.get<string>('codeLensPosition', 'above');
-        if (pos !== 'above') { return null; }
+
+        // 如果两个都关了，或者不是 above 模式且 AI 没开启（AI 目前只通过 CodeLens 展示），则返回 null
+        if (!enableRefCount && !enableAI) { return null; }
+        if (pos !== 'above' && !enableAI) { return null; }
 
         const cacheKey = document.uri.toString();
         const cached = this.cache.get(cacheKey);
@@ -256,13 +262,27 @@ export class VueCodeLensProvider implements vscode.CodeLensProvider {
         const lenses: vscode.CodeLens[] = [];
         for (const info of infos) {
             const range = new vscode.Range(info.line, 0, info.line, 0);
-            const title = info.count > 0 ? `引用 ${info.count} 次` : '未引用';
-            lenses.push(new vscode.CodeLens(range, {
-                title: `$(references) ${title}`,
-                command: info.count > 0 ? 'editor.action.findReferences' : '',
-                arguments: info.count > 0 ? [document.uri, info.loc.range.start] : undefined,
-                tooltip: `${info.category}.${info.name} - ${title}`
-            }));
+
+            // 1. 引用计数按钮 (仅且仅当 enableCodeLens=true 且 pos=above)
+            if (enableRefCount && pos === 'above') {
+                const title = info.count > 0 ? `引用 ${info.count} 次` : '未引用';
+                lenses.push(new vscode.CodeLens(range, {
+                    title: `$(references) ${title}`,
+                    command: info.count > 0 ? 'editor.action.findReferences' : '',
+                    arguments: info.count > 0 ? [document.uri, info.loc.range.start] : undefined,
+                    tooltip: `${info.category}.${info.name} - ${title}`
+                }));
+            }
+
+            // 2. AI 分析按钮 (仅当 enableAIAnalysis=true)
+            if (enableAI) {
+                lenses.push(new vscode.CodeLens(range, {
+                    title: `$(sparkle) AI 分析`,
+                    command: 'leidong-tools.analyzeWithCopilot',
+                    arguments: [info.name, document.uri],
+                    tooltip: `使用 AI 深度分析 ${info.name}`
+                }));
+            }
         }
 
         this.cache.set(cacheKey, { version: document.version, lenses });

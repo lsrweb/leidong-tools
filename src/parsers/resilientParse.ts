@@ -35,7 +35,18 @@ export function resilientParse(
 ): File {
     const parseOptions: ParserOptions = {
         sourceType: 'module',
-        plugins: ['jsx', 'typescript'],
+        plugins: [
+            'jsx', 
+            'typescript', 
+            'decorators-legacy', 
+            'classProperties', 
+            'classPrivateProperties', 
+            'classPrivateMethods',
+            'topLevelAwait',
+            'asyncGenerators',
+            'dynamicImport',
+            'objectRestSpread'
+        ],
         ...options,
         errorRecovery: true, // 始终开启
     };
