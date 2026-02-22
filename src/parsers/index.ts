@@ -4,3 +4,4 @@
 export * from './astParser';
 export * from './parseDocument';
 export * from './jsSymbolParser';
+export * from './resilientParse';

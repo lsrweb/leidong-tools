@@ -335,21 +335,13 @@ export class EnhancedDefinitionLogic {
                 const root = parts[0];
                 const prop = parts[parts.length - 1];
                 
-                if (root === 'this' || root === 'that') {
-                    return { 
-                        word: prop, 
-                        contextType: root === 'this' ? 'this' : 'that', 
-                        fullChain: full 
-                    };
+                if (root === 'this') {
+                    return { word: prop, contextType: 'this', fullChain: full };
                 }
                 
-                // 检测 this 别名
-                if (this.isThisAlias(document, position, root)) {
-                    return { 
-                        word: prop, 
-                        contextType: 'alias', 
-                        fullChain: full 
-                    };
+                // 检测 this 别名（含 that / _this / self / vm 等）
+                if (root === 'that' || this.isThisAlias(document, position, root)) {
+                    return { word: prop, contextType: 'alias', fullChain: full };
                 }
             }
         }
@@ -374,16 +366,33 @@ export class EnhancedDefinitionLogic {
     }
 
     /**
+     * 常见 this 别名集合（无需回扫即可识别）
+     */
+    private static readonly COMMON_THIS_ALIASES = new Set([
+        'that', '_this', 'self', '_self', 'vm', '_vm', 'me', 'ctx', 'app',
+        'this_', 'thisObj', 'instance', 'inst', 'vueInstance', 'vueInst'
+    ]);
+
+    /**
      * 判断某标识符是否为 this 的别名
+     * 1. 先检查常见别名列表（零成本）
+     * 2. 再向上回扫最多 500 行，匹配 xxx = this 赋值模式
      */
     private isThisAlias(
         document: vscode.TextDocument, 
         position: vscode.Position, 
         alias: string
     ): boolean {
-        const maxScan = 400;
+        // 快速路径：常见别名
+        if (EnhancedDefinitionLogic.COMMON_THIS_ALIASES.has(alias)) {
+            return true;
+        }
+
+        const maxScan = 500;
         const startLine = Math.max(0, position.line - maxScan);
-        const aliasPattern = new RegExp(`\\b(?:const|let|var)?\\s*${alias}\\s*=\\s*this\\b`);
+        // 支持多种赋值模式：var/let/const xxx = this; xxx = this;
+        const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const aliasPattern = new RegExp(`(?:(?:const|let|var)\\s+)?${escapedAlias}\\s*=\\s*this(?:\\s*[;,]|\\s*$)`);
         
         for (let line = position.line; line >= startLine; line--) {
             const text = document.lineAt(line).text;

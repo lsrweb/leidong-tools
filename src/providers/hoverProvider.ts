@@ -4,6 +4,7 @@ import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { jsSymbolParser } from '../parsers/jsSymbolParser';
 import { getTemplateLiteralAtPosition } from '../helpers/templateLiteralHelper';
+import { getRefCountAtLine } from './codeLensProvider';
 
 export class VueHoverProvider implements vscode.HoverProvider {
     private hoverTimeout: NodeJS.Timeout | null = null;
@@ -88,9 +89,22 @@ export class VueHoverProvider implements vscode.HoverProvider {
             if (isData && vueIndex.watch?.has(word)) {
                 parts.push(`👁️ Watched`);
             }
+            // 类型推断信息
+            if (isData && dataMeta) {
+                const typeParts: string[] = [];
+                if (dataMeta.initType) { typeParts.push(`Type: \`${dataMeta.initType}\``); }
+                if (dataMeta.initValue) { typeParts.push(`Init: \`${dataMeta.initValue}\``); }
+                if (typeParts.length > 0) { parts.push(typeParts.join(' | ')); }
+            }
             const doc = meta?.doc || dataMeta?.doc || propMeta?.doc;
             if (doc) {
                 parts.push(doc);
+            }
+            // hover 模式引用计数
+            const refInfo = getRefCountAtLine(document, def.range.start.line);
+            if (refInfo) {
+                const refLabel = refInfo.count > 0 ? `📊 引用 ${refInfo.count} 次` : '📊 未引用';
+                parts.push(refLabel);
             }
             parts.push(`Defined at ${def.uri.fsPath}:${def.range.start.line + 1}`);
             return new vscode.Hover(new vscode.MarkdownString(parts.join('\n\n')), wordRange);
@@ -100,7 +114,12 @@ export class VueHoverProvider implements vscode.HoverProvider {
         if (document.languageId === 'html') {
             const templateVar = findTemplateVar(document, position, word);
             if (templateVar) {
-                return new vscode.Hover(new vscode.MarkdownString(`**Template Variable**: ${word}\n\nScope: \`local\`\n\nDefined at line ${templateVar.range.start.line + 1}`), wordRange);
+                // 尝试推断 v-for 循环变量的类型
+                const inferredType = this.inferTemplateVarType(document, position, word);
+                const parts = [`**Template Variable**: ${word}`, `Scope: \`local\``];
+                if (inferredType) { parts.push(inferredType); }
+                parts.push(`Defined at line ${templateVar.range.start.line + 1}`);
+                return new vscode.Hover(new vscode.MarkdownString(parts.join('\n\n')), wordRange);
             }
 
             // 检查Vue索引
@@ -152,6 +171,44 @@ export class VueHoverProvider implements vscode.HoverProvider {
             }
         }
 
+        return null;
+    }
+
+    /**
+     * 推断模板局部变量类型（v-for 迭代变量）
+     * 例如 v-for="item in userList" → 查找 userList 的 dataMeta.initType
+     */
+    private inferTemplateVarType(document: vscode.TextDocument, position: vscode.Position, word: string): string | null {
+        // 向上搜索找到定义该变量的 v-for
+        const maxScanLines = 30;
+        const startLine = Math.max(0, position.line - maxScanLines);
+        for (let line = position.line; line >= startLine; line--) {
+            const lineText = document.lineAt(line).text;
+            // v-for="item in list" / v-for="(item, index) in list" / v-for="item of list"
+            const vforMatch = /v-for\s*=\s*["'](?:\(?\s*(\w+)(?:\s*,\s*\w+)*\s*\)?\s+(?:in|of)\s+(\w[\w.]*))\s*["']/.exec(lineText);
+            if (vforMatch) {
+                const iterVar = vforMatch[1];
+                const sourceVar = vforMatch[2];
+                if (iterVar === word && sourceVar) {
+                    // 查找 sourceVar 的类型
+                    const vueIndex = resolveVueIndexForHtml(document);
+                    if (vueIndex) {
+                        const meta = vueIndex.dataMeta.get(sourceVar);
+                        if (meta?.initType) {
+                            const elementType = meta.initType.replace(/^Array<(.*)>$/, '$1').replace(/^Array$/, 'unknown');
+                            return `Iterating \`${sourceVar}\`: \`${meta.initType}\`\n\nElement type: \`${elementType}\`${meta.initValue ? `\n\nInit: \`${meta.initValue}\`` : ''}`;
+                        }
+                        // 即使没有类型推断也显示来源
+                        if (vueIndex.data.has(sourceVar)) {
+                            return `Iterating \`${sourceVar}\` (data)`;
+                        }
+                        if (vueIndex.computed.has(sourceVar)) {
+                            return `Iterating \`${sourceVar}\` (computed)`;
+                        }
+                    }
+                }
+            }
+        }
         return null;
     }
 }

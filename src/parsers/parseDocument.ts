@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as parser from '@babel/parser';
+import { resilientParse } from './resilientParse';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
 import * as fs from 'fs';
@@ -25,7 +26,7 @@ export interface VueIndex {
     mixinMethods: Map<string, vscode.Location>;
     mixinComputed: Map<string, vscode.Location>;
     all: Map<string, vscode.Location>; // 合并所有
-    dataMeta: Map<string, { doc?: string }>;
+    dataMeta: Map<string, { doc?: string; initType?: string; initValue?: string }>;
     methodMeta: Map<string, { params: string[]; doc?: string }>;
     computedMeta: Map<string, { params: string[]; doc?: string }>;
     propsMeta: Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>;
@@ -82,7 +83,7 @@ function maskInjectedTemplate(match: string): string {
 // 清理 PHP 等干扰项
 function sanitizeContent(raw: string): string {
     return raw
-        .replace(/<\?(=|php)?[\s\S]*?\?>/g, maskInjectedTemplate)
+        .replace(/<\?(=|php\b|\s)[\s\S]*?\?>/g, maskInjectedTemplate)
         .replace(/\{\{[\s\S]*?\}\}/g, maskInjectedTemplate);
 }
 
@@ -91,7 +92,7 @@ function sanitizeContent(raw: string): string {
  */
 function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueIndex {
     const clean = sanitizeContent(jsContent);
-    const ast = parser.parse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'], errorRecovery: true });
+    const ast = resilientParse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
 
     const contentHash = fastHash(jsContent);
     const sourceLines = jsContent.split(/\r?\n/);
@@ -108,7 +109,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const mixinData = new Map<string, vscode.Location>();
     const mixinMethods = new Map<string, vscode.Location>();
     const mixinComputed = new Map<string, vscode.Location>();
-    const dataMeta = new Map<string, { doc?: string }>();
+    const dataMeta = new Map<string, { doc?: string; initType?: string; initValue?: string }>();
     const methodMeta = new Map<string, { params: string[]; doc?: string }>();
     const computedMeta = new Map<string, { params: string[]; doc?: string }>();
     const propsMeta = new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>();
@@ -171,7 +172,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         mixinMethods: new Map<string, vscode.Location>(),
         mixinComputed: new Map<string, vscode.Location>(),
         all: new Map<string, vscode.Location>(),
-        dataMeta: new Map<string, { doc?: string }>(),
+        dataMeta: new Map<string, { doc?: string; initType?: string; initValue?: string }>(),
         methodMeta: new Map<string, { params: string[]; doc?: string }>(),
         computedMeta: new Map<string, { params: string[]; doc?: string }>(),
         propsMeta: new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>(),
@@ -188,11 +189,45 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         }
     };
 
+    /** 从 data 属性初始值推断类型 */
+    const inferDataType = (valueNode: t.Node): { initType?: string; initValue?: string } => {
+        if (t.isStringLiteral(valueNode)) { return { initType: 'string', initValue: `'${valueNode.value.length > 50 ? valueNode.value.substring(0, 50) + '...' : valueNode.value}'` }; }
+        if (t.isNumericLiteral(valueNode)) { return { initType: 'number', initValue: String(valueNode.value) }; }
+        if (t.isBooleanLiteral(valueNode)) { return { initType: 'boolean', initValue: String(valueNode.value) }; }
+        if (t.isNullLiteral(valueNode)) { return { initType: 'null', initValue: 'null' }; }
+        if (t.isArrayExpression(valueNode)) {
+            const len = valueNode.elements.length;
+            if (len === 0) { return { initType: 'Array', initValue: '[]' }; }
+            // 推断元素类型
+            const first = valueNode.elements[0];
+            if (first) {
+                if (t.isObjectExpression(first)) { return { initType: 'Array<Object>', initValue: `[{...}] (${len})` }; }
+                if (t.isStringLiteral(first)) { return { initType: 'Array<string>', initValue: `[...] (${len})` }; }
+                if (t.isNumericLiteral(first)) { return { initType: 'Array<number>', initValue: `[...] (${len})` }; }
+            }
+            return { initType: 'Array', initValue: `[...] (${len})` };
+        }
+        if (t.isObjectExpression(valueNode)) {
+            const keys = valueNode.properties
+                .filter(p => t.isObjectProperty(p))
+                .map(p => getPropertyName((p as t.ObjectProperty).key))
+                .filter(Boolean);
+            if (keys.length === 0) { return { initType: 'Object', initValue: '{}' }; }
+            if (keys.length <= 5) { return { initType: 'Object', initValue: `{ ${keys.join(', ')} }` }; }
+            return { initType: 'Object', initValue: `{ ${keys.slice(0, 5).join(', ')}, ... }` };
+        }
+        if (t.isTemplateLiteral(valueNode)) { return { initType: 'string', initValue: '`...`' }; }
+        if (t.isNewExpression(valueNode) && t.isIdentifier(valueNode.callee)) { return { initType: valueNode.callee.name, initValue: `new ${valueNode.callee.name}()` }; }
+        if (t.isUnaryExpression(valueNode) && valueNode.operator === '-' && t.isNumericLiteral(valueNode.argument)) { return { initType: 'number', initValue: `-${valueNode.argument.value}` }; }
+        if (t.isIdentifier(valueNode) && valueNode.name === 'undefined') { return { initType: 'undefined', initValue: 'undefined' }; }
+        return {};
+    };
+
     const extractData = (
         node: t.Node | null | undefined,
         lineOffset: number,
         target: Map<string, vscode.Location>,
-        metaTarget?: Map<string, { doc?: string }>
+        metaTarget?: Map<string, { doc?: string; initType?: string; initValue?: string }>
     ) => {
         if (!node) { return; }
         let obj: t.ObjectExpression | null = null;
@@ -232,8 +267,9 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                 const loc = new vscode.Location(uri, new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column));
                 target.set(name, loc);
                 const doc = getDocForDataProperty(prop);
-                if (doc && metaTarget && !metaTarget.has(name)) {
-                    metaTarget.set(name, { doc });
+                const initInfo = inferDataType(prop.value);
+                if (metaTarget && !metaTarget.has(name)) {
+                    metaTarget.set(name, { doc: doc || undefined, ...initInfo });
                 }
             }
         }
@@ -674,7 +710,8 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                 if (!t.isIdentifier(callee.property, { name: '$emit' })) { return; }
                 // this.$emit('eventName', ...) or that.$emit(...)
                 const obj = callee.object;
-                if (!t.isThisExpression(obj) && !(t.isIdentifier(obj) && (obj.name === 'that' || obj.name === 'self' || obj.name === 'vm'))) { return; }
+                const THIS_ALIASES = ['that', '_this', 'self', '_self', 'vm', '_vm', 'me', 'ctx', 'app', 'this_', 'thisObj', 'instance', 'inst'];
+                if (!t.isThisExpression(obj) && !(t.isIdentifier(obj) && THIS_ALIASES.includes(obj.name))) { return; }
                 const firstArg = p.node.arguments[0];
                 if (t.isStringLiteral(firstArg) && p.node.loc) {
                     const eventName = firstArg.value;
@@ -874,6 +911,10 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     value.elements.forEach(el => {
                         if (t.isIdentifier(el)) { mixinVars.push(el.name); }
                         else if (t.isObjectExpression(el)) { mixinObjects.push(el); }
+                        // mixins: [fanganMixin()] — 函数调用形式的 mixin
+                        else if (t.isCallExpression(el) && t.isIdentifier(el.callee)) {
+                            mixinVars.push(el.callee.name);
+                        }
                     });
                 }
             }
@@ -1279,7 +1320,7 @@ function createEmptyVueIndex(): VueIndex {
         mixinMethods: new Map<string, vscode.Location>(),
         mixinComputed: new Map<string, vscode.Location>(),
         all: new Map<string, vscode.Location>(),
-        dataMeta: new Map<string, { doc?: string }>(),
+        dataMeta: new Map<string, { doc?: string; initType?: string; initValue?: string }>(),
         methodMeta: new Map<string, { params: string[]; doc?: string }>(),
         computedMeta: new Map<string, { params: string[]; doc?: string }>(),
         propsMeta: new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>(),
@@ -1404,7 +1445,8 @@ export function findChainedRootDefinition(chainText: string, index: VueIndex): v
     const parts = chainText.split('.').filter(Boolean);
     if (parts.length === 0) { return null; }
     // 根 token 可能是 this / that
-    if (parts[0] === 'this' || parts[0] === 'that') {
+    const THIS_ALIAS_SET = new Set(['this', 'that', '_this', 'self', '_self', 'vm', '_vm', 'me', 'ctx', 'app', 'this_', 'thisObj', 'instance', 'inst']);
+    if (THIS_ALIAS_SET.has(parts[0])) {
         if (parts.length >= 2) {
             return findDefinitionInIndex(parts[1], index);
         }

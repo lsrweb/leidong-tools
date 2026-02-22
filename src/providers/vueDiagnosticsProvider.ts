@@ -7,7 +7,9 @@
  * 可通过设置 leidong-tools.enableVueDiagnostics 关闭
  */
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
+import * as fs from 'fs';
+import * as path from 'path';
+import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 
 const DIAGNOSTICS_SOURCE = '雷动三千';
@@ -83,7 +85,10 @@ function extractTemplateIdentifiers(htmlText: string): Set<string> {
  */
 function extractIdentifiersFromExpr(expr: string, identifiers: Set<string>): void {
     // 去掉字符串字面量
-    const cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+    let cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+    // 去掉箭头函数参数：(a, b) => 或 a =>
+    cleaned = cleaned.replace(/\(([^)]*)\)\s*=>/g, '=>');
+    cleaned = cleaned.replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, '=>');
     // 提取标识符 (排除关键字)
     const idRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
     const keywords = new Set(['true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
@@ -99,6 +104,82 @@ function extractIdentifiersFromExpr(expr: string, identifiers: Set<string>): voi
             identifiers.add(m[1]);
         }
     }
+}
+
+/**
+ * 从整个 HTML 文档中一次性收集所有 v-for / slot-scope / v-slot / #xxx 局部变量
+ * 返回全局集合（不做作用域精确追踪，避免复杂 DOM 树分析导致误报）
+ */
+function collectAllLocalVars(text: string): Set<string> {
+    const localVars = new Set<string>();
+    const attrVal = `(?:"([^"]*)"|'([^']*)')`;  // 同时支持双引号和单引号
+
+    // v-for="(item, index) in list" or v-for="item in list"
+    const vForRe = new RegExp(`v-for\\s*=\\s*${attrVal}`, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = vForRe.exec(text)) !== null) {
+        const val = m[1] || m[2];
+        if (!val) { continue; }
+        const inner = /(?:\(\s*)?([a-zA-Z_$][\w$]*)\s*(?:,\s*([a-zA-Z_$][\w$]*)\s*(?:,\s*([a-zA-Z_$][\w$]*)\s*)?)?\)?\s+(?:in|of)\s/.exec(val);
+        if (inner) {
+            localVars.add(inner[1]);
+            if (inner[2]) { localVars.add(inner[2]); }
+            if (inner[3]) { localVars.add(inner[3]); }
+        }
+    }
+
+    // slot-scope="scope" or slot-scope="{ row, $index }"
+    const slotScopeRe = new RegExp(`slot-scope\\s*=\\s*${attrVal}`, 'g');
+    while ((m = slotScopeRe.exec(text)) !== null) {
+        const val = m[1] || m[2];
+        if (!val) { continue; }
+        const stripped = val.replace(/[{}]/g, '');
+        stripped.split(',').forEach(v => {
+            const name = v.trim().replace(/\s*=.*/, '');
+            if (/^[a-zA-Z_$][\w$]*$/.test(name)) { localVars.add(name); }
+        });
+    }
+
+    // v-slot:name="slotProps" / v-slot="data" / #default="{ row }"
+    const vSlotRe = new RegExp(`(?:v-slot(?::[\\w-]*)?|#[\\w-]+)\\s*=\\s*${attrVal}`, 'g');
+    while ((m = vSlotRe.exec(text)) !== null) {
+        const val = m[1] || m[2];
+        if (!val) { continue; }
+        const stripped = val.replace(/[{}]/g, '');
+        stripped.split(',').forEach(v => {
+            const name = v.trim().replace(/\s*=.*/, '');
+            if (/^[a-zA-Z_$][\w$]*$/.test(name)) { localVars.add(name); }
+        });
+    }
+
+    return localVars;
+}
+
+/**
+ * 从 JS 内容中提取全局函数声明名（Vue 实例外部的 function xxx() {}）
+ */
+function collectGlobalFunctionNames(jsContent: string): Set<string> {
+    const names = new Set<string>();
+    // 匹配顶层 function 声明
+    const re = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(jsContent)) !== null) {
+        names.add(m[1]);
+    }
+    return names;
+}
+
+/**
+ * 获取与 HTML 关联的 JS 内容
+ */
+function getAssociatedJsContent(document: vscode.TextDocument): string | null {
+    try {
+        const scriptPaths = getExternalDevScriptPathsForHtml(document);
+        if (scriptPaths.length > 0 && fs.existsSync(scriptPaths[0])) {
+            return fs.readFileSync(scriptPaths[0], 'utf8');
+        }
+    } catch { /* ignore */ }
+    return null;
 }
 
 /**
@@ -119,8 +200,6 @@ function diagnoseHtmlDocument(document: vscode.TextDocument): vscode.Diagnostic[
     ) => {
         map.forEach((loc, name) => {
             if (!templateIdentifiers.has(name)) {
-                // 检查是否被 JS 内部引用（如 watch handler、computed dependency）
-                // 简单跳过常见的命名模式
                 if (name.startsWith('_') || name.startsWith('$')) { return; }
                 
                 const range = new vscode.Range(
@@ -129,7 +208,6 @@ function diagnoseHtmlDocument(document: vscode.TextDocument): vscode.Diagnostic[
                     loc.range.start.line,
                     loc.range.start.character + name.length
                 );
-                // 只在定义文件是同一个 fsPath 的情况下标注（外部 JS 文件暂不标注在 HTML 上）
                 const diag = new vscode.Diagnostic(
                     range,
                     `"${name}" 在 ${category} 中定义但未在模板中使用`,
@@ -153,13 +231,27 @@ function diagnoseHtmlDocument(document: vscode.TextDocument): vscode.Diagnostic[
      vueIndex.filters, vueIndex.mixinData, vueIndex.mixinMethods, vueIndex.mixinComputed]
         .forEach(m => m.forEach((_loc, name) => knownIdentifiers.add(name)));
 
+    // 收集全局函数名（Vue 实例外部的 function 声明）
+    const jsContent = getAssociatedJsContent(document);
+    if (jsContent) {
+        collectGlobalFunctionNames(jsContent).forEach(fn => knownIdentifiers.add(fn));
+    }
+
+    // 一次性收集整个文档的 v-for / slot-scope / v-slot 局部变量
+    const allLocalVars = collectAllLocalVars(text);
+
     // 扫描 {{ }} 中的标识符
     const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
     let match: RegExpExecArray | null;
     while ((match = mustacheRegex.exec(text)) !== null) {
         const exprStart = match.index + 2; // skip {{
         const expr = match[1];
-        const cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+        // 去掉字符串字面量
+        let cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+        // 去掉箭头函数参数
+        cleaned = cleaned.replace(/\(([^)]*)\)\s*=>/g, '=>');
+        cleaned = cleaned.replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, '=>');
+
         const idRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
         const keywords = new Set(['true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
             'new', 'in', 'of', 'if', 'else', 'return', 'this', 'that', 'self', 'vm',
@@ -167,27 +259,21 @@ function diagnoseHtmlDocument(document: vscode.TextDocument): vscode.Diagnostic[
             'Number', 'Boolean', 'Date', 'parseInt', 'parseFloat', 'isNaN', 'NaN', 'Infinity',
             'item', 'index', 'key', 'value', 'event', '$event', 'arguments',
             'alert', 'confirm', 'prompt', 'setTimeout', 'setInterval']);
+
         let idMatch: RegExpExecArray | null;
         while ((idMatch = idRegex.exec(cleaned)) !== null) {
             const id = idMatch[1];
             if (keywords.has(id)) { continue; }
-            // 检查是否是 v-for 局部变量 (简易判断：向上搜索 v-for)
-            const pos = document.positionAt(exprStart + idMatch.index);
-            const linesBefore = text.substring(0, exprStart).split('\n');
-            let isLocalVar = false;
-            for (let i = linesBefore.length - 1; i >= Math.max(0, linesBefore.length - 20); i--) {
-                if (linesBefore[i].includes(`v-for`) && linesBefore[i].includes(id)) {
-                    isLocalVar = true;
-                    break;
-                }
-                if (linesBefore[i].includes(`slot-scope`) && linesBefore[i].includes(id)) {
-                    isLocalVar = true;
-                    break;
-                }
-            }
-            if (isLocalVar) { continue; }
+
+            // 跳过属性访问链中的标识符：.xxx 不应告警
+            const charBefore = idMatch.index > 0 ? cleaned[idMatch.index - 1] : '';
+            if (charBefore === '.') { continue; }
+
+            // 跳过 v-for / slot-scope 局部变量
+            if (allLocalVars.has(id)) { continue; }
             
             if (!knownIdentifiers.has(id)) {
+                const pos = document.positionAt(exprStart + idMatch.index);
                 const range = new vscode.Range(pos.line, pos.character, pos.line, pos.character + id.length);
                 const diag = new vscode.Diagnostic(
                     range,

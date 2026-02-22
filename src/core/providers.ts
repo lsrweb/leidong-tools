@@ -10,6 +10,10 @@ import {
     HtmlVueCompletionProvider,
     VonCompletionProvider
 } from '../providers/completionProvider';
+import { VueDocumentSymbolProvider } from '../providers/documentSymbolProvider';
+import { VueReferenceProvider } from '../providers/referenceProvider';
+import { VueCodeLensProvider, updateInlineRefDecorations, clearInlineRefDecorations } from '../providers/codeLensProvider';
+import { VueColorProvider } from '../providers/colorProvider';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
@@ -90,6 +94,73 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             ],
             new VonCompletionProvider(),
             'v', 'o', 'n' // 触发补全的字符
+        )
+    );
+
+    // 注册文档符号提供器（面包屑 / Outline 增强）
+    context.subscriptions.push(
+        vscode.languages.registerDocumentSymbolProvider(
+            [
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'javascript' },
+                { scheme: 'file', language: 'typescript' }
+            ],
+            new VueDocumentSymbolProvider()
+        )
+    );
+
+    // 注册引用查找提供器 (Go to References)
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(
+            [
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'javascript' },
+                { scheme: 'file', language: 'typescript' }
+            ],
+            new VueReferenceProvider()
+        )
+    );
+
+    // 注册 CodeLens 引用计数提供器
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            [
+                { scheme: 'file', language: 'javascript' },
+                { scheme: 'file', language: 'typescript' }
+            ],
+            new VueCodeLensProvider()
+        )
+    );
+
+    // CodeLens right 模式：行末装饰更新钩子
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor((editor) => {
+            updateInlineRefDecorations(editor);
+        }),
+        vscode.workspace.onDidSaveTextDocument(() => {
+            updateInlineRefDecorations(vscode.window.activeTextEditor);
+        }),
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('leidong-tools.enableCodeLens') || e.affectsConfiguration('leidong-tools.codeLensPosition')) {
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    clearInlineRefDecorations(editor);
+                    updateInlineRefDecorations(editor);
+                }
+            }
+        })
+    );
+    // 初始化当前编辑器的装饰
+    updateInlineRefDecorations(vscode.window.activeTextEditor);
+
+    // 注册颜色选择器提供器
+    context.subscriptions.push(
+        vscode.languages.registerColorProvider(
+            [
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'css' }
+            ],
+            new VueColorProvider()
         )
     );
 

@@ -90,8 +90,11 @@ export class DefinitionLogic {
             if (parts.length >= 2) {
                 const root = parts[0];
                 const prop = parts[parts.length - 1];
-                if (root === 'this' || root === 'that') {
-                    return { word: prop, contextType: root === 'this' ? 'this' : 'that', fullChain: full };
+                if (root === 'this') {
+                    return { word: prop, contextType: 'this', fullChain: full };
+                }
+                if (root === 'that') {
+                    return { word: prop, contextType: 'alias', fullChain: full };
                 }
                 // 检测是否为 this 的别名 (在当前文件中 root = this 的赋值)
                 if (this.isThisAlias(document, position, root)) {
@@ -114,11 +117,19 @@ export class DefinitionLogic {
         return { word: w, contextType: 'plain', fullChain: w };
     }
 
+    /** 常见 this 别名集合 */
+    private static readonly COMMON_THIS_ALIASES = new Set([
+        'that', '_this', 'self', '_self', 'vm', '_vm', 'me', 'ctx', 'app',
+        'this_', 'thisObj', 'instance', 'inst', 'vueInstance', 'vueInst'
+    ]);
+
     // 判断某标识符是否在当前位置之前被赋值为 this (别名)
     private isThisAlias(document: vscode.TextDocument, position: vscode.Position, alias: string): boolean {
-        const maxScan = 400;
+        if (DefinitionLogic.COMMON_THIS_ALIASES.has(alias)) { return true; }
+        const maxScan = 500;
         const startLine = Math.max(0, position.line - maxScan);
-        const aliasPattern = new RegExp(`\\b(?:const|let|var)?\\s*${alias}\\s*=\\s*this\\b`);
+        const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const aliasPattern = new RegExp(`(?:(?:const|let|var)\\s+)?${escapedAlias}\\s*=\\s*this(?:\\s*[;,]|\\s*$)`);
         for (let line = position.line; line >= startLine; line--) {
             const text = document.lineAt(line).text;
             if (aliasPattern.test(text)) { return true; }

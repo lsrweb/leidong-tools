@@ -4,6 +4,7 @@
  */
 import * as vscode from 'vscode';
 import * as parser from '@babel/parser';
+import { resilientParse } from './resilientParse';
 import traverse from '@babel/traverse';
 import * as t from '@babel/types';
 import { ScriptSource } from '../finders/scriptFinder';
@@ -72,10 +73,9 @@ export class AstParser {
         
         return safeExecute(() => {
             const cleanContent = this.cleanupPhpAndOtherTemplates(scriptSource.content);
-            const ast = parser.parse(cleanContent, {
+            const ast = resilientParse(cleanContent, {
                 sourceType: 'module',
                 plugins: ['jsx'], // 保持对JSX的支持
-                errorRecovery: true, // 对混合代码容错至关重要
             });
 
             const definitions: DefinitionInfo[] = [];
@@ -181,7 +181,7 @@ export class AstParser {
     private cleanupPhpAndOtherTemplates(content: string): string {
         return content
             // 移除 <?php ... ?> 和 <?= ... ?>
-            .replace(/<\?(=|php)?[\s\S]*?\?>/g, (match) => this.maskInjectedTemplate(match))
+            .replace(/<\?(=|php\b|\s)[\s\S]*?\?>/g, (match) => this.maskInjectedTemplate(match))
             // 移除 Layui 的 {{ ... }} 风格模板
             .replace(/\{\{[\s\S]*?\}\}/g, (match) => this.maskInjectedTemplate(match));
     }

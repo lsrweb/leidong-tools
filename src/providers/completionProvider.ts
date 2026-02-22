@@ -142,13 +142,13 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
             // 检查触发自动完成的字符
             const linePrefix = document.lineAt(position).text.substring(0, position.character);
 
-            // $refs 补全：this.$refs. / that.$refs.
-            if (/(?:this|that|self|vm)\.\$refs\.\s*$/.test(linePrefix)) {
+            // $refs 补全：this.$refs. / that.$refs. / _this.$refs. 等
+            if (/(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.\.refs\.\s*$/.test(linePrefix)) {
                 return this.provideRefsCompletions();
             }
 
-            // $emit 事件名补全：this.$emit('
-            if (/(?:this|that|self|vm)\.\$emit\(\s*['"]$/.test(linePrefix)) {
+            // $emit 事件名补全：this.$emit(' / that.$emit(' 等
+            if (/(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.\$emit\(\s*['"]$/.test(linePrefix)) {
                 return this.provideEmitEventCompletions(document);
             }
 
@@ -245,14 +245,17 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         return new vscode.CompletionList(items, false);
     }
 
+    // 常见 this 别名
+    private static readonly THIS_ALIAS_PATTERN = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_|thisObj|instance|inst)\.$/;
+
     // 判断是否在 this 上下文中
     private isInThisContext(linePrefix: string): boolean {
         return linePrefix.endsWith('this.');
     }
 
-    // 判断是否在 that 上下文中 (that 通常是 this 的别名)
+    // 判断是否在 that 或其他 this 别名上下文中
     private isInThatContext(linePrefix: string): boolean {
-        return linePrefix.endsWith('that.');
+        return !linePrefix.endsWith('this.') && JavaScriptCompletionProvider.THIS_ALIAS_PATTERN.test(linePrefix);
     }
 
     private getObjectPropertyContext(linePrefix: string): { root: string } | null {
@@ -450,6 +453,21 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
             }
         }
 
+        // Vue 指令智能补全：v-for="item in " / v-model=" / v-if=" / v-show=" 等
+        const directiveItems = this.getDirectiveContextCompletions(document, position, linePrefix);
+        if (directiveItems && directiveItems.length > 0) {
+            return new vscode.CompletionList(directiveItems, false);
+        }
+
+        // v- 指令名称补全：在标签属性位置输入 v- 时建议常用指令
+        const vDirectiveNameMatch = /\sv-([\w-]*)$/.exec(linePrefix);
+        if (vDirectiveNameMatch) {
+            const inTag = linePrefix.lastIndexOf('<') > linePrefix.lastIndexOf('>');
+            if (inTag) {
+                return new vscode.CompletionList(this.getDirectiveNameCompletions(), false);
+            }
+        }
+
         if (!this.isTemplateContext(linePrefix)) {
             return [];
         }
@@ -580,6 +598,186 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
         });
 
         return { variables, methods, timestamp: Date.now(), thisReferences };
+    }
+
+    /**
+     * Vue 指令上下文智能补全：根据指令类型提供不同的建议
+     */
+    private getDirectiveContextCompletions(
+        document: vscode.TextDocument,
+        position: vscode.Position,
+        linePrefix: string
+    ): vscode.CompletionItem[] | null {
+        const rootIndex = resolveVueIndexForHtml(document);
+        if (!rootIndex) { return null; }
+
+        const templateId = getXTemplateIdAtPosition(document, position);
+        const targetIndex = templateId && rootIndex.componentsByTemplateId?.has(templateId)
+            ? rootIndex.componentsByTemplateId.get(templateId)!
+            : rootIndex;
+
+        // v-for="item in " → 建议数组类型的 data 属性
+        const vForInMatch = /v-for\s*=\s*["'][^"']*\s+(?:in|of)\s+([a-zA-Z_$][\w$]*)?$/.exec(linePrefix);
+        if (vForInMatch) {
+            const items: vscode.CompletionItem[] = [];
+            let sortIdx = 0;
+            // 优先推荐数组类型
+            targetIndex.data.forEach((_loc, name) => {
+                const meta = targetIndex.dataMeta?.get(name);
+                const isArray = meta?.initType?.startsWith('Array');
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+                item.detail = `${isArray ? '📋 Array' : 'data'} ${name} (雷动三千)`;
+                if (meta?.initType) {
+                    item.documentation = new vscode.MarkdownString(`**类型:** \`${meta.initType}\`${meta.initValue ? `\n\n**初始值:** \`${meta.initValue}\`` : ''}`);
+                }
+                item.sortText = isArray ? `0000${sortIdx++}` : `0100${sortIdx++}`;
+                if (isArray) { item.preselect = true; }
+                items.push(item);
+            });
+            // computed 也可能返回数组
+            targetIndex.computed.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = `computed ${name} (雷动三千)`;
+                item.sortText = `0200${sortIdx++}`;
+                items.push(item);
+            });
+            return items.length > 0 ? items : null;
+        }
+
+        // v-model=" → 建议 data 属性（双向绑定只适用于 data）
+        const vModelMatch = /v-model(?:\.[\w.]+)?\s*=\s*["']([a-zA-Z_$][\w$.]*)?$/.exec(linePrefix);
+        if (vModelMatch) {
+            const items: vscode.CompletionItem[] = [];
+            let sortIdx = 0;
+            targetIndex.data.forEach((_loc, name) => {
+                const meta = targetIndex.dataMeta?.get(name);
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+                const typeHint = meta?.initType ? ` (${meta.initType})` : '';
+                item.detail = `data ${name}${typeHint} (雷动三千)`;
+                if (meta?.initType) {
+                    item.documentation = new vscode.MarkdownString(`**类型:** \`${meta.initType}\`${meta.initValue ? `\n\n**初始值:** \`${meta.initValue}\`` : ''}`);
+                }
+                item.sortText = `0000${sortIdx++}`;
+                items.push(item);
+            });
+            // props 也可以 v-model
+            targetIndex.props.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Field);
+                item.detail = `prop ${name} (雷动三千)`;
+                item.sortText = `0100${sortIdx++}`;
+                items.push(item);
+            });
+            return items.length > 0 ? items : null;
+        }
+
+        // v-if=" / v-else-if=" / v-show=" → 建议所有 data + computed（优先推荐布尔类型）
+        const vConditionMatch = /(?:v-if|v-else-if|v-show)\s*=\s*["']([^"']*)?$/.exec(linePrefix);
+        if (vConditionMatch) {
+            const existing = vConditionMatch[1] || '';
+            // 如果已经有表达式内容且包含运算符，不再插手
+            if (/[&|<>=!?:+\-*/]/.test(existing) && existing.length > 0) { return null; }
+            const items: vscode.CompletionItem[] = [];
+            let sortIdx = 0;
+            // 优先推荐布尔类型
+            targetIndex.data.forEach((_loc, name) => {
+                const meta = targetIndex.dataMeta?.get(name);
+                const isBool = meta?.initType === 'boolean';
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+                const typeHint = meta?.initType ? ` (${meta.initType})` : '';
+                item.detail = `${isBool ? '✓ ' : ''}data ${name}${typeHint} (雷动三千)`;
+                item.sortText = isBool ? `0000${sortIdx++}` : `0100${sortIdx++}`;
+                if (isBool) { item.preselect = true; }
+                items.push(item);
+            });
+            targetIndex.computed.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = `computed ${name} (雷动三千)`;
+                item.sortText = `0050${sortIdx++}`;
+                items.push(item);
+            });
+            targetIndex.methods.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name + '()', vscode.CompletionItemKind.Method);
+                item.insertText = `${name}()`;
+                item.detail = `method ${name}() (雷动三千)`;
+                item.sortText = `0200${sortIdx++}`;
+                items.push(item);
+            });
+            return items.length > 0 ? items : null;
+        }
+
+        // v-bind:xxx=" / :xxx=" → 建议所有 data/computed/props
+        const vBindMatch = /(?:v-bind:|:)[a-zA-Z0-9_-]+\s*=\s*["']([^"']*)?$/.exec(linePrefix);
+        if (vBindMatch) {
+            const existing = vBindMatch[1] || '';
+            if (existing.length > 0 && /[.(\[{]/.test(existing)) { return null; } // 复杂表达式不介入
+            const items: vscode.CompletionItem[] = [];
+            let sortIdx = 0;
+            targetIndex.data.forEach((_loc, name) => {
+                const meta = targetIndex.dataMeta?.get(name);
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Variable);
+                const typeHint = meta?.initType ? ` (${meta.initType})` : '';
+                item.detail = `data ${name}${typeHint} (雷动三千)`;
+                item.sortText = `0000${sortIdx++}`;
+                items.push(item);
+            });
+            targetIndex.computed.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                item.detail = `computed ${name} (雷动三千)`;
+                item.sortText = `0100${sortIdx++}`;
+                items.push(item);
+            });
+            targetIndex.props.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Field);
+                item.detail = `prop ${name} (雷动三千)`;
+                item.sortText = `0200${sortIdx++}`;
+                items.push(item);
+            });
+            targetIndex.methods.forEach((_loc, name) => {
+                const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Method);
+                item.detail = `method ${name} (雷动三千)`;
+                item.sortText = `0300${sortIdx++}`;
+                items.push(item);
+            });
+            return items.length > 0 ? items : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * v- 指令名称补全：建议常用 Vue 指令
+     */
+    private getDirectiveNameCompletions(): vscode.CompletionItem[] {
+        const directives = [
+            { name: 'v-if', snippet: 'v-if="$1"', doc: '条件渲染：为 true 时渲染元素' },
+            { name: 'v-else-if', snippet: 'v-else-if="$1"', doc: '条件渲染：前一个 v-if 为 false 时判断' },
+            { name: 'v-else', snippet: 'v-else', doc: '条件渲染：前面条件都为 false 时渲染' },
+            { name: 'v-show', snippet: 'v-show="$1"', doc: '控制元素的 display 属性' },
+            { name: 'v-for', snippet: 'v-for="$1 in $2" :key="$3"', doc: '列表渲染：遍历数组或对象' },
+            { name: 'v-model', snippet: 'v-model="$1"', doc: '双向数据绑定' },
+            { name: 'v-model.trim', snippet: 'v-model.trim="$1"', doc: '双向绑定 + 自动去除首尾空格' },
+            { name: 'v-model.number', snippet: 'v-model.number="$1"', doc: '双向绑定 + 自动转换为数字' },
+            { name: 'v-model.lazy', snippet: 'v-model.lazy="$1"', doc: '双向绑定 + 在 change 事件时同步' },
+            { name: 'v-bind', snippet: 'v-bind:$1="$2"', doc: '动态绑定属性' },
+            { name: 'v-on', snippet: 'v-on:$1="$2"', doc: '事件监听' },
+            { name: 'v-text', snippet: 'v-text="$1"', doc: '更新元素 textContent' },
+            { name: 'v-html', snippet: 'v-html="$1"', doc: '更新元素 innerHTML（注意 XSS 风险）' },
+            { name: 'v-slot', snippet: 'v-slot:$1', doc: '具名插槽' },
+            { name: 'v-pre', snippet: 'v-pre', doc: '跳过编译：显示原始 Mustache 标签' },
+            { name: 'v-cloak', snippet: 'v-cloak', doc: '隐藏未编译的 Mustache 标签' },
+            { name: 'v-once', snippet: 'v-once', doc: '只渲染一次，后续不再更新' },
+        ];
+
+        return directives.map((d, idx) => {
+            const item = new vscode.CompletionItem(d.name, vscode.CompletionItemKind.Keyword);
+            item.insertText = new vscode.SnippetString(d.snippet);
+            item.detail = `Vue directive (雷动三千)`;
+            item.documentation = new vscode.MarkdownString(d.doc);
+            item.sortText = `0000${idx.toString().padStart(3, '0')}`;
+            // 替换已输入的 v- 前缀
+            item.filterText = d.name;
+            return item;
+        });
     }
 
     private isTemplateContext(linePrefix: string): boolean {

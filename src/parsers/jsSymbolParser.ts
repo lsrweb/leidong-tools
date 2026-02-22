@@ -6,6 +6,7 @@
  */
 import * as vscode from 'vscode';
 import * as parser from '@babel/parser';
+import { resilientParse } from './resilientParse';
 import traverse, { NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { DocumentParseCacheManager } from '../cache/cacheManager';
@@ -125,11 +126,10 @@ export class JSSymbolParser {
             // 清理模板代码
             const cleanContent = this.cleanTemplates(content);
             
-            // 解析 AST
-            const ast = parser.parse(cleanContent, {
+            // 解析 AST（使用容错解析器，处理 tokenizer 级别错误）
+            const ast = resilientParse(cleanContent, {
                 sourceType: 'module',
                 plugins: ['jsx', 'typescript', 'decorators-legacy'],
-                errorRecovery: true,
             });
 
             // 遍历 AST 并收集符号（传递 baseLine）
@@ -631,7 +631,7 @@ export class JSSymbolParser {
     private cleanTemplates(content: string): string {
         return content
             // 移除 PHP 标签
-            .replace(/<\?(=|php)?[\s\S]*?\?>/g, m => this.maskInjectedTemplate(m))
+            .replace(/<\?(=|php\b|\s)[\s\S]*?\?>/g, m => this.maskInjectedTemplate(m))
             // 移除 Layui/Vue 模板
             .replace(/\{\{[\s\S]*?\}\}/g, m => this.maskInjectedTemplate(m));
     }
