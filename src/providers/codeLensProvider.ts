@@ -193,6 +193,34 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
     collect(vueIndex.methods, 'methods');
     collect(vueIndex.computed, 'computed');
     collect(vueIndex.props, 'props');
+    collect(vueIndex.mixinData, 'mixin data');
+    collect(vueIndex.mixinMethods, 'mixin methods');
+    collect(vueIndex.mixinComputed, 'mixin computed');
+    collect(vueIndex.filters, 'filters');
+
+    // 全局函数引用计数（定义在 Vue 实例外部的 function）
+    if (jsText) {
+        const funcDeclRegex = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
+        let fm: RegExpExecArray | null;
+        const jsLines = jsText.split('\n');
+        while ((fm = funcDeclRegex.exec(jsText)) !== null) {
+            const funcName = fm[1];
+            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            let count = 0;
+            if (htmlText) { count += countReferencesInHtml(htmlText, funcName); }
+            // JS 中直接调用（不含 this.）
+            const callRegex = new RegExp(`\\b${escapeRegex(funcName)}\\s*\\(`, 'g');
+            for (let i = 0; i < jsLines.length; i++) {
+                if (i === defLine) { continue; }
+                callRegex.lastIndex = 0;
+                let cm: RegExpExecArray | null;
+                while ((cm = callRegex.exec(jsLines[i])) !== null) { count++; }
+            }
+            const defPos = new vscode.Position(defLine, 0);
+            const loc = new vscode.Location(document.uri, new vscode.Range(defPos, defPos));
+            infos.push({ name: funcName, category: 'function', count, line: defLine, loc });
+        }
+    }
 
     return infos;
 }

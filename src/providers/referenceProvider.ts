@@ -165,8 +165,14 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
             if (!vueIndex) { return null; }
             const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
                 || vueIndex.computed.has(word) || vueIndex.props.has(word)
-                || vueIndex.filters.has(word) || vueIndex.watch.has(word);
-            if (!isDefined) { return null; }
+                || vueIndex.filters.has(word) || vueIndex.watch.has(word)
+                || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
+                || vueIndex.mixinComputed.has(word);
+            if (!isDefined) {
+                // 检查是否为全局函数
+                const globalFuncRegex = new RegExp(`^function\\s+${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`, 'm');
+                if (!globalFuncRegex.test(document.getText())) { return null; }
+            }
 
             // 在当前 JS 文件中查找 this.xxx / that.xxx 引用
             const jsRefs = findIdentifierOccurrencesInJs(document.getText(), word, document.uri);
@@ -214,7 +220,9 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
             if (vueIndex) {
                 const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
                     || vueIndex.computed.has(word) || vueIndex.props.has(word)
-                    || vueIndex.filters.has(word);
+                    || vueIndex.filters.has(word)
+                    || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
+                    || vueIndex.mixinComputed.has(word);
                 if (isDefined) {
                     // 查找定义位置
                     if (context.includeDeclaration) {
