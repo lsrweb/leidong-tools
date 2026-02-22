@@ -206,6 +206,12 @@
         "title": "AI 分析变量/方法引用关系",
         "category": "雷动三千工具集",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "leidong-tools.switchAIModel",
+        "title": "切换 AI 分析模型",
+        "category": "雷动三千工具集",
+        "icon": "$(symbol-misc)"
       }
     ],
     "configuration": {
@@ -304,11 +310,6 @@
           "type": "boolean",
           "default": false,
           "description": "启用/关闭 AI 分析功能。开启后将在变量定义处显示「AI 分析」按钮。"
-        },
-        "leidong-tools.aiModel": {
-          "type": "string",
-          "default": "",
-          "description": "AI 分析使用的模型（如 gpt-4o, gpt-4o-mini 等）。为空时将由系统首选或提示选择。"
         }
       }
     },

@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
     resolveVueIndexForHtml,
-    getOrCreateVueIndexFromContent,
+    getOrCreateVueIndexFromContent,  
     getExternalDevScriptPathsForHtml,
     findDefinitionInIndex
 } from '../parsers/parseDocument';
@@ -28,6 +28,7 @@ interface ReferenceContext {
     componentSummary: string;   // 整个组件的成员概览
     htmlReferences: { file: string; line: number; snippet: string }[];
     jsReferences: { file: string; line: number; snippet: string }[];
+    relatedDefinitions: { name: string; category: string; snippet: string; file: string; line: number }[];
 }
 
 const CONTEXT_LINES = 10; // 默认较多
@@ -180,24 +181,88 @@ export function collectReferenceContext(
         }
     }
 
-    // JS 引用
+    // 构建所有已知方法/计算属性的行范围表，用于快速查找引用行所属方法
+    const knownRanges: { name: string; startLine: number; endLine: number }[] = [];
+    if (vueIndex) {
+        for (const map of [vueIndex.methods, vueIndex.computed, vueIndex.data]) {
+            map.forEach((loc, name) => {
+                if (loc.range.end.line > loc.range.start.line) {
+                    knownRanges.push({ name, startLine: loc.range.start.line, endLine: loc.range.end.line });
+                }
+            });
+        }
+    }
+
+    /**
+     * 从某一行向上找函数/方法起点，向下追踪大括号闭合，提取完整方法体
+     */
+    function extractEnclosingBlock(lineIdx: number): { start: number; end: number; name: string } | null {
+        // 1. 先查 VueIndex 已知范围
+        for (const r of knownRanges) {
+            if (lineIdx >= r.startLine && lineIdx <= r.endLine) {
+                return { start: r.startLine, end: r.endLine, name: r.name };
+            }
+        }
+        // 2. 回退到大括号匹配：向上找方法签名
+        let methodStart = lineIdx;
+        const methodSigRe = /^\s*(?:(?:async\s+)?\w+\s*\(|(?:async\s+)?function\s|\w+\s*:\s*(?:async\s+)?function)/;
+        for (let k = lineIdx; k >= Math.max(0, lineIdx - 80); k--) {
+            if (methodSigRe.test(jsLines[k])) {
+                methodStart = k;
+                break;
+            }
+        }
+        // 从 methodStart 向下追踪大括号闭合
+        let braceCount = 0;
+        let foundOpen = false;
+        let methodEnd = methodStart;
+        for (let k = methodStart; k < jsLines.length && k < methodStart + 500; k++) {
+            for (const ch of jsLines[k]) {
+                if (ch === '{') { braceCount++; foundOpen = true; }
+                if (ch === '}') { braceCount--; }
+            }
+            methodEnd = k;
+            if (foundOpen && braceCount <= 0) { break; }
+        }
+        if (!foundOpen) { return null; }
+        // 提取方法名
+        const nameMatch = jsLines[methodStart].match(/(?:async\s+)?(\w+)\s*[:(]/);
+        const name = nameMatch ? nameMatch[1] : 'anonymous';
+        return { start: methodStart, end: methodEnd, name };
+    }
+
+    // JS 引用：提取完整的所属方法体，同一方法只发一次
     const jsReferences: ReferenceContext['jsReferences'] = [];
     if (jsText) {
         const aliasPattern = `(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escapeRegex(identifier)}\\b`;
         const directCallPattern = `\\b${escapeRegex(identifier)}\\s*\\(`;
         const combined = new RegExp(`${aliasPattern}|${directCallPattern}`, 'g');
+        const emittedRanges = new Set<string>(); // 用于去重："startLine-endLine"
+
         for (let i = 0; i < jsLines.length; i++) {
             if (i === definitionLine) { continue; }
             combined.lastIndex = 0;
             if (combined.test(jsLines[i])) {
-                // 对于引用，我们也给一个较大的块（上下各 10 行）
-                const start = Math.max(0, i - 10);
-                const end = Math.min(jsLines.length - 1, i + 10);
-                jsReferences.push({
-                    file: jsFilePath,
-                    line: i + 1,
-                    snippet: getCleanCodeBlock(jsLines, start, end), // 给 AI 发纯净代码
-                });
+                const block = extractEnclosingBlock(i);
+                if (block) {
+                    const rangeKey = `${block.start}-${block.end}`;
+                    if (emittedRanges.has(rangeKey)) { continue; } // 已经发送过这个方法
+                    emittedRanges.add(rangeKey);
+                    jsReferences.push({
+                        file: jsFilePath,
+                        line: block.start + 1,
+                        snippet: getCleanCodeBlock(jsLines, block.start, block.end),
+                    });
+                } else {
+                    // 最后兜底：发单行上下文
+                    const start = Math.max(0, i - 3);
+                    const end = Math.min(jsLines.length - 1, i + 3);
+                    jsReferences.push({
+                        file: jsFilePath,
+                        line: i + 1,
+                        snippet: getCleanCodeBlock(jsLines, start, end),
+                    });
+                }
             }
         }
     }
@@ -230,6 +295,96 @@ export function collectReferenceContext(
         }
     }
 
+    // ─── 收集传递依赖：引用方法内部调用的其他方法/属性 ───
+    const relatedDefinitions: ReferenceContext['relatedDefinitions'] = [];
+    if (vueIndex && jsLines.length > 0) {
+        const visited = new Set<string>();
+        visited.add(identifier); // 排除目标本身（已在 definitionSnippet 中）
+
+        // 也排除已经作为 jsReference 直接收集的方法名（避免重复输出）
+        for (const r of knownRanges) {
+            // 如果某个 knownRange 已被 jsReferences 命中，记录其名称
+            for (const jr of jsReferences) {
+                const jrStart = jr.line - 1; // jr.line 是 1-based
+                if (r.startLine === jrStart) {
+                    // 这个方法已作为直接引用发送，但我们仍需扫描其内部依赖
+                }
+            }
+        }
+
+        /**
+         * 从代码片段中提取所有 this.xxx 引用的标识符
+         */
+        function extractThisRefs(snippet: string): string[] {
+            const re = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\.(\w+)/g;
+            const refs: string[] = [];
+            let m;
+            while ((m = re.exec(snippet)) !== null) {
+                if (!visited.has(m[1])) {
+                    refs.push(m[1]);
+                }
+            }
+            return [...new Set(refs)]; // 去重
+        }
+
+        /**
+         * 递归收集传递依赖
+         * @param snippets 待扫描的代码片段
+         * @param depth 当前递归深度（最大 3 层）
+         */
+        function collectTransitiveDeps(snippets: string[], depth: number): void {
+            if (depth > 3 || snippets.length === 0) { return; }
+            const newSnippets: string[] = [];
+
+            for (const snippet of snippets) {
+                const refs = extractThisRefs(snippet);
+                for (const dep of refs) {
+                    if (visited.has(dep)) { continue; }
+                    visited.add(dep);
+
+                    // 在 VueIndex 中查找
+                    let depCategory = '';
+                    let depLoc: vscode.Location | undefined;
+                    if (vueIndex!.methods.has(dep)) { depCategory = 'methods'; depLoc = vueIndex!.methods.get(dep); }
+                    else if (vueIndex!.computed.has(dep)) { depCategory = 'computed'; depLoc = vueIndex!.computed.get(dep); }
+                    else if (vueIndex!.data.has(dep)) { depCategory = 'data'; depLoc = vueIndex!.data.get(dep); }
+                    else if (vueIndex!.props.has(dep)) { depCategory = 'props'; depLoc = vueIndex!.props.get(dep); }
+                    else if (vueIndex!.filters.has(dep)) { depCategory = 'filters'; depLoc = vueIndex!.filters.get(dep); }
+                    else if (vueIndex!.mixinMethods.has(dep)) { depCategory = 'mixin methods'; depLoc = vueIndex!.mixinMethods.get(dep); }
+                    else if (vueIndex!.mixinComputed.has(dep)) { depCategory = 'mixin computed'; depLoc = vueIndex!.mixinComputed.get(dep); }
+                    else if (vueIndex!.mixinData.has(dep)) { depCategory = 'mixin data'; depLoc = vueIndex!.mixinData.get(dep); }
+
+                    if (depLoc) {
+                        const depSnippet = getCleanCodeBlock(jsLines, depLoc.range.start.line, depLoc.range.end.line);
+                        relatedDefinitions.push({
+                            name: dep,
+                            category: depCategory,
+                            snippet: depSnippet,
+                            file: jsFilePath,
+                            line: depLoc.range.start.line + 1
+                        });
+                        // 对方法/计算属性继续递归（data/props 通常无内部调用）
+                        if (depCategory === 'methods' || depCategory === 'computed' || depCategory === 'mixin methods' || depCategory === 'mixin computed') {
+                            newSnippets.push(depSnippet);
+                        }
+                    }
+                    // 防止收集过多（上限 30 个关联定义）
+                    if (relatedDefinitions.length >= 30) { return; }
+                }
+            }
+
+            if (newSnippets.length > 0) {
+                collectTransitiveDeps(newSnippets, depth + 1);
+            }
+        }
+
+        // 第一轮：从定义本身 + 所有直接引用方法体中提取依赖
+        const initialSnippets: string[] = [];
+        if (definitionSnippet) { initialSnippets.push(definitionSnippet); }
+        for (const jr of jsReferences) { initialSnippets.push(jr.snippet); }
+        collectTransitiveDeps(initialSnippets, 0);
+    }
+
     return {
         identifier,
         category,
@@ -239,30 +394,32 @@ export function collectReferenceContext(
         componentSummary,
         htmlReferences,
         jsReferences,
+        relatedDefinitions,
     };
 }
 
 // ─── 构建 Prompt ───
 
 /**
- * 优化后的系统提示词：更专业、结构化、高效
+ * 优化后的系统提示词
  */
-const SYSTEM_PROMPT = `你是一个资深的 Vue.js 与前端架构专家。你的任务是深度分析用户提供的代码标识符（变量、方法、计算属性等）在其所属 Vue 组件中的逻辑角色与生命周期。
+const SYSTEM_PROMPT = `你是一位经验丰富的 Vue 前端开发专家，负责帮助开发者快速理解代码逻辑。用户会提供一个 Vue 组件中的变量或方法，以及它的所有相关代码。
 
-分析要求：
-1. **角色定义**：精准描述该标识符的业务含义与技术类型（如组件状态、副作用触发器、复杂逻辑封装等）。
-2. **数据追踪**：追踪其数据流（Sources -> Sinks）。它是如何初始化的？在何处被更改？通过什么事件或属性响应？
-3. **上下文依赖**：分析它与其他组件属性（data/props/computed/methods）或全局变量（Vuex/Store/EventBus）的交互关系。
-4. **DOM/模板映射**：详细说明在 HTML 模板中的具体表现（指令绑定、事件处理逻辑、条件渲染等）。
-5. **代码健康诊断**：指出潜在的风险点，如死代码、竞态条件、逻辑耦合度过高、类型不安全或 Vue 版本兼容性隐患。
-6. **优化建议**：提出具体的重构思路（如拆分子组件、改写为计算属性、内存管理建议等）。
+请按以下结构分析：
+1. **作用说明**：用简明的语言描述这个标识符的功能和业务用途。
+2. **数据流向**：说明它的初始值、在哪些地方被修改、修改后会影响哪些地方。
+3. **关联关系**：它依赖了哪些变量/方法？又被哪些方法调用？理清上下游。
+4. **页面使用**：根据提供的 HTML 引用说明它在页面中的表现。**如果没有提供 HTML 引用，直接写「页面中未发现使用」，禁止猜测。**
+5. **潜在问题**：指出可能存在的问题，如冗余代码、易出错写法、性能问题等。
+6. **改进建议**：给出具体可操作的优化方案。
+7. **完整调用链**：你会收到所有关联方法和变量的完整代码，请逐个说明其作用，并画出完整的调用流程图。
 
-输出规范：
-- 使用结构清晰、美观的 Markdown 格式。
-- 采用专业、客观、简洁的风格，不要有废话。
-- 如果逻辑复杂，建议推荐使用 Mermaid 图表描述流程。
-- **重要：Mermaid 图表中的节点名称、连线描述必须全部使用中文。**
-- 必须使用中文回复。`;
+输出要求：
+- 中文回复，表述清晰易懂，避免堆砌学术术语。
+- 代码中的标识符（变量名、方法名等）保持原样。
+- 必须包含 Mermaid 流程图（graph TD），将所有提供的关联方法纳入，展示完整调用链路。
+- **Mermaid 图表中的节点说明和连线描述使用中文。**
+- Markdown 格式排版，结构清晰，重点突出。`;
 
 function buildAnalysisPrompt(ctx: ReferenceContext): string {
     const parts: string[] = [];
@@ -299,6 +456,13 @@ function buildAnalysisPrompt(ctx: ReferenceContext): string {
         }
     }
 
+    if (ctx.relatedDefinitions && ctx.relatedDefinitions.length > 0) {
+        parts.push(`### 关联方法/属性完整定义\n以下是引用链中递归涉及的其他方法/属性的完整代码，请在分析和流程图中一并覆盖，不得遗漏：\n`);
+        for (const rd of ctx.relatedDefinitions) {
+            parts.push(`**${rd.name}** (${rd.category}) - ${path.basename(rd.file)}:${rd.line}\n\`\`\`javascript\n${rd.snippet}\n\`\`\`\n`);
+        }
+    }
+
     return parts.join('\n');
 }
 
@@ -332,15 +496,54 @@ function getHtmlForAnalysis(webview: vscode.Webview, identifier: string): string
             overflow: auto;
             border: 1px solid var(--vscode-widget-border);
         }
-        /* Mermaid 图表容器样式 - 黑色主题优化 */
-        .mermaid {
-            background-color: #1e1e1e; /* 深黑色背景 */
-            padding: 16px;
+        /* Mermaid 图表容器样式 - 黑色主题优化 + 缩放支持 */
+        .mermaid-wrapper {
+            position: relative;
+            background-color: #1e1e1e;
             border-radius: 8px;
             margin: 16px 0;
-            text-align: center;
             border: 1px solid #333;
             box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .mermaid-toolbar {
+            display: flex;
+            justify-content: flex-end;
+            gap: 4px;
+            padding: 6px 10px;
+            background: #252526;
+            border-bottom: 1px solid #333;
+        }
+        .mermaid-toolbar button {
+            background: #3c3c3c;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 2px 10px;
+            cursor: pointer;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .mermaid-toolbar button:hover {
+            background: #505050;
+            color: #fff;
+        }
+        .mermaid-viewport {
+            overflow: hidden;
+            padding: 16px;
+            text-align: center;
+            cursor: grab;
+            min-height: 100px;
+            position: relative;
+        }
+        .mermaid-viewport.dragging {
+            cursor: grabbing;
+            user-select: none;
+        }
+        .mermaid {
+            display: inline-block;
+            transform-origin: 0 0;
+            transition: transform 0.1s ease;
         }
         code {
             font-family: var(--vscode-editor-font-family);
@@ -398,6 +601,7 @@ function getHtmlForAnalysis(webview: vscode.Webview, identifier: string): string
 
         blockquote {
             background: var(--vscode-textBlockQuote-background);
+        }
         .loading {
             font-style: italic;
             opacity: 0.7;
@@ -473,11 +677,98 @@ function getHtmlForAnalysis(webview: vscode.Webview, identifier: string): string
             const text = typeof code === 'object' ? code.text : code;
             const infostring = typeof code === 'object' ? code.lang : lang;
             if (infostring === 'mermaid') {
-                return '<div class="mermaid">' + text + '</div>';
+                var id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+                return '<div class="mermaid-wrapper" id="wrap-' + id + '">'
+                    + '<div class="mermaid-toolbar">'
+                    + '<button onclick="zoomChart(\\'' + id + '\\', 0.2)" title="\u653e\u5927">+</button>'
+                    + '<button onclick="zoomChart(\\'' + id + '\\', -0.2)" title="\u7f29\u5c0f">\u2212</button>'
+                    + '<button onclick="resetChart(\\'' + id + '\\')" title="\u91cd\u7f6e">1:1</button>'
+                    + '</div>'
+                    + '<div class="mermaid-viewport" id="vp-' + id + '">'
+                    + '<div class="mermaid" id="' + id + '">' + text + '</div>'
+                    + '</div></div>';
             }
             return baseCode(code, lang);
         };
         marked.setOptions({ renderer });
+
+        // ─── 图表缩放与拖拽控制 ───
+        var chartState = {}; // { scale, tx, ty }
+
+        function getState(id) {
+            if (!chartState[id]) { chartState[id] = { scale: 1, tx: 0, ty: 0 }; }
+            return chartState[id];
+        }
+
+        function applyTransform(id) {
+            var s = getState(id);
+            var el = document.getElementById(id);
+            if (el) {
+                el.style.transition = 'transform 0.1s ease';
+                el.style.transform = 'translate(' + s.tx + 'px, ' + s.ty + 'px) scale(' + s.scale + ')';
+            }
+        }
+
+        function zoomChart(id, delta) {
+            var s = getState(id);
+            s.scale = Math.max(0.3, Math.min(3, s.scale + delta));
+            applyTransform(id);
+        }
+
+        function resetChart(id) {
+            var s = getState(id);
+            s.scale = 1; s.tx = 0; s.ty = 0;
+            applyTransform(id);
+        }
+
+        // 鼠标滚轮缩放
+        document.addEventListener('wheel', function(e) {
+            var vp = e.target.closest('.mermaid-viewport');
+            if (!vp) return;
+            e.preventDefault();
+            var mermaidEl = vp.querySelector('.mermaid');
+            if (!mermaidEl) return;
+            var delta = e.deltaY < 0 ? 0.1 : -0.1;
+            zoomChart(mermaidEl.id, delta);
+        }, { passive: false });
+
+        // 鼠标拖拽平移
+        (function() {
+            var dragId = null, startX = 0, startY = 0, startTx = 0, startTy = 0;
+
+            document.addEventListener('mousedown', function(e) {
+                var vp = e.target.closest('.mermaid-viewport');
+                if (!vp || e.button !== 0) return;
+                var mermaidEl = vp.querySelector('.mermaid');
+                if (!mermaidEl) return;
+                dragId = mermaidEl.id;
+                var s = getState(dragId);
+                startX = e.clientX; startY = e.clientY;
+                startTx = s.tx; startTy = s.ty;
+                vp.classList.add('dragging');
+                mermaidEl.style.transition = 'none';
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', function(e) {
+                if (!dragId) return;
+                var s = getState(dragId);
+                s.tx = startTx + (e.clientX - startX);
+                s.ty = startTy + (e.clientY - startY);
+                var el = document.getElementById(dragId);
+                if (el) { el.style.transform = 'translate(' + s.tx + 'px, ' + s.ty + 'px) scale(' + s.scale + ')'; }
+            });
+
+            document.addEventListener('mouseup', function() {
+                if (!dragId) return;
+                var el = document.getElementById(dragId);
+                if (el) {
+                    var vp = el.closest('.mermaid-viewport');
+                    if (vp) { vp.classList.remove('dragging'); }
+                }
+                dragId = null;
+            });
+        })();
 
         async function render() {
             contentDiv.innerHTML = marked.parse(fullMarkdown);
@@ -546,6 +837,17 @@ function getHtmlForAnalysis(webview: vscode.Webview, identifier: string): string
                 });
             }
 
+            // 关联方法/属性
+            if (ctx.relatedDefinitions && ctx.relatedDefinitions.length > 0) {
+                html += '<div class="preview-item-title" style="margin-top:12px;font-weight:bold;font-size:0.9em;">&#128279; 关联方法/属性 (' + ctx.relatedDefinitions.length + ')</div>';
+                ctx.relatedDefinitions.forEach(function(rd) {
+                   html += '<div class="preview-item">';
+                   html += '<div class="preview-item-title">' + rd.name + ' (' + rd.category + ')</div>';
+                   html += '<pre>' + escapeHtml(rd.snippet) + '</pre>';
+                   html += '</div>';
+                });
+            }
+
             previewContent.innerHTML = html;
         }
 
@@ -563,28 +865,19 @@ function getHtmlForAnalysis(webview: vscode.Webview, identifier: string): string
 const LAST_MODEL_KEY = 'leidong-tools.lastSelectedModelId';
 
 async function selectChatModel(context: vscode.ExtensionContext): Promise<vscode.LanguageModelChat | undefined> {
-    const config = vscode.workspace.getConfiguration('leidong-tools');
-    const configModelId = config.get<string>('aiModel');
-    
     const allModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
     if (allModels.length === 0) {
         return undefined;
     }
 
-    // 1. 优先使用「设置」里手动指定的模型（用户强力干预）
-    if (configModelId) {
-        const found = allModels.find(m => m.id === configModelId || m.name === configModelId);
-        if (found) { return found; }
-    }
-
-    // 2. 其次使用「上次选择」的模型（保持一致性）
+    // 1. 优先使用上次选择的模型（通过命令切换）
     const lastModelId = context.globalState.get<string>(LAST_MODEL_KEY);
     if (lastModelId) {
         const found = allModels.find(m => m.id === lastModelId);
         if (found) { return found; }
     }
 
-    // 3. 都没有，则弹框让用户明确选择一次，并保存
+    // 2. 没有保存的模型，弹框让用户选择，并保存
     const items = allModels.map(m => ({
         label: `$(sparkle) ${m.name || m.id}`,
         description: `${m.vendor} / ${m.family}`,
@@ -751,6 +1044,38 @@ export function registerCopilotAnalyzer(context: vscode.ExtensionContext): void 
 
                 } catch (err: any) {
                     panel.webview.postMessage({ type: 'error', text: err.message || '未知错误' });
+                }
+            }
+        )
+    );
+
+    // 3. 注册模型切换命令
+    context.subscriptions.push(
+        vscode.commands.registerCommand(
+            'leidong-tools.switchAIModel',
+            async () => {
+                const allModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+                if (allModels.length === 0) {
+                    vscode.window.showWarningMessage('未找到可用的 Copilot 模型。');
+                    return;
+                }
+
+                const currentModelId = context.globalState.get<string>(LAST_MODEL_KEY);
+                const items = allModels.map(m => ({
+                    label: `${m.id === currentModelId ? '$(check) ' : '$(sparkle) '}${m.name || m.id}`,
+                    description: `${m.vendor} / ${m.family}${m.id === currentModelId ? '  (当前)' : ''}`,
+                    detail: `API 版本: ${m.version}`,
+                    model: m
+                }));
+
+                const selected = await vscode.window.showQuickPick(items, {
+                    placeHolder: '请选择 AI 分析使用的模型',
+                    title: '雷动三千 - 切换 AI 模型'
+                });
+
+                if (selected) {
+                    context.globalState.update(LAST_MODEL_KEY, selected.model.id);
+                    vscode.window.showInformationMessage(`AI 模型已切换为: ${selected.model.name || selected.model.id}`);
                 }
             }
         )
