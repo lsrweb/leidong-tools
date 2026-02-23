@@ -71,16 +71,24 @@ function findIdentifierOccurrencesInHtml(text: string, identifier: string, uri: 
     const patterns = [
         // {{ identifier }} 或 {{ expr.identifier }}
         new RegExp(`\\{\\{[^}]*\\b${escapeRegex(identifier)}\\b[^}]*\\}\\}`, 'g'),
-        // v-bind:xxx="identifier" / :xxx="identifier"
+        // v-bind:xxx="identifier" / :xxx="identifier" (双引号 + 单引号)
         new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-on:xxx="identifier" / @xxx="identifier"  
+        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
+        // v-on:xxx="identifier" / @xxx="identifier" (双引号 + 单引号)
         new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-if/v-show/v-else-if="identifier"
+        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
+        // v-if/v-show/v-else-if (双引号 + 单引号)
         new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-for="... in identifier"
+        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
+        // v-for (双引号 + 单引号)
         new RegExp(`v-for\\s*=\\s*"[^"]*\\b(?:in|of)\\s+[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        // v-model="identifier"
+        new RegExp(`v-for\\s*=\\s*'[^']*\\b(?:in|of)\\s+[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
+        // v-model (双引号 + 单引号)
         new RegExp(`v-model\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
+        new RegExp(`v-model\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
+        // Plain HTML event handlers: onclick="identifier(...)" etc.
+        new RegExp(`\\bon\\w+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'gi'),
+        new RegExp(`\\bon\\w+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'gi'),
     ];
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
@@ -237,6 +245,10 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
                             const jsRefs = findIdentifierOccurrencesInJs(jsContent, word, def.uri);
                             locations.push(...jsRefs);
                         } catch { /* ignore */ }
+                    } else if (def) {
+                        // 内联脚本：搜索同文件中的 this.xxx / that.xxx 引用
+                        const jsRefs = findIdentifierOccurrencesInJs(document.getText(), word, document.uri);
+                        locations.push(...jsRefs);
                     }
                 }
             }

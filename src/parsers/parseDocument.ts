@@ -38,7 +38,7 @@ export interface VueIndex {
     componentsByTemplateId?: Map<string, VueIndex>; // key: x-template id
 }
 
-interface CacheEntry { index: VueIndex; }
+interface CacheEntry { index: VueIndex; baseLine?: number; }
 let lastVueIndexBuiltAt = 0;
 let lastExternalIndexBuiltAt = 0;
 
@@ -1121,15 +1121,15 @@ export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri,
     const key = uri.toString();
     const hash = fastHash(content);
     const cached = indexCache.get(key);
-    if (!force && cached && cached.index.hash === hash) {
-        if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
+    if (!force && cached && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
+        if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} baseLine=${baseLine} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
         return cached.index;
     }
-    // 构建新索引并缓存
+    // 构建新索引并缓存（baseLine 变化也需重建，确保行号正确）
     const index = buildVueIndex(content, uri, baseLine);
     lastVueIndexBuiltAt = Math.max(lastVueIndexBuiltAt, index.builtAt);
-    indexCache.set(key, { index });
-    if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`); }
+    indexCache.set(key, { index, baseLine });
+    if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} baseLine=${baseLine} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`); }
     return index;
 }
 

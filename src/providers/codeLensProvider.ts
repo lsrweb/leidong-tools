@@ -41,11 +41,21 @@ function countReferencesInHtml(text: string, identifier: string): number {
     }
 
     const attrPatterns = [
+        // 双引号
         /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g,
         /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g,
         /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g,
         /v-for\s*=\s*"([^"]+)"/g,
         /v-model\s*=\s*"([^"]+)"/g,
+        // 单引号
+        /(?:v-bind:|:)[\w.-]+\s*=\s*'([^']+)'/g,
+        /(?:v-on:|@)[\w.-]+\s*=\s*'([^']+)'/g,
+        /(?:v-if|v-else-if|v-show)\s*=\s*'([^']+)'/g,
+        /v-for\s*=\s*'([^']+)'/g,
+        /v-model\s*=\s*'([^']+)'/g,
+        // Plain HTML event handlers: onclick="...", onchange="...", etc.
+        /\bon\w+\s*=\s*"([^"]+)"/gi,
+        /\bon\w+\s*=\s*'([^']+)'/gi,
     ];
     for (const pattern of attrPatterns) {
         pattern.lastIndex = 0;
@@ -171,6 +181,9 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
                 const firstDef = vueIndex.data.values().next().value || vueIndex.methods.values().next().value;
                 if (firstDef && firstDef.uri.fsPath !== document.uri.fsPath) {
                     try { jsText = fs.readFileSync(firstDef.uri.fsPath, 'utf8'); } catch { /* */ }
+                } else {
+                    // 内联脚本：HTML 和 JS 在同一个文件中，需要搜索 this.xxx 引用
+                    jsText = document.getText();
                 }
             }
         }
