@@ -156,9 +156,8 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
             jsText = document.getText();
             vueIndex = getOrCreateVueIndexFromContent(jsText, document.uri, 0);
             
-            // 找关联 HTML (对独立 JS/Vue 而言)
+            // 找关联 HTML (只查找已知关联的文件，不遍历所有打开的文档)
             const htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
-            const htmlFileSet = new Set(htmlFiles.map(f => normalizePath(f)));
             for (const hf of htmlFiles) {
                 try {
                     const openDoc = vscode.workspace.textDocuments.find(
@@ -167,11 +166,28 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
                     htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
                 } catch { /* */ }
             }
-            // 补充 HTML 文档
-            for (const doc of vscode.workspace.textDocuments) {
-                if (doc.languageId === 'html' && !doc.isClosed
-                    && !htmlFileSet.has(normalizePath(doc.uri.fsPath))) {
-                    htmlText += doc.getText() + '\n';
+
+            // 回退：当 JS 文件自身解析的 VueIndex 为空时，
+            // 尝试通过关联 HTML 文件的 resolveVueIndexForHtml 间接获取索引
+            // （HTML 可能通过 <script src> 引用此 JS 并提供完整 Vue 实例上下文）
+            if (vueIndex && vueIndex.data.size === 0 && vueIndex.methods.size === 0
+                && vueIndex.computed.size === 0 && vueIndex.mixinData.size === 0
+                && vueIndex.mixinMethods.size === 0 && vueIndex.mixinComputed.size === 0) {
+                for (const hf of htmlFiles) {
+                    try {
+                        const openDoc = vscode.workspace.textDocuments.find(
+                            d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed
+                        );
+                        if (openDoc) {
+                            const htmlVueIndex = resolveVueIndexForHtml(openDoc);
+                            if (htmlVueIndex && (htmlVueIndex.data.size > 0 || htmlVueIndex.methods.size > 0
+                                || htmlVueIndex.computed.size > 0 || htmlVueIndex.mixinData.size > 0
+                                || htmlVueIndex.mixinMethods.size > 0)) {
+                                vueIndex = htmlVueIndex;
+                                break;
+                            }
+                        }
+                    } catch { /* ignore */ }
                 }
             }
         } else if (document.languageId === 'html') {
@@ -215,15 +231,15 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
 
     // 全局函数引用计数（定义在 Vue 实例外部的 function）
     if (jsText) {
-        const funcDeclRegex = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
-        let fm: RegExpExecArray | null;
+        const existingNames = new Set<string>();
+        infos.forEach(i => existingNames.add(i.name));
+
         const jsLines = jsText.split('\n');
-        while ((fm = funcDeclRegex.exec(jsText)) !== null) {
-            const funcName = fm[1];
-            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+        const addFuncInfo = (funcName: string, defLine: number) => {
+            if (existingNames.has(funcName)) { return; } // 已在 VueIndex 中
+            existingNames.add(funcName);
             let count = 0;
             if (htmlText) { count += countReferencesInHtml(htmlText, funcName); }
-            // JS 中直接调用（不含 this.）
             const callRegex = new RegExp(`\\b${escapeRegex(funcName)}\\s*\\(`, 'g');
             for (let i = 0; i < jsLines.length; i++) {
                 if (i === defLine) { continue; }
@@ -234,6 +250,35 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
             const defPos = new vscode.Position(defLine, 0);
             const loc = new vscode.Location(document.uri, new vscode.Range(defPos, defPos));
             infos.push({ name: funcName, category: 'function', count, line: defLine, loc });
+        };
+
+        // 1. function declaration: function xxx()
+        const funcDeclRegex = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
+        let fm: RegExpExecArray | null;
+        while ((fm = funcDeclRegex.exec(jsText)) !== null) {
+            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            addFuncInfo(fm[1], defLine);
+        }
+
+        // 2. function expression: var/let/const xxx = function()
+        const funcExprRegex = /^(?:var|let|const)\s+([a-zA-Z_$][\w$]*)\s*=\s*function\s*[\w$]*\s*\(/gm;
+        while ((fm = funcExprRegex.exec(jsText)) !== null) {
+            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            addFuncInfo(fm[1], defLine);
+        }
+
+        // 3. arrow function: var/let/const xxx = (...) => 或 var/let/const xxx = arg =>
+        const arrowRegex = /^(?:var|let|const)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>/gm;
+        while ((fm = arrowRegex.exec(jsText)) !== null) {
+            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            addFuncInfo(fm[1], defLine);
+        }
+
+        // 4. window/global assignment: window.xxx = function() / xxx.yyy = function()
+        const windowFuncRegex = /^(?:window|self|globalThis)\s*\.\s*([a-zA-Z_$][\w$]*)\s*=\s*function\s*[\w$]*\s*\(/gm;
+        while ((fm = windowFuncRegex.exec(jsText)) !== null) {
+            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
+            addFuncInfo(fm[1], defLine);
         }
     }
 
@@ -246,6 +291,7 @@ export class VueCodeLensProvider implements vscode.CodeLensProvider {
     private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
     public readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
     private cache = new Map<string, { version: number; lenses: vscode.CodeLens[] }>();
+    private static readonly MAX_CACHE = 20;
 
     public refresh() {
         this.cache.clear();
@@ -256,6 +302,8 @@ export class VueCodeLensProvider implements vscode.CodeLensProvider {
         document: vscode.TextDocument,
         _token: vscode.CancellationToken
     ): vscode.CodeLens[] | null {
+        if (_token.isCancellationRequested) { return null; }
+
         const config = vscode.workspace.getConfiguration('leidong-tools');
         const enableRefCount = config.get<boolean>('enableCodeLens', false);
         const enableAI = config.get<boolean>('enableAIAnalysis', false);
@@ -268,6 +316,8 @@ export class VueCodeLensProvider implements vscode.CodeLensProvider {
         const cacheKey = document.uri.toString();
         const cached = this.cache.get(cacheKey);
         if (cached && cached.version === document.version) { return cached.lenses; }
+
+        if (_token.isCancellationRequested) { return null; }
 
         const infos = computeRefCounts(document);
         if (!infos) { return null; }
@@ -299,6 +349,11 @@ export class VueCodeLensProvider implements vscode.CodeLensProvider {
         }
 
         this.cache.set(cacheKey, { version: document.version, lenses });
+        // 限制缓存大小
+        if (this.cache.size > VueCodeLensProvider.MAX_CACHE) {
+            const oldest = this.cache.keys().next().value;
+            if (oldest) { this.cache.delete(oldest); }
+        }
         return lenses;
     }
 }
@@ -357,7 +412,7 @@ export function updateInlineRefDecorations(editor: vscode.TextEditor | undefined
             });
         }
         editor.setDecorations(refCountDecorationType, decorations);
-    }, 800);
+    }, 2000);
 }
 
 /**

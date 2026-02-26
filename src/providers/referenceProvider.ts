@@ -169,16 +169,56 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
 
         if (document.languageId === 'javascript' || document.languageId === 'typescript') {
             // 检查这个词是否是 Vue 索引中的成员
-            const vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
-            if (!vueIndex) { return null; }
-            const isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
-                || vueIndex.computed.has(word) || vueIndex.props.has(word)
-                || vueIndex.filters.has(word) || vueIndex.watch.has(word)
-                || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
-                || vueIndex.mixinComputed.has(word);
+            let vueIndex: VueIndex | null = null;
+            try {
+                vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+            } catch { /* parse error, continue */ }
+
+            let isDefined = false;
+            if (vueIndex) {
+                isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
+                    || vueIndex.computed.has(word) || vueIndex.props.has(word)
+                    || vueIndex.filters.has(word) || vueIndex.watch.has(word)
+                    || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
+                    || vueIndex.mixinComputed.has(word);
+            }
+
+            // 查找关联的 HTML 文件
+            const htmlFiles = findAssociatedHtmlFiles(document.uri.fsPath);
+
+            // 回退：当 JS 文件自身解析的 VueIndex 为空时，通过关联 HTML 间接获取
+            if (vueIndex && !isDefined
+                && vueIndex.data.size === 0 && vueIndex.methods.size === 0
+                && vueIndex.computed.size === 0 && vueIndex.mixinData.size === 0
+                && vueIndex.mixinMethods.size === 0) {
+                for (const hf of htmlFiles) {
+                    try {
+                        const openDoc = vscode.workspace.textDocuments.find(
+                            d => path.normalize(d.uri.fsPath).toLowerCase() === path.normalize(hf).toLowerCase() && !d.isClosed
+                        );
+                        if (openDoc) {
+                            const htmlVueIndex = resolveVueIndexForHtml(openDoc);
+                            if (htmlVueIndex && (htmlVueIndex.data.size > 0 || htmlVueIndex.methods.size > 0 || htmlVueIndex.computed.size > 0)) {
+                                vueIndex = htmlVueIndex;
+                                isDefined = vueIndex.data.has(word) || vueIndex.methods.has(word)
+                                    || vueIndex.computed.has(word) || vueIndex.props.has(word)
+                                    || vueIndex.filters.has(word) || vueIndex.watch.has(word)
+                                    || vueIndex.mixinData.has(word) || vueIndex.mixinMethods.has(word)
+                                    || vueIndex.mixinComputed.has(word);
+                                if (isDefined) { break; }
+                            }
+                        }
+                    } catch { /* ignore */ }
+                }
+            }
+
             if (!isDefined) {
-                // 检查是否为全局函数
-                const globalFuncRegex = new RegExp(`^function\\s+${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`, 'm');
+                // 检查是否为全局函数（支持 function 声明 + 函数表达式）
+                const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const globalFuncRegex = new RegExp(
+                    `(?:^function\\s+${escapedWord}\\s*\\(|^(?:var|let|const)\\s+${escapedWord}\\s*=\\s*(?:function|\\([^)]*\\)\\s*=>|[a-zA-Z_$][\\w$]*\\s*=>))`,
+                    'm'
+                );
                 if (!globalFuncRegex.test(document.getText())) { return null; }
             }
 
@@ -186,8 +226,6 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
             const jsRefs = findIdentifierOccurrencesInJs(document.getText(), word, document.uri);
             locations.push(...jsRefs);
 
-            // 查找关联的 HTML 文件
-            const htmlFiles = findAssociatedHtmlFiles(document.uri.fsPath);
             const htmlFileSet = new Set(htmlFiles.map(f => path.normalize(f).toLowerCase()));
             for (const htmlPath of htmlFiles) {
                 try {
@@ -212,7 +250,7 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
             }
 
             // 包含定义本身
-            if (context.includeDeclaration) {
+            if (context.includeDeclaration && vueIndex) {
                 const def = findDefinitionInIndex(word, vueIndex);
                 if (def) { locations.push(def); }
             }

@@ -81,6 +81,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     );
 
     // 注册 Von 代码片段补全提供器 - 支持所有文件类型
+    // 注册 Von 代码片段补全提供器 - 仅在常用文件类型中，不设触发字符以避免每次击键都触发
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
             [
@@ -89,12 +90,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
                 { scheme: 'file', language: 'html' },
                 { scheme: 'file', language: 'css' },
                 { scheme: 'file', language: 'json' },
-                { scheme: 'file', language: 'markdown' },
-                { scheme: 'file', language: 'plaintext' },
-                { scheme: 'file', pattern: '**/*' } // 支持所有文件
             ],
-            new VonCompletionProvider(),
-            'v', 'o', 'n' // 触发补全的字符
+            new VonCompletionProvider()
+            // 不设置 trigger characters，仅在用户主动请求补全（如输入 von 后按 Ctrl+Space）时触发
         )
     );
 

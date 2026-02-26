@@ -41,37 +41,46 @@ function extractTemplateIdentifiers(htmlText: string): Set<string> {
         extractIdentifiersFromExpr(match[1], identifiers);
     }
 
+    // 通用属性值提取正则（同时支持双引号和单引号）
+    const attrVal = `(?:"([^"]+)"|'([^']+)')`;
+
     // 2. v-bind:xxx="expr" / :xxx="expr"
-    const bindRegex = /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g;
+    const bindRegex = new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*${attrVal}`, 'g');
     while ((match = bindRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
+        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
     }
 
     // 3. v-on:xxx="expr" / @xxx="expr"
-    const onRegex = /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g;
+    const onRegex = new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*${attrVal}`, 'g');
     while ((match = onRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
+        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
     }
 
     // 4. v-if/v-else-if/v-show="expr"
-    const condRegex = /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g;
+    const condRegex = new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*${attrVal}`, 'g');
     while ((match = condRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
+        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
     }
 
     // 5. v-for="item in list" — 提取 list
-    const forRegex = /v-for\s*=\s*"[^"]*(?:in|of)\s+([^"]+)"/g;
+    const forRegex = new RegExp(`v-for\\s*=\\s*(?:"[^"]*(?:in|of)\\s+([^"]+)"|'[^']*(?:in|of)\\s+([^']+)')`, 'g');
     while ((match = forRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
+        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
     }
 
     // 6. v-model="xxx"
-    const modelRegex = /v-model\s*=\s*"([^"]+)"/g;
+    const modelRegex = new RegExp(`v-model\\s*=\\s*${attrVal}`, 'g');
     while ((match = modelRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
+        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
     }
 
-    // 7. | filter 管道
+    // 7. onclick="xxx" 等原生事件
+    const nativeEventRegex = new RegExp(`\\bon\\w+\\s*=\\s*${attrVal}`, 'gi');
+    while ((match = nativeEventRegex.exec(htmlText)) !== null) {
+        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
+    }
+
+    // 8. | filter 管道
     const filterRegex = /\|\s*([a-zA-Z_$][\w$]*)/g;
     while ((match = filterRegex.exec(htmlText)) !== null) {
         identifiers.add(match[1]);
@@ -312,7 +321,7 @@ function runDiagnostics(document: vscode.TextDocument) {
         } catch (e) {
             console.error('[vue-diagnostics] error:', e);
         }
-    }, 1000);
+    }, 2500);
 }
 
 /**

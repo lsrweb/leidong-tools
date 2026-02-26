@@ -81,9 +81,20 @@ function maskInjectedTemplate(match: string): string {
 }
 
 // 清理 PHP 等干扰项
-function sanitizeContent(raw: string): string {
-    // 处理 .vue 文件，只保留脚本部分，其余转为空行
-    if (raw.trim().startsWith('<') && (raw.includes('<template') || raw.includes('<script'))) {
+function sanitizeContent(raw: string, fileUri?: vscode.Uri): string {
+    // 处理 .vue / .html 文件，只保留脚本部分，其余转为空行
+    // 增加文件扩展名检查，避免将 JS 文件误判为 Vue/HTML（例如以 PHP 标签开头的 .dev.js）
+    const isLikelyHtmlOrVue = (() => {
+        if (fileUri) {
+            const ext = path.extname(fileUri.fsPath).toLowerCase();
+            if (ext === '.js' || ext === '.ts' || ext === '.jsx' || ext === '.tsx') {
+                return false; // JS/TS 文件不应被当作 Vue/HTML 处理
+            }
+        }
+        return raw.trim().startsWith('<') && (raw.includes('<template') || raw.includes('<script'));
+    })();
+
+    if (isLikelyHtmlOrVue) {
         const scriptRegex = /<script\b[^>]*>([\s\S]*?)<\/script>/i;
         const match = scriptRegex.exec(raw);
         if (match) {
@@ -104,7 +115,7 @@ function sanitizeContent(raw: string): string {
  * 解析一个 JS 源（外部或内联）生成 VueIndex
  */
 function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueIndex {
-    const clean = sanitizeContent(jsContent);
+    const clean = sanitizeContent(jsContent, uri);
     const ast = resilientParse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
 
     const contentHash = fastHash(jsContent);
@@ -1089,6 +1100,33 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     // 提取 $emit 调用
     extractEmits(ast, baseLine, rootIndex.emits);
 
+    // 当文件只包含 Vue.component() 注册（无 new Vue()）时，rootIndex 为空。
+    // 将 componentsByTemplateId 中的所有组件索引合并到 rootIndex，
+    // 使 CodeLens/引用计数/Hover 等功能可以识别这些定义。
+    if (rootIndex.data.size === 0 && rootIndex.methods.size === 0
+        && rootIndex.computed.size === 0 && componentsByTemplateId.size > 0) {
+        for (const [, compIdx] of componentsByTemplateId) {
+            mergeAllMaps(compIdx); // 确保 compIdx.all 已合并
+            for (const [k, v] of compIdx.data) { if (!data.has(k)) { data.set(k, v); } }
+            for (const [k, v] of compIdx.methods) { if (!methods.has(k)) { methods.set(k, v); } }
+            for (const [k, v] of compIdx.computed) { if (!computed.has(k)) { computed.set(k, v); } }
+            for (const [k, v] of compIdx.props) { if (!props.has(k)) { props.set(k, v); } }
+            for (const [k, v] of compIdx.watch) { if (!watch.has(k)) { watch.set(k, v); } }
+            for (const [k, v] of compIdx.filters) { if (!filters.has(k)) { filters.set(k, v); } }
+            for (const [k, v] of compIdx.lifecycle) { if (!lifecycle.has(k)) { lifecycle.set(k, v); } }
+            for (const [k, v] of compIdx.mixinData) { if (!mixinData.has(k)) { mixinData.set(k, v); } }
+            for (const [k, v] of compIdx.mixinMethods) { if (!mixinMethods.has(k)) { mixinMethods.set(k, v); } }
+            for (const [k, v] of compIdx.mixinComputed) { if (!mixinComputed.has(k)) { mixinComputed.set(k, v); } }
+            // 合并 meta 信息
+            for (const [k, v] of compIdx.dataMeta) { if (!dataMeta.has(k)) { dataMeta.set(k, v); } }
+            for (const [k, v] of compIdx.methodMeta) { if (!methodMeta.has(k)) { methodMeta.set(k, v); } }
+            for (const [k, v] of compIdx.computedMeta) { if (!computedMeta.has(k)) { computedMeta.set(k, v); } }
+            for (const [k, v] of compIdx.propsMeta) { if (!propsMeta.has(k)) { propsMeta.set(k, v); } }
+            for (const [k, v] of compIdx.watchMeta) { if (!watchMeta.has(k)) { watchMeta.set(k, v); } }
+            for (const [k, v] of compIdx.filtersMeta) { if (!filtersMeta.has(k)) { filtersMeta.set(k, v); } }
+        }
+    }
+
     const all = new Map<string, vscode.Location>();
     for (const m of [props, data, computed, methods, filters, mixinData, mixinComputed, mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
@@ -1498,8 +1536,24 @@ export function getVueIndexCacheStats() {
 /**
  * 清空缓存（可在需要时暴露命令）
  */
-export function clearVueIndexCache() { indexCache.clear(); }
-export function pruneVueIndexCache(maxAgeMs = 1000 * 60 * 60) { indexCache.pruneByAge(maxAgeMs); }
+export function clearVueIndexCache() {
+    indexCache.clear();
+    externalFileCache.clear();
+    htmlScriptCache.clear();
+}
+export function pruneVueIndexCache(maxAgeMs = 1000 * 60 * 60) {
+    indexCache.pruneByAge(maxAgeMs);
+    // 清理过期的 HTML→JS 路径缓存
+    const now = Date.now();
+    for (const [key, entry] of htmlScriptCache) {
+        if (now - entry.checkedAt > maxAgeMs) { htmlScriptCache.delete(key); }
+    }
+    // 限制外部文件缓存大小（保留最新的 100 个）
+    if (externalFileCache.size > 100) {
+        const entries = Array.from(externalFileCache.entries());
+        entries.slice(0, entries.length - 100).forEach(([k]) => externalFileCache.delete(k));
+    }
+}
 
 export function recreateVueIndexCache() { indexCache = new LRUCache<string, CacheEntry>(getMaxIndexEntries()); }
 // 供调试：打印当前缓存概览

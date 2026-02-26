@@ -2,6 +2,16 @@
 
 所有重要的变更都将记录在此文件中。
 
+## [2.3.2] - 2026-02-26
+
+### 🐛 修复
+- **Vue.component 组件支持**：修复 `Vue.component('name', { data(){}, methods:{} })` 写法的 JS 文件无法显示引用计数、查找引用、Hover 等功能的问题。组件选项现在会正确合并到根索引中。
+- **sanitizeContent 误判修复**：修复以 PHP 标签等特殊字符开头的 `.dev.js` 文件被错误当作 Vue/HTML 文件处理，导致内容截断解析失败的问题。
+- **VueIndex 空索引回退**：当 JS 文件自身解析索引为空时，自动通过关联 HTML 文件间接获取 Vue 索引，确保组件路径的 JS 文件也能正常工作。
+- **全局函数识别增强**：引用计数现在支持 `var/let/const xxx = function()`、箭头函数 `() =>`、`window.xxx = function()` 等更多函数定义模式。
+- **ReferenceProvider 健壮性**：VueIndex 构建异常时不再导致查找引用功能完全失效。
+- **HoverProvider JS 文件修复**：修复 JS 文件中 Hover 错误调用 `resolveVueIndexForHtml` 的问题，改为正确的索引获取逻辑。
+
 ## [2.3.1] - 2026-02-23
 
 ### 🐛 修复

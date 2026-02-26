@@ -1,10 +1,13 @@
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, findDefinitionInIndex, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, findDefinitionInIndex, getOrCreateVueIndexFromContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import type { VueIndex } from '../parsers/parseDocument';
 import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { jsSymbolParser } from '../parsers/jsSymbolParser';
 import { getTemplateLiteralAtPosition } from '../helpers/templateLiteralHelper';
 import { getRefCountAtLine } from './codeLensProvider';
+import * as path from 'path';
+import * as fs from 'fs';
 
 export class VueHoverProvider implements vscode.HoverProvider {
     private hoverTimeout: NodeJS.Timeout | null = null;
@@ -14,6 +17,13 @@ export class VueHoverProvider implements vscode.HoverProvider {
             // 清除之前的定时器
             if (this.hoverTimeout) {
                 clearTimeout(this.hoverTimeout);
+                this.hoverTimeout = null;
+            }
+
+            // 如果已取消，直接返回
+            if (token.isCancellationRequested) {
+                resolve(null);
+                return;
             }
 
             // 读取配置的延迟时间
@@ -22,6 +32,7 @@ export class VueHoverProvider implements vscode.HoverProvider {
 
             // 设置延迟
             this.hoverTimeout = setTimeout(async () => {
+                this.hoverTimeout = null;
                 if (token.isCancellationRequested) {
                     resolve(null);
                     return;
@@ -30,6 +41,15 @@ export class VueHoverProvider implements vscode.HoverProvider {
                 const hover = await this.getHoverContent(document, position);
                 resolve(hover);
             }, delay);
+
+            // 监听取消事件，避免不必要的计算
+            token.onCancellationRequested(() => {
+                if (this.hoverTimeout) {
+                    clearTimeout(this.hoverTimeout);
+                    this.hoverTimeout = null;
+                }
+                resolve(null);
+            });
         });
     }
 
@@ -161,11 +181,24 @@ export class VueHoverProvider implements vscode.HoverProvider {
                     wordRange
                 );
             }
-            const vueIndex = resolveVueIndexForHtml(document);
-            if (vueIndex) {
-                const def = findDefinitionInIndex(word, vueIndex);
+
+            // JS 文件：先用 getOrCreateVueIndexFromContent 解析当前文件
+            let jsVueIndex: VueIndex | null = null;
+            try {
+                jsVueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+            } catch { /* ignore parse errors */ }
+
+            // 回退：VueIndex 为空时通过关联 HTML 间接获取
+            if (jsVueIndex && jsVueIndex.data.size === 0 && jsVueIndex.methods.size === 0
+                && jsVueIndex.computed.size === 0 && jsVueIndex.mixinData.size === 0
+                && jsVueIndex.mixinMethods.size === 0) {
+                jsVueIndex = this.resolveVueIndexForJsViaHtml(document) || jsVueIndex;
+            }
+
+            if (jsVueIndex) {
+                const def = findDefinitionInIndex(word, jsVueIndex);
                 if (def) {
-                    const hover = buildVueHover(def, vueIndex);
+                    const hover = buildVueHover(def, jsVueIndex);
                     if (hover) { return hover; }
                 }
             }
@@ -206,6 +239,56 @@ export class VueHoverProvider implements vscode.HoverProvider {
                             return `Iterating \`${sourceVar}\` (computed)`;
                         }
                     }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 通过关联 HTML 文件间接获取 JS 文件的 VueIndex
+     */
+    private resolveVueIndexForJsViaHtml(document: vscode.TextDocument): VueIndex | null {
+        const jsPath = document.uri.fsPath;
+        const normalizedJs = path.normalize(jsPath).toLowerCase();
+
+        // 方法 1：扫描已打开的 HTML 文档
+        for (const doc of vscode.workspace.textDocuments) {
+            if (doc.languageId === 'html' && !doc.isClosed) {
+                try {
+                    const scriptPaths = getExternalDevScriptPathsForHtml(doc);
+                    for (const sp of scriptPaths) {
+                        if (path.normalize(sp).toLowerCase() === normalizedJs) {
+                            const htmlIndex = resolveVueIndexForHtml(doc);
+                            if (htmlIndex && (htmlIndex.data.size > 0 || htmlIndex.methods.size > 0 || htmlIndex.computed.size > 0)) {
+                                return htmlIndex;
+                            }
+                        }
+                    }
+                } catch { /* ignore */ }
+            }
+        }
+
+        // 方法 2：目录约定
+        const dir = path.dirname(jsPath);
+        const parentDir = path.dirname(dir);
+        const baseName = path.basename(jsPath).replace(/\.dev\.js$/, '').replace(/\.js$/, '');
+        const candidates = [
+            path.join(parentDir, `${baseName}.html`),
+            path.join(parentDir, 'index.html'),
+        ];
+        for (const htmlPath of candidates) {
+            if (fs.existsSync(htmlPath)) {
+                const openDoc = vscode.workspace.textDocuments.find(
+                    d => path.normalize(d.uri.fsPath).toLowerCase() === path.normalize(htmlPath).toLowerCase() && !d.isClosed
+                );
+                if (openDoc) {
+                    try {
+                        const htmlIndex = resolveVueIndexForHtml(openDoc);
+                        if (htmlIndex && (htmlIndex.data.size > 0 || htmlIndex.methods.size > 0 || htmlIndex.computed.size > 0)) {
+                            return htmlIndex;
+                        }
+                    } catch { /* ignore */ }
                 }
             }
         }

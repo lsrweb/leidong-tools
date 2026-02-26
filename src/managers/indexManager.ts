@@ -56,8 +56,8 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
         removeVueIndexForUri(doc.uri);
     }));
 
-    // 定期修剪长时间未访问的模板索引
-    const pruneInterval = setInterval(() => { pruneTemplateIndex(); pruneVueIndexCache(); }, 1000 * 60 * 10);
+    // 定期修剪长时间未访问的缓存（每 5 分钟，最长保留 30 分钟）
+    const pruneInterval = setInterval(() => { pruneTemplateIndex(); pruneVueIndexCache(1000 * 60 * 30); }, 1000 * 60 * 5);
     context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
 
     disposables.forEach(d => context.subscriptions.push(d));

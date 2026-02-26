@@ -128,6 +128,7 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
         context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
         try {
+            if (token.isCancellationRequested) { return []; }
             // 检测是否在 template: `...` 模板字符串内
             const templateInfo = getTemplateLiteralAtPosition(document, position);
             if (templateInfo) {
@@ -359,6 +360,11 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
     private cacheParseResult(document: vscode.TextDocument, result: CacheItem) {
         const uri = document.uri.toString();
         this.parseCache.set(uri, result);
+        // 限制缓存大小，防止长时间运行后内存膨胀
+        if (this.parseCache.size > 50) {
+            const oldest = this.parseCache.keys().next().value;
+            if (oldest) { this.parseCache.delete(oldest); }
+        }
     }
 }
 
@@ -369,6 +375,8 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
     private completionCache = new Map<string, CacheItem>();
     private propertyCache = new Map<string, { items: vscode.CompletionItem[]; updatedAt: number; docVersion: number; scriptMtime?: number }>();
     private propertyCacheTtlMs = 1500;
+    private static readonly MAX_COMPLETION_CACHE = 30;
+    private static readonly MAX_PROPERTY_CACHE = 30;
 
     async provideCompletionItems(
         document: vscode.TextDocument,
@@ -376,6 +384,7 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
         _token: vscode.CancellationToken,
         _context: vscode.CompletionContext
     ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
+        if (_token.isCancellationRequested) { return []; }
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
 
         // 检测 filter 管道上下文：{{ value | 或 {{ value | currency |
@@ -494,6 +503,11 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
         if (!cached) {
             cached = this.buildCompletionItems(targetIndex);
             this.completionCache.set(cacheKey, cached);
+            // 限制缓存大小
+            if (this.completionCache.size > HtmlVueCompletionProvider.MAX_COMPLETION_CACHE) {
+                const oldest = this.completionCache.keys().next().value;
+                if (oldest) { this.completionCache.delete(oldest); }
+            }
         }
 
         const completionItems = [...cached.variables, ...cached.methods];
@@ -821,6 +835,11 @@ export class HtmlVueCompletionProvider implements vscode.CompletionItemProvider 
             return item;
         });
         this.propertyCache.set(cacheKey, { items, updatedAt: Date.now(), docVersion: document.version, scriptMtime: newestMtime || undefined });
+        // 限制缓存大小
+        if (this.propertyCache.size > HtmlVueCompletionProvider.MAX_PROPERTY_CACHE) {
+            const oldest = this.propertyCache.keys().next().value;
+            if (oldest) { this.propertyCache.delete(oldest); }
+        }
         return items;
     }
 }
@@ -835,11 +854,19 @@ export class VonCompletionProvider implements vscode.CompletionItemProvider {
         token: vscode.CancellationToken,
         context: vscode.CompletionContext
     ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
+        if (token.isCancellationRequested) { return []; }
+        // 快速短路：至少需要 3 个字符
+        if (position.character < 3) { return []; }
         const lineText = document.lineAt(position).text;
         const textBeforeCursor = lineText.substring(0, position.character);
         
-        // 检查是否输入了 "von"
+        // 检查是否输入了 "von"（且前面是空白或行首，避免误匹配 "environ" 等单词）
         if (!textBeforeCursor.endsWith('von')) {
+            return [];
+        }
+        // 确保 von 前面是非单词字符（行首 / 空格 / 标点等）
+        const charBeforeVon = position.character >= 4 ? textBeforeCursor[position.character - 4] : '';
+        if (charBeforeVon && /[a-zA-Z0-9_$]/.test(charBeforeVon)) {
             return [];
         }
         
