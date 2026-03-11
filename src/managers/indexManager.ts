@@ -20,30 +20,7 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
         }
     }));
 
-    // 在编辑器打开或切换到可见时构建索引（force rebuild）
-    const ensureIndexForEditor = (editor: vscode.TextEditor | undefined) => {
-        if (!editor) { return; }
-        const doc = editor.document;
-        if (doc.languageId === 'html' && !getTemplateIndex(doc)) { buildAndCacheTemplateIndex(doc); }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0);
-        }
-    };
-
-    disposables.push(vscode.window.onDidChangeVisibleTextEditors((editors) => {
-        // 可见编辑器改变：为所有可见的editor确保索引
-        editors.forEach(e => ensureIndexForEditor(e));
-    }));
-
-    disposables.push(vscode.workspace.onDidOpenTextDocument((doc) => {
-        // 打开文件时建立索引
-        if (doc.languageId === 'html' && !getTemplateIndex(doc)) { buildAndCacheTemplateIndex(doc); }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') {
-            getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0);
-        }
-    }));
-
-    // 在保存时（可配置）触发重建索引
+    // 在保存时（可配置）触发重建索引（按需构建：各 provider 首次请求时会懒加载索引）
     disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
         if (!rebuildOnSave) { return; }
         if (doc.languageId === 'html') { buildAndCacheTemplateIndex(doc); }

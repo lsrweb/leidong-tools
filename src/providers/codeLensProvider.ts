@@ -25,66 +25,109 @@ function escapeRegex(s: string): string {
 }
 
 /**
- * 在 HTML 文本中计算某标识符被引用的次数
+ * 批量统计 HTML 文本中所有已知标识符的引用次数。
+ * 单次扫描，复杂度由 O(n_names × n_patterns × n_chars) 降至 O(n_patterns × n_chars)。
  */
-function countReferencesInHtml(text: string, identifier: string): number {
-    const escaped = escapeRegex(identifier);
-    let count = 0;
+function batchCountReferencesInHtml(text: string, names: ReadonlySet<string>): Map<string, number> {
+    const counts = new Map<string, number>();
+    if (!text || names.size === 0) { return counts; }
+    names.forEach(n => counts.set(n, 0));
 
-    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
+    const bump = (expr: string) => {
+        const re = /\b([a-zA-Z_$][\w$]*)\b/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(expr)) !== null) {
+            const c = counts.get(m[1]);
+            if (c !== undefined) { counts.set(m[1], c + 1); }
+        }
+    };
+
     let m: RegExpExecArray | null;
-    while ((m = mustacheRegex.exec(text)) !== null) {
-        const inner = m[1];
-        const idRegex = new RegExp(`\\b${escaped}\\b`, 'g');
-        let im: RegExpExecArray | null;
-        while ((im = idRegex.exec(inner)) !== null) { count++; }
-    }
+    const mustacheRe = /\{\{([\s\S]*?)\}\}/g;
+    while ((m = mustacheRe.exec(text)) !== null) { bump(m[1]); }
 
-    const attrPatterns = [
-        // 双引号
+    const attrPats: RegExp[] = [
         /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g,
         /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g,
         /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g,
         /v-for\s*=\s*"([^"]+)"/g,
         /v-model\s*=\s*"([^"]+)"/g,
-        // 单引号
         /(?:v-bind:|:)[\w.-]+\s*=\s*'([^']+)'/g,
         /(?:v-on:|@)[\w.-]+\s*=\s*'([^']+)'/g,
         /(?:v-if|v-else-if|v-show)\s*=\s*'([^']+)'/g,
         /v-for\s*=\s*'([^']+)'/g,
         /v-model\s*=\s*'([^']+)'/g,
-        // Plain HTML event handlers: onclick="...", onchange="...", etc.
         /\bon\w+\s*=\s*"([^"]+)"/gi,
         /\bon\w+\s*=\s*'([^']+)'/gi,
     ];
-    for (const pattern of attrPatterns) {
-        pattern.lastIndex = 0;
-        while ((m = pattern.exec(text)) !== null) {
-            const inner = m[1];
-            const idRegex = new RegExp(`\\b${escaped}\\b`, 'g');
-            let im: RegExpExecArray | null;
-            while ((im = idRegex.exec(inner)) !== null) { count++; }
-        }
+    for (const pat of attrPats) {
+        pat.lastIndex = 0;
+        while ((m = pat.exec(text)) !== null) { bump(m[1]); }
     }
-
-    return count;
+    return counts;
 }
 
 /**
- * 在 JS 文本中计算 this.xxx 的引用次数（排除定义行）
+ * 批量统计 JS 文本中的引用次数，单次扫描完成两类计数：
+ *  - Vue 成员：this.xxx / that.xxx 等
+ *  - 全局函数：name( 且不以 . 开头
  */
-function countReferencesInJs(text: string, identifier: string, definitionLine: number): number {
-    const escaped = escapeRegex(identifier);
-    const regex = new RegExp(`(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\\.${escaped}\\b`, 'g');
-    let count = 0;
+function batchCountReferencesInJs(
+    text: string,
+    vueNames: ReadonlySet<string>,
+    vueDefLines: ReadonlyMap<string, number>,
+    funcNames: ReadonlySet<string>,
+    funcDefLines: ReadonlyMap<string, number>
+): { vueCounts: Map<string, number>; funcCounts: Map<string, number> } {
+    const vueCounts = new Map<string, number>();
+    const funcCounts = new Map<string, number>();
+    if (!text) { return { vueCounts, funcCounts }; }
+    vueNames.forEach(n => vueCounts.set(n, 0));
+    funcNames.forEach(n => funcCounts.set(n, 0));
+
     const lines = text.split('\n');
+    const thisAccessRe = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app)\.([a-zA-Z_$][\w$]*)\b/g;
+    // 全局函数调用：name( 不被 . 或单词字符前置
+    const funcCallRe = /(?<![.\w])([a-zA-Z_$][\w$]*)\s*\(/g;
+
     for (let i = 0; i < lines.length; i++) {
-        if (i === definitionLine) { continue; }
-        regex.lastIndex = 0;
+        const line = lines[i];
+        thisAccessRe.lastIndex = 0;
         let m: RegExpExecArray | null;
-        while ((m = regex.exec(lines[i])) !== null) { count++; }
+        while ((m = thisAccessRe.exec(line)) !== null) {
+            const n = m[1];
+            const c = vueCounts.get(n);
+            if (c !== undefined && vueDefLines.get(n) !== i) { vueCounts.set(n, c + 1); }
+        }
+        if (funcNames.size > 0) {
+            funcCallRe.lastIndex = 0;
+            while ((m = funcCallRe.exec(line)) !== null) {
+                const n = m[1];
+                const c = funcCounts.get(n);
+                if (c !== undefined && funcDefLines.get(n) !== i) { funcCounts.set(n, c + 1); }
+            }
+        }
     }
-    return count;
+    return { vueCounts, funcCounts };
+}
+
+/** 预计算行首偏移量数组（O(n)），后续 charIdxToLine 为 O(log n) */
+function buildLineOffsets(text: string): number[] {
+    const offsets = [0];
+    for (let i = 0; i < text.length; i++) {
+        if (text.charCodeAt(i) === 10) { offsets.push(i + 1); }
+    }
+    return offsets;
+}
+
+/** 二分查找字符偏移量对应的行号（0-based） */
+function charIdxToLine(lineOffsets: number[], idx: number): number {
+    let lo = 0, hi = lineOffsets.length - 1;
+    while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (lineOffsets[mid] <= idx) { lo = mid; } else { hi = mid - 1; }
+    }
+    return lo;
 }
 
 /**
@@ -144,7 +187,7 @@ export interface RefCountInfo {
 }
 
 /**
- * 计算文档中所有 Vue 成员的引用次数
+ * 计算文档中所有 Vue 成员的引用次数（批量单次扫描版）
  */
 export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] | null {
     let vueIndex: VueIndex | null = null;
@@ -155,7 +198,7 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
         if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
             vueIndex = getOrCreateVueIndexFromContent(jsText, document.uri, 0);
-            
+
             // 找关联 HTML (只查找已知关联的文件，不遍历所有打开的文档)
             const htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
             for (const hf of htmlFiles) {
@@ -167,9 +210,7 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
                 } catch { /* */ }
             }
 
-            // 回退：当 JS 文件自身解析的 VueIndex 为空时，
-            // 尝试通过关联 HTML 文件的 resolveVueIndexForHtml 间接获取索引
-            // （HTML 可能通过 <script src> 引用此 JS 并提供完整 Vue 实例上下文）
+            // 回退：当 JS 文件自身解析的 VueIndex 为空时，通过关联 HTML 间接获取
             if (vueIndex && vueIndex.data.size === 0 && vueIndex.methods.size === 0
                 && vueIndex.computed.size === 0 && vueIndex.mixinData.size === 0
                 && vueIndex.mixinMethods.size === 0 && vueIndex.mixinComputed.size === 0) {
@@ -198,7 +239,6 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
                 if (firstDef && firstDef.uri.fsPath !== document.uri.fsPath) {
                     try { jsText = fs.readFileSync(firstDef.uri.fsPath, 'utf8'); } catch { /* */ }
                 } else {
-                    // 内联脚本：HTML 和 JS 在同一个文件中，需要搜索 this.xxx 引用
                     jsText = document.getText();
                 }
             }
@@ -207,79 +247,78 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
 
     if (!vueIndex) { return null; }
 
-    const infos: RefCountInfo[] = [];
-
     const normalizedCurrentPath = normalizePath(document.uri.fsPath);
-    const collect = (map: Map<string, vscode.Location>, category: string) => {
+
+    // ── 1. 收集所有 Vue 成员（去重，按优先级顺序） ──
+    const vueMemberNames = new Set<string>();
+    const vueMemberDefLines = new Map<string, number>();
+    const vueEntries: Array<{ name: string; category: string; loc: vscode.Location }> = [];
+    const seenVue = new Set<string>();
+
+    const registerMap = (map: Map<string, vscode.Location>, category: string) => {
         map.forEach((loc, name) => {
             if (normalizePath(loc.uri.fsPath) !== normalizedCurrentPath) { return; }
-            let count = 0;
-            if (htmlText) { count += countReferencesInHtml(htmlText, name); }
-            if (jsText) { count += countReferencesInJs(jsText, name, loc.range.start.line); }
-            infos.push({ name, category, count, line: loc.range.start.line, loc });
+            if (seenVue.has(name)) { return; }
+            seenVue.add(name);
+            vueMemberNames.add(name);
+            vueMemberDefLines.set(name, loc.range.start.line);
+            vueEntries.push({ name, category, loc });
         });
     };
 
-    collect(vueIndex.data, 'data');
-    collect(vueIndex.methods, 'methods');
-    collect(vueIndex.computed, 'computed');
-    collect(vueIndex.props, 'props');
-    collect(vueIndex.mixinData, 'mixin data');
-    collect(vueIndex.mixinMethods, 'mixin methods');
-    collect(vueIndex.mixinComputed, 'mixin computed');
-    collect(vueIndex.filters, 'filters');
+    registerMap(vueIndex.props, 'props');
+    registerMap(vueIndex.data, 'data');
+    registerMap(vueIndex.mixinData, 'mixin data');
+    registerMap(vueIndex.computed, 'computed');
+    registerMap(vueIndex.mixinComputed, 'mixin computed');
+    registerMap(vueIndex.methods, 'methods');
+    registerMap(vueIndex.mixinMethods, 'mixin methods');
+    registerMap(vueIndex.filters, 'filters');
 
-    // 全局函数引用计数（定义在 Vue 实例外部的 function）
+    // ── 2. 收集全局函数定义（O(log n) 行号查找，不再 split 字符串） ──
+    const funcEntries: Array<{ name: string; defLine: number }> = [];
+    const funcNames = new Set<string>();
+    const funcDefLines = new Map<string, number>();
+
     if (jsText) {
-        const existingNames = new Set<string>();
-        infos.forEach(i => existingNames.add(i.name));
-
-        const jsLines = jsText.split('\n');
-        const addFuncInfo = (funcName: string, defLine: number) => {
-            if (existingNames.has(funcName)) { return; } // 已在 VueIndex 中
-            existingNames.add(funcName);
-            let count = 0;
-            if (htmlText) { count += countReferencesInHtml(htmlText, funcName); }
-            const callRegex = new RegExp(`\\b${escapeRegex(funcName)}\\s*\\(`, 'g');
-            for (let i = 0; i < jsLines.length; i++) {
-                if (i === defLine) { continue; }
-                callRegex.lastIndex = 0;
-                let cm: RegExpExecArray | null;
-                while ((cm = callRegex.exec(jsLines[i])) !== null) { count++; }
-            }
-            const defPos = new vscode.Position(defLine, 0);
-            const loc = new vscode.Location(document.uri, new vscode.Range(defPos, defPos));
-            infos.push({ name: funcName, category: 'function', count, line: defLine, loc });
+        const lineOffsets = buildLineOffsets(jsText);
+        const addFunc = (name: string, matchIdx: number) => {
+            if (vueMemberNames.has(name) || funcNames.has(name)) { return; }
+            const defLine = charIdxToLine(lineOffsets, matchIdx);
+            funcNames.add(name);
+            funcDefLines.set(name, defLine);
+            funcEntries.push({ name, defLine });
         };
 
-        // 1. function declaration: function xxx()
-        const funcDeclRegex = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
         let fm: RegExpExecArray | null;
-        while ((fm = funcDeclRegex.exec(jsText)) !== null) {
-            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
-            addFuncInfo(fm[1], defLine);
-        }
+        const funcDeclRe = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
+        while ((fm = funcDeclRe.exec(jsText)) !== null) { addFunc(fm[1], fm.index); }
+        const funcExprRe = /^(?:var|let|const)\s+([a-zA-Z_$][\w$]*)\s*=\s*function\s*[\w$]*\s*\(/gm;
+        while ((fm = funcExprRe.exec(jsText)) !== null) { addFunc(fm[1], fm.index); }
+        const arrowRe = /^(?:var|let|const)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>/gm;
+        while ((fm = arrowRe.exec(jsText)) !== null) { addFunc(fm[1], fm.index); }
+        const windowRe = /^(?:window|self|globalThis)\s*\.\s*([a-zA-Z_$][\w$]*)\s*=\s*function\s*[\w$]*\s*\(/gm;
+        while ((fm = windowRe.exec(jsText)) !== null) { addFunc(fm[1], fm.index); }
+    }
 
-        // 2. function expression: var/let/const xxx = function()
-        const funcExprRegex = /^(?:var|let|const)\s+([a-zA-Z_$][\w$]*)\s*=\s*function\s*[\w$]*\s*\(/gm;
-        while ((fm = funcExprRegex.exec(jsText)) !== null) {
-            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
-            addFuncInfo(fm[1], defLine);
-        }
+    // ── 3. 单次批量扫描 HTML + JS ──
+    const allHtmlNames = new Set([...vueMemberNames, ...funcNames]);
+    const htmlCounts = batchCountReferencesInHtml(htmlText, allHtmlNames);
+    const { vueCounts, funcCounts } = batchCountReferencesInJs(
+        jsText, vueMemberNames, vueMemberDefLines, funcNames, funcDefLines
+    );
 
-        // 3. arrow function: var/let/const xxx = (...) => 或 var/let/const xxx = arg =>
-        const arrowRegex = /^(?:var|let|const)\s+([a-zA-Z_$][\w$]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_$][\w$]*)\s*=>/gm;
-        while ((fm = arrowRegex.exec(jsText)) !== null) {
-            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
-            addFuncInfo(fm[1], defLine);
-        }
-
-        // 4. window/global assignment: window.xxx = function() / xxx.yyy = function()
-        const windowFuncRegex = /^(?:window|self|globalThis)\s*\.\s*([a-zA-Z_$][\w$]*)\s*=\s*function\s*[\w$]*\s*\(/gm;
-        while ((fm = windowFuncRegex.exec(jsText)) !== null) {
-            const defLine = jsText.substring(0, fm.index).split('\n').length - 1;
-            addFuncInfo(fm[1], defLine);
-        }
+    // ── 4. 构建结果列表 ──
+    const infos: RefCountInfo[] = [];
+    for (const { name, category, loc } of vueEntries) {
+        const count = (htmlCounts.get(name) ?? 0) + (vueCounts.get(name) ?? 0);
+        infos.push({ name, category, count, line: loc.range.start.line, loc });
+    }
+    for (const { name, defLine } of funcEntries) {
+        const count = (htmlCounts.get(name) ?? 0) + (funcCounts.get(name) ?? 0);
+        const defPos = new vscode.Position(defLine, 0);
+        const loc = new vscode.Location(document.uri, new vscode.Range(defPos, defPos));
+        infos.push({ name, category: 'function', count, line: defLine, loc });
     }
 
     return infos;
@@ -290,69 +329,108 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
 export class VueCodeLensProvider implements vscode.CodeLensProvider {
     private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
     public readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
+    /** uri → { version, lenses } */
     private cache = new Map<string, { version: number; lenses: vscode.CodeLens[] }>();
+    /** uri → pending compute timer */
+    private computeTimers = new Map<string, NodeJS.Timeout>();
     private static readonly MAX_CACHE = 20;
+    /** 防抖延迟：编辑停止后 400 ms 才开始计算 */
+    private static readonly DEBOUNCE_MS = 400;
 
     public refresh() {
+        this.computeTimers.forEach(t => clearTimeout(t));
+        this.computeTimers.clear();
         this.cache.clear();
         this._onDidChangeCodeLenses.fire();
     }
 
     provideCodeLenses(
         document: vscode.TextDocument,
-        _token: vscode.CancellationToken
+        token: vscode.CancellationToken
     ): vscode.CodeLens[] | null {
-        if (_token.isCancellationRequested) { return null; }
+        if (token.isCancellationRequested) { return null; }
 
         const config = vscode.workspace.getConfiguration('leidong-tools');
         const enableRefCount = config.get<boolean>('enableCodeLens', false);
         const enableAI = config.get<boolean>('enableAIAnalysis', false);
         const pos = config.get<string>('codeLensPosition', 'above');
 
-        // 如果两个都关了，或者不是 above 模式且 AI 没开启（AI 目前只通过 CodeLens 展示），则返回 null
         if (!enableRefCount && !enableAI) { return null; }
         if (pos !== 'above' && !enableAI) { return null; }
 
         const cacheKey = document.uri.toString();
         const cached = this.cache.get(cacheKey);
+
+        // 缓存命中 → 立即返回，不阻塞主线程
         if (cached && cached.version === document.version) { return cached.lenses; }
 
-        if (_token.isCancellationRequested) { return null; }
+        // 缓存未命中 → 返回旧结果（或空数组），同时安排异步计算
+        const stale = cached ? cached.lenses : [];
+        this._scheduleCompute(document, cacheKey, enableRefCount, enableAI, pos);
+        return stale;
+    }
 
-        const infos = computeRefCounts(document);
-        if (!infos) { return null; }
+    private _scheduleCompute(
+        document: vscode.TextDocument,
+        cacheKey: string,
+        enableRefCount: boolean,
+        enableAI: boolean,
+        pos: string
+    ): void {
+        // 已有定时器则先取消（防抖）
+        const existing = this.computeTimers.get(cacheKey);
+        if (existing) { clearTimeout(existing); }
 
+        const docVersion = document.version;
+        const timer = setTimeout(() => {
+            this.computeTimers.delete(cacheKey);
+
+            // 文档已变化则放弃（下次 provideCodeLenses 会重新调度）
+            if (document.isClosed || document.version !== docVersion) { return; }
+
+            const infos = computeRefCounts(document);
+            if (!infos) { return; }
+
+            const lenses = this._buildLenses(infos, enableRefCount, enableAI, pos, document.uri);
+            this.cache.set(cacheKey, { version: docVersion, lenses });
+            if (this.cache.size > VueCodeLensProvider.MAX_CACHE) {
+                const oldest = this.cache.keys().next().value;
+                if (oldest) { this.cache.delete(oldest); }
+            }
+            // 通知 VS Code 重新请求 CodeLens（此时会从缓存中命中，立即返回）
+            this._onDidChangeCodeLenses.fire();
+        }, VueCodeLensProvider.DEBOUNCE_MS);
+
+        this.computeTimers.set(cacheKey, timer);
+    }
+
+    private _buildLenses(
+        infos: RefCountInfo[],
+        enableRefCount: boolean,
+        enableAI: boolean,
+        pos: string,
+        uri: vscode.Uri
+    ): vscode.CodeLens[] {
         const lenses: vscode.CodeLens[] = [];
         for (const info of infos) {
             const range = new vscode.Range(info.line, 0, info.line, 0);
-
-            // 1. 引用计数按钮 (仅且仅当 enableCodeLens=true 且 pos=above)
             if (enableRefCount && pos === 'above') {
                 const title = info.count > 0 ? `引用 ${info.count} 次` : '未引用';
                 lenses.push(new vscode.CodeLens(range, {
                     title: `$(references) ${title}`,
                     command: info.count > 0 ? 'editor.action.findReferences' : '',
-                    arguments: info.count > 0 ? [document.uri, info.loc.range.start] : undefined,
+                    arguments: info.count > 0 ? [uri, info.loc.range.start] : undefined,
                     tooltip: `${info.category}.${info.name} - ${title}`
                 }));
             }
-
-            // 2. AI 分析按钮 (仅当 enableAIAnalysis=true)
             if (enableAI) {
                 lenses.push(new vscode.CodeLens(range, {
                     title: `$(sparkle) AI 分析`,
                     command: 'leidong-tools.analyzeWithCopilot',
-                    arguments: [info.name, document.uri],
+                    arguments: [info.name, uri],
                     tooltip: `使用 AI 深度分析 ${info.name}`
                 }));
             }
-        }
-
-        this.cache.set(cacheKey, { version: document.version, lenses });
-        // 限制缓存大小
-        if (this.cache.size > VueCodeLensProvider.MAX_CACHE) {
-            const oldest = this.cache.keys().next().value;
-            if (oldest) { this.cache.delete(oldest); }
         }
         return lenses;
     }

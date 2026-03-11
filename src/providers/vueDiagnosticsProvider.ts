@@ -338,15 +338,6 @@ export function initVueDiagnostics(context: vscode.ExtensionContext): void {
         })
     );
 
-    // 切换编辑器时运行诊断
-    context.subscriptions.push(
-        vscode.window.onDidChangeActiveTextEditor((editor) => {
-            if (editor) {
-                runDiagnostics(editor.document);
-            }
-        })
-    );
-
     // 文件关闭时清除诊断
     context.subscriptions.push(
         vscode.workspace.onDidCloseTextDocument((document) => {
