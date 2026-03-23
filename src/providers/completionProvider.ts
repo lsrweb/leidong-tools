@@ -73,19 +73,22 @@ export class QuickLogCompletionProvider implements vscode.CompletionItemProvider
     ): vscode.ProviderResult<vscode.CompletionItem[] | vscode.CompletionList> {
         this.position = position;
 
-        const completions = this.configs.map((config) => {
-            const item = new vscode.CompletionItem(
-                config.trigger,
-                vscode.CompletionItemKind.Method
-            );
-            item.detail = config.description;
-            item.documentation = new vscode.MarkdownString(config.description);
-            item.sortText = '0000'; // 最高优先级
-            item.preselect = true;
-            return item;
-        });
+        const linePrefix = document.lineAt(position).text.substring(0, position.character);
+        const matchedTrigger = /(?:^|[^\w$])[^\s'"`]+\.([leidw])$/.exec(linePrefix)?.[1];
+        if (!matchedTrigger) { return []; }
 
-        return completions;
+        const matchedConfig = this.configs.find((config) => config.trigger[0] === matchedTrigger);
+        if (!matchedConfig) { return []; }
+
+        const item = new vscode.CompletionItem(
+            matchedConfig.trigger,
+                vscode.CompletionItemKind.Method
+        );
+        item.detail = matchedConfig.description;
+        item.documentation = new vscode.MarkdownString(matchedConfig.description);
+        item.sortText = '0000'; // 最高优先级，但只在命中命令前缀时出现
+        item.preselect = true;
+        return [item];
     }
 
     resolveCompletionItem(
@@ -143,17 +146,32 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
             // 检查触发自动完成的字符
             const linePrefix = document.lineAt(position).text.substring(0, position.character);
 
+            // 只在扩展真正能提供增量价值的上下文里参与补全。
+            // 普通的 foo. / obj. 场景直接交给 VS Code 原生 JS/TS 语言服务，避免我们抢主线程。
+            const aliasRootPattern = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.$/;
+            const aliasPropertyPattern = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.[a-zA-Z_$][\w$]*\.$/;
+            const refsPattern = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.\$refs\.\s*$/;
+            const emitPattern = /(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.\$emit\(\s*['"]$/;
+
+            if (linePrefix.endsWith('.')
+                && !aliasRootPattern.test(linePrefix)
+                && !aliasPropertyPattern.test(linePrefix)
+                && !refsPattern.test(linePrefix)
+                && !emitPattern.test(linePrefix)) {
+                return [];
+            }
+
             // $refs 补全：this.$refs. / that.$refs. / _this.$refs. 等
-            if (/(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.\.refs\.\s*$/.test(linePrefix)) {
+            if (refsPattern.test(linePrefix)) {
                 return this.provideRefsCompletions();
             }
 
             // $emit 事件名补全：this.$emit(' / that.$emit(' 等
-            if (/(?:this|that|_this|self|_self|vm|_vm|me|ctx|app|this_)\.\$emit\(\s*['"]$/.test(linePrefix)) {
+            if (emitPattern.test(linePrefix)) {
                 return this.provideEmitEventCompletions(document);
             }
 
-            const objectContext = this.getObjectPropertyContext(linePrefix);
+            const objectContext = aliasPropertyPattern.test(linePrefix) ? this.getObjectPropertyContext(linePrefix) : null;
             if (objectContext) {
                 const inferredItems = this.getInferredPropertyItems(document, objectContext.root);
                 if (inferredItems.length > 0) {

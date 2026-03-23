@@ -50,7 +50,7 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
             }
         });
 
-        // ✅ 保存时清除缓存，但不立即刷新（避免编辑时频繁重建）
+        // ✅ 保存时只清除缓存，不立即刷新（避免编辑时频繁重建）
         vscode.workspace.onDidSaveTextDocument((document) => {
             this.invalidateCacheForDocument(document);
         });
@@ -87,24 +87,11 @@ export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider 
      * 清除文档的缓存
      */
     private invalidateCacheForDocument(document: vscode.TextDocument): void {
-        console.log('[VariableIndexWebview] 文件保存，清除缓存:', document.uri.toString());
         this._lastParsedUri = '';
         this._lastVariables = [];
         
         // 清除 jsSymbolParser 缓存
         jsSymbolParser.invalidateCache(document.uri);
-        
-        // 如果是外部 JS 文件，查找对应的 HTML
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-            jsSymbolParser.invalidateCache(document.uri);
-        }
-        
-        // 如果保存的文件就是当前显示的文件，刷新索引
-        const editor = vscode.window.activeTextEditor;
-        if (editor && editor.document.uri.toString() === document.uri.toString()) {
-            console.log('[VariableIndexWebview] 当前文件已保存，刷新索引');
-            this.refresh();
-        }
     }
 
     /**

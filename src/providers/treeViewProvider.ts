@@ -72,11 +72,6 @@ export class LeidongTreeDataProvider implements vscode.TreeDataProvider<TreeItem
         vscode.window.onDidChangeActiveTextEditor(() => {
             this.refresh();
         });
-        
-        // 监听文档保存，刷新树视图
-        vscode.workspace.onDidSaveTextDocument(() => {
-            this.refresh();
-        });
     }
     
     /**

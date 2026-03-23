@@ -1,11 +1,10 @@
-import { buildAndCacheTemplateIndex, getTemplateIndex, removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from '../finders/templateIndexer';
-import { getOrCreateVueIndexFromContent, removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache } from '../parsers/parseDocument';
+import { removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from '../finders/templateIndexer';
+import { removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache } from '../parsers/parseDocument';
 import * as vscode from 'vscode';
 
 /** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */
 export function registerIndexLifecycle(context: vscode.ExtensionContext) {
     const disposables: vscode.Disposable[] = [];
-    let rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get<boolean>('rebuildOnSave', true);
 
     // watch for config change
     disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
@@ -15,16 +14,6 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
         if (e.affectsConfiguration('leidong-tools.maxTemplateIndexEntries')) {
             recreateTemplateIndexCache();
         }
-        if (e.affectsConfiguration('leidong-tools.rebuildOnSave')) {
-            rebuildOnSave = vscode.workspace.getConfiguration('leidong-tools').get<boolean>('rebuildOnSave', true);
-        }
-    }));
-
-    // 在保存时（可配置）触发重建索引（按需构建：各 provider 首次请求时会懒加载索引）
-    disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
-        if (!rebuildOnSave) { return; }
-        if (doc.languageId === 'html') { buildAndCacheTemplateIndex(doc); }
-        if (doc.languageId === 'javascript' || doc.languageId === 'typescript') { getOrCreateVueIndexFromContent(doc.getText(), doc.uri, 0); }
     }));
 
     disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {

@@ -76,7 +76,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.languages.registerCompletionItemProvider(
             FILE_SELECTORS.JAVASCRIPT,
             new QuickLogCompletionProvider(),
-            '.', // 触发补全的字符
+            'l', 'e', 'i', 'd', 'w', // 仅在输入 log/err/info/dbg/warn 的首字母时触发
         )
     );
 
@@ -138,9 +138,6 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             updateInlineRefDecorations(editor);
-        }),
-        vscode.workspace.onDidSaveTextDocument(() => {
-            updateInlineRefDecorations(vscode.window.activeTextEditor);
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
             if (e.affectsConfiguration('leidong-tools.enableCodeLens') || 

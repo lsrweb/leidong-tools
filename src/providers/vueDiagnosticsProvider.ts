@@ -331,13 +331,6 @@ export function initVueDiagnostics(context: vscode.ExtensionContext): void {
     diagnosticCollection = vscode.languages.createDiagnosticCollection('leidong-vue');
     context.subscriptions.push(diagnosticCollection);
 
-    // 文件保存时运行诊断
-    context.subscriptions.push(
-        vscode.workspace.onDidSaveTextDocument((document) => {
-            runDiagnostics(document);
-        })
-    );
-
     // 文件关闭时清除诊断
     context.subscriptions.push(
         vscode.workspace.onDidCloseTextDocument((document) => {
