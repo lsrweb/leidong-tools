@@ -2,6 +2,17 @@
 
 所有重要的变更都将记录在此文件中。
 
+## [2.3.5] - 2026-03-23
+
+### 🐛 修复
+- **JS 组件模板跳转修复**：`Vue.component(...)` 的内联模板现在会正确并入组件索引，模板中的 `displayText`、`content` 等变量可正常跳转到 `props/data/methods/computed`。
+- **引用计数口径修正**：内联 `template: \`...\`` 不再叠加关联 HTML 页面引用，避免同一变量被误算成 2 次“未引用/重复引用”。
+- **内联模板引用统计补齐**：`{{ displayText }}` 这类 JS 内联模板中的使用现在会被 CodeLens / Hover 正确统计。
+
+### ✨ 改进
+- **CSS 体验增强**：JS 模板字符串内的 `style.textContent = \`...\`` / `style.innerHTML = \`...\`` 现在支持 CSS 高亮和补全。
+- **JSReact/TSReact 支持**：相关跳转、悬停、引用、符号视图已同步覆盖 `javascriptreact` 和 `typescriptreact`。
+
 ## [2.3.4] - 2026-03-21
 
 ### ⚡ 性能优化

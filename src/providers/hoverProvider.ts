@@ -158,7 +158,8 @@ export class VueHoverProvider implements vscode.HoverProvider {
         }
 
         // 检查JavaScript/TypeScript
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+        if (document.languageId === 'javascript' || document.languageId === 'typescript'
+            || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
             // 检测是否在 template: `...` 模板字符串内
             const templateInfo = getTemplateLiteralAtPosition(document, position);
             if (templateInfo) {

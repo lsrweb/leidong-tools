@@ -36,7 +36,8 @@ export class DefinitionLogic {
             if (!word) { return null; }
 
             // JS / TS 文件：直接解析自身
-            if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            if (document.languageId === 'javascript' || document.languageId === 'typescript'
+                || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
                 const content = document.getText();
                 const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
                 if (this.shouldLog()) { console.log(`[jump][js] word=${word} chain=${fullChain || ''}`); }

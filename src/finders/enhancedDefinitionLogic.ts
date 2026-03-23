@@ -50,7 +50,8 @@ export class EnhancedDefinitionLogic {
             }
 
             // JS/TS 文件：优先使用新解析器
-            if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            if (document.languageId === 'javascript' || document.languageId === 'typescript'
+                || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
                 return await this.handleJavaScriptFile(document, position, word, fullChain, contextType);
             }
 

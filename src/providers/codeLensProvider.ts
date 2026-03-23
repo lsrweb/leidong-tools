@@ -68,6 +68,46 @@ function batchCountReferencesInHtml(text: string, names: ReadonlySet<string>): M
 }
 
 /**
+ * 从 JS 文本中提取 Vue 内联 template: `...` 的模板内容。
+ * 这里只处理最常见的反引号模板，足够覆盖 Vue.component / new Vue 场景。
+ */
+function extractInlineTemplateBlocks(text: string): string[] {
+    const blocks: string[] = [];
+    if (!text) { return blocks; }
+
+    const templateRe = /template\s*:\s*`/g;
+    let m: RegExpExecArray | null;
+    while ((m = templateRe.exec(text)) !== null) {
+        const backtickStart = m.index + m[0].length - 1;
+        let i = backtickStart + 1;
+        let exprDepth = 0;
+
+        while (i < text.length) {
+            const ch = text[i];
+            if (ch === '\\') { i += 2; continue; }
+            if (ch === '$' && i + 1 < text.length && text[i + 1] === '{') {
+                exprDepth++;
+                i += 2;
+                continue;
+            }
+            if (ch === '}' && exprDepth > 0) {
+                exprDepth--;
+                i++;
+                continue;
+            }
+            if (ch === '`' && exprDepth === 0) {
+                blocks.push(text.substring(backtickStart + 1, i));
+                templateRe.lastIndex = i + 1;
+                break;
+            }
+            i++;
+        }
+    }
+
+    return blocks;
+}
+
+/**
  * 批量统计 JS 文本中的引用次数，单次扫描完成两类计数：
  *  - Vue 成员：this.xxx / that.xxx 等
  *  - 全局函数：name( 且不以 . 开头
@@ -108,6 +148,22 @@ function batchCountReferencesInJs(
             }
         }
     }
+
+    // 额外统计同一 JS 文件中的内联 template: `...` 引用。
+    // 这能把 Vue.component / new Vue 里的 {{ displayText }} 也算进去。
+    const inlineTemplates = extractInlineTemplateBlocks(text);
+    if (inlineTemplates.length > 0) {
+        for (const tpl of inlineTemplates) {
+            const tplCounts = batchCountReferencesInHtml(tpl, vueNames);
+            tplCounts.forEach((count, name) => {
+                const current = vueCounts.get(name);
+                if (current !== undefined) {
+                    vueCounts.set(name, current + count);
+                }
+            });
+        }
+    }
+
     return { vueCounts, funcCounts };
 }
 
@@ -193,21 +249,27 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
     let vueIndex: VueIndex | null = null;
     let htmlText = '';
     let jsText = '';
+    let hasInlineTemplate = false;
+    let htmlFiles: string[] = [];
 
     try {
         if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
             vueIndex = getOrCreateVueIndexFromContent(jsText, document.uri, 0);
+            hasInlineTemplate = /template\s*:\s*`/.test(jsText);
 
-            // 找关联 HTML (只查找已知关联的文件，不遍历所有打开的文档)
-            const htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
-            for (const hf of htmlFiles) {
-                try {
-                    const openDoc = vscode.workspace.textDocuments.find(
-                        d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed
-                    );
-                    htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
-                } catch { /* */ }
+            // JS/TS 内联模板组件只统计本文件内的模板引用，避免把关联 HTML 页面的同名引用混进来。
+            if (!hasInlineTemplate) {
+                // 找关联 HTML (只查找已知关联的文件，不遍历所有打开的文档)
+                htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
+                for (const hf of htmlFiles) {
+                    try {
+                        const openDoc = vscode.workspace.textDocuments.find(
+                            d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed
+                        );
+                        htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
+                    } catch { /* */ }
+                }
             }
 
             // 回退：当 JS 文件自身解析的 VueIndex 为空时，通过关联 HTML 间接获取

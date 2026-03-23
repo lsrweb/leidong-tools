@@ -34,7 +34,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
                 [
                     { scheme: 'file', language: 'html' },
                     { scheme: 'file', language: 'javascript' },
-                    { scheme: 'file', language: 'typescript' }
+                    { scheme: 'file', language: 'typescript' },
+                    { scheme: 'file', language: 'javascriptreact' },
+                    { scheme: 'file', language: 'typescriptreact' }
                 ],
                 new VueHtmlDefinitionProvider()
             )
@@ -47,7 +49,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             [
                 { scheme: 'file', language: 'html' },
                 { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' }
+                { scheme: 'file', language: 'typescript' },
+                { scheme: 'file', language: 'javascriptreact' },
+                { scheme: 'file', language: 'typescriptreact' }
             ],
             new VueHoverProvider()
         )
@@ -58,7 +62,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.languages.registerCompletionItemProvider(
             FILE_SELECTORS.JAVASCRIPT_ONLY,
             new JavaScriptCompletionProvider(),
-            '.', // 触发补全的字符
+            '.', '<', ':', '@', '{', ';', '#', '-', '"', '\'' // 触发补全的字符
         )
     );
 
@@ -102,7 +106,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             [
                 { scheme: 'file', language: 'html' },
                 { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' }
+                { scheme: 'file', language: 'typescript' },
+                { scheme: 'file', language: 'javascriptreact' },
+                { scheme: 'file', language: 'typescriptreact' }
             ],
             new VueDocumentSymbolProvider()
         )
@@ -114,7 +120,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             [
                 { scheme: 'file', language: 'html' },
                 { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' }
+                { scheme: 'file', language: 'typescript' },
+                { scheme: 'file', language: 'javascriptreact' },
+                { scheme: 'file', language: 'typescriptreact' }
             ],
             new VueReferenceProvider()
         )
@@ -127,6 +135,8 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             [
                 { scheme: 'file', language: 'javascript' },
                 { scheme: 'file', language: 'typescript' },
+                { scheme: 'file', language: 'javascriptreact' },
+                { scheme: 'file', language: 'typescriptreact' },
                 { scheme: 'file', language: 'html' },
                 { scheme: 'file', language: 'vue' }
             ],

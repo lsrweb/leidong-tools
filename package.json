@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.3.4",
+  "version": "2.3.5",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -46,6 +46,8 @@
     "onLanguage:html",
     "onLanguage:javascript",
     "onLanguage:typescript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescriptreact",
     "onLanguage:json",
     "onLanguage:css",
     "onLanguage:vue"
@@ -454,7 +456,8 @@
         "scopeName": "inline.template-literal-html",
         "path": "./syntaxes/template-literal-html.tmLanguage.json",
         "embeddedLanguages": {
-          "meta.embedded.block.html": "html"
+          "meta.embedded.block.html": "html",
+          "meta.embedded.block.css": "css"
         }
       }
     ],

@@ -123,6 +123,44 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
     private cacheValidityPeriod = 30 * 1000;
     private propertyCacheTtlMs = 1500;
 
+    private static readonly COMMON_HTML_TAGS = [
+        'div', 'span', 'p', 'section', 'article', 'header', 'footer', 'main',
+        'aside', 'nav', 'ul', 'ol', 'li', 'a', 'img', 'button', 'input',
+        'textarea', 'select', 'option', 'label', 'form', 'template', 'slot'
+    ];
+
+    private static readonly COMMON_HTML_ATTRIBUTES = [
+        'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'type', 'value',
+        'name', 'placeholder', 'disabled', 'readonly', 'checked', 'required',
+        'rel', 'for', 'target', 'role', 'aria-label', 'aria-hidden'
+    ];
+
+    private static readonly COMMON_CSS_PROPERTIES = [
+        'display', 'position', 'top', 'right', 'bottom', 'left', 'width', 'height',
+        'margin', 'padding', 'color', 'background', 'background-color', 'font-size',
+        'font-weight', 'line-height', 'text-align', 'justify-content', 'align-items',
+        'gap', 'flex', 'flex-direction', 'flex-wrap', 'border', 'border-radius',
+        'overflow', 'opacity', 'z-index', 'box-shadow', 'cursor'
+    ];
+
+    private static readonly COMMON_CSS_AT_RULES = [
+        '@media', '@supports', '@keyframes', '@import', '@font-face', '@charset', '@page'
+    ];
+
+    private static readonly CSS_VALUE_MAP: Record<string, string[]> = {
+        display: ['block', 'inline', 'inline-block', 'flex', 'inline-flex', 'grid', 'none'],
+        position: ['static', 'relative', 'absolute', 'fixed', 'sticky'],
+        'flex-direction': ['row', 'row-reverse', 'column', 'column-reverse'],
+        'justify-content': ['flex-start', 'flex-end', 'center', 'space-between', 'space-around', 'space-evenly'],
+        'align-items': ['stretch', 'flex-start', 'flex-end', 'center', 'baseline'],
+        'text-align': ['left', 'right', 'center', 'justify'],
+        overflow: ['visible', 'hidden', 'scroll', 'auto'],
+        cursor: ['default', 'pointer', 'text', 'move', 'not-allowed', 'grab'],
+        'white-space': ['normal', 'nowrap', 'pre', 'pre-wrap', 'pre-line'],
+        'object-fit': ['fill', 'contain', 'cover', 'none', 'scale-down'],
+        'font-weight': ['normal', 'bold', 'bolder', 'lighter', '100', '200', '300', '400', '500', '600', '700', '800', '900']
+    };
+
     // 提供自动完成项目
     async provideCompletionItems(
         document: vscode.TextDocument,
@@ -136,10 +174,23 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
             const templateInfo = getTemplateLiteralAtPosition(document, position);
             if (templateInfo) {
                 const linePrefix = document.lineAt(position).text.substring(0, position.character);
+                if (this.isCssTemplateContext(templateInfo, linePrefix)) {
+                    const cssItems = this.provideTemplateLiteralCssCompletions(linePrefix, templateInfo.content);
+                    if (cssItems.length > 0) {
+                        return new vscode.CompletionList(cssItems, false);
+                    }
+                }
+
                 if (isVueTemplateContext(linePrefix)) {
                     return this.provideTemplateLiteralCompletions(document) || [];
                 }
-                // 非 Vue 指令上下文时不拦截，让内置 HTML 补全生效
+
+                const htmlItems = this.provideTemplateLiteralHtmlCompletions(document, linePrefix);
+                if (htmlItems.length > 0) {
+                    return new vscode.CompletionList(htmlItems, false);
+                }
+
+                // 模板字符串内没有匹配到更具体的上下文时，不拦截后续补全
                 return [];
             }
 
@@ -359,6 +410,163 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
             console.error('[JS Completion] template literal error:', e);
             return null;
         }
+    }
+
+    private provideTemplateLiteralHtmlCompletions(document: vscode.TextDocument, linePrefix: string): vscode.CompletionItem[] {
+        const items: vscode.CompletionItem[] = [];
+        const inTag = linePrefix.lastIndexOf('<') > linePrefix.lastIndexOf('>');
+        if (!inTag) { return items; }
+
+        const tagMatch = /<([a-zA-Z0-9-]*)$/.exec(linePrefix);
+        const attrMatch = /<[^>]*\s([a-zA-Z0-9-]*)$/.exec(linePrefix);
+        const rootIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+
+        if (tagMatch) {
+            const prefix = tagMatch[1] || '';
+            const candidates = new Set<string>(JavaScriptCompletionProvider.COMMON_HTML_TAGS);
+            rootIndex.registeredComponents.forEach((comp) => candidates.add(comp.kebabName));
+            Array.from(candidates)
+                .filter(name => !prefix || name.startsWith(prefix))
+                .sort()
+                .forEach((name, idx) => {
+                    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Class);
+                    item.detail = 'HTML tag (模板字符串)';
+                    item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+            return items;
+        }
+
+        if (attrMatch) {
+            const prefix = attrMatch[1] || '';
+            const attrCandidates = new Set<string>(JavaScriptCompletionProvider.COMMON_HTML_ATTRIBUTES);
+            const vueDirectives = ['v-if', 'v-else-if', 'v-else', 'v-show', 'v-for', 'v-model', 'v-bind', 'v-on', 'v-text', 'v-html', 'v-slot'];
+            vueDirectives.forEach(name => attrCandidates.add(name));
+            Array.from(attrCandidates)
+                .filter(name => !prefix || name.startsWith(prefix))
+                .sort()
+                .forEach((name, idx) => {
+                    const item = new vscode.CompletionItem(name, name.startsWith('v-') ? vscode.CompletionItemKind.Keyword : vscode.CompletionItemKind.Property);
+                    item.detail = 'HTML attribute / Vue directive (模板字符串)';
+                    item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+        }
+
+        return items;
+    }
+
+    private isCssTemplateContext(templateInfo: ReturnType<typeof getTemplateLiteralAtPosition>, linePrefix: string): boolean {
+        if (templateInfo && (templateInfo.kind === 'backtick-css' || templateInfo.kind === 'string-css')) {
+            return true;
+        }
+        return /(?:style|css|styles|styleText|cssText|styleSheet|styleContent|innerHTML|textContent)(?:\s*\.\s*[a-zA-Z_$][\w$]*)*\s*=\s*`/.test(linePrefix)
+            || /style\s*=\s*["'][^"']*$/.test(linePrefix)
+            || /cssText\s*=\s*["'][^"']*$/.test(linePrefix);
+    }
+
+    private provideTemplateLiteralCssCompletions(linePrefix: string, content: string): vscode.CompletionItem[] {
+        const items: vscode.CompletionItem[] = [];
+        const beforeCursor = linePrefix;
+        const indentPrefix = /^\s*/.exec(beforeCursor)?.[0] || '';
+        const trimBefore = beforeCursor.trimEnd();
+
+        const propValueMatch = /(?:^|[;{\n])\s*([a-zA-Z-]+)\s*:\s*([^;{}]*)$/.exec(trimBefore);
+        if (propValueMatch) {
+            const propName = propValueMatch[1].toLowerCase();
+            const currentValuePrefix = (propValueMatch[2] || '').trim();
+            const values = JavaScriptCompletionProvider.CSS_VALUE_MAP[propName] || [];
+            values
+                .filter(v => !currentValuePrefix || v.startsWith(currentValuePrefix))
+                .forEach((value, idx) => {
+                    const item = new vscode.CompletionItem(value, vscode.CompletionItemKind.Value);
+                    item.detail = `${propName}: ${value} (CSS 值)`;
+                    item.insertText = new vscode.SnippetString(value);
+                    item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+
+            // 颜色值兜底
+            if (propName.includes('color') || propName === 'background' || propName === 'border') {
+                ['#fff', '#ffffff', 'red', 'transparent', 'currentColor'].forEach((value, idx) => {
+                    if (currentValuePrefix && !value.startsWith(currentValuePrefix)) { return; }
+                    const item = new vscode.CompletionItem(value, vscode.CompletionItemKind.Color);
+                    item.detail = '常用颜色值';
+                    item.insertText = new vscode.SnippetString(value);
+                    item.sortText = `0100${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+            }
+
+            return items;
+        }
+
+        const atRuleMatch = /(^|[\n;{])\s*(@[a-zA-Z-]*)$/.exec(trimBefore);
+        if (atRuleMatch) {
+            const prefix = atRuleMatch[2] || '';
+            JavaScriptCompletionProvider.COMMON_CSS_AT_RULES
+                .filter(rule => !prefix || rule.startsWith(prefix))
+                .forEach((rule, idx) => {
+                    const item = new vscode.CompletionItem(rule, vscode.CompletionItemKind.Keyword);
+                    item.detail = 'CSS at-rule';
+                    item.insertText = new vscode.SnippetString(rule + ' ');
+                    item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+            return items;
+        }
+
+        const propertyMatch = /(?:^|[;{\n])\s*([a-zA-Z-]*)$/.exec(trimBefore);
+        if (propertyMatch) {
+            const prefix = propertyMatch[1] || '';
+            JavaScriptCompletionProvider.COMMON_CSS_PROPERTIES
+                .filter(name => !prefix || name.startsWith(prefix))
+                .sort()
+                .forEach((name, idx) => {
+                    const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Property);
+                    item.detail = 'CSS property';
+                    item.insertText = new vscode.SnippetString(`${name}: $1;`);
+                    item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+            return items;
+        }
+
+        // 选择器补全：在 CSS 规则开始处给常见选择器
+        const selectorMatch = /(^|[\n{;])\s*([.#:]?[a-zA-Z_-][\w-]*)?$/.exec(trimBefore);
+        if (selectorMatch) {
+            const prefix = selectorMatch[2] || '';
+            const selectorItems: Array<{ label: string; kind: vscode.CompletionItemKind; detail: string; insertText?: string }> = [
+                { label: 'div', kind: vscode.CompletionItemKind.Class, detail: 'HTML tag selector' },
+                { label: 'span', kind: vscode.CompletionItemKind.Class, detail: 'HTML tag selector' },
+                { label: '.container', kind: vscode.CompletionItemKind.Class, detail: 'class selector' },
+                { label: '.active', kind: vscode.CompletionItemKind.Class, detail: 'class selector' },
+                { label: '#app', kind: vscode.CompletionItemKind.Class, detail: 'id selector' },
+                { label: ':root', kind: vscode.CompletionItemKind.Keyword, detail: 'root selector' },
+                { label: '@media', kind: vscode.CompletionItemKind.Keyword, detail: 'media query' },
+                { label: '@supports', kind: vscode.CompletionItemKind.Keyword, detail: 'feature query' },
+                { label: '@keyframes', kind: vscode.CompletionItemKind.Keyword, detail: 'animation keyframes' },
+            ];
+            selectorItems
+                .filter(item => !prefix || item.label.startsWith(prefix))
+                .forEach((entry, idx) => {
+                    const item = new vscode.CompletionItem(entry.label, entry.kind);
+                    item.detail = entry.detail;
+                    if (entry.label.startsWith('@')) {
+                        item.insertText = new vscode.SnippetString(`${entry.label} $1 {\n  $2\n}`);
+                    } else if (entry.label.startsWith('.')) {
+                        item.insertText = new vscode.SnippetString(`${entry.label} {\n  $1\n}`);
+                    } else if (entry.label.startsWith('#')) {
+                        item.insertText = new vscode.SnippetString(`${entry.label} {\n  $1\n}`);
+                    } else {
+                        item.insertText = new vscode.SnippetString(`${entry.label} {\n  $1\n}`);
+                    }
+                    item.sortText = `0000${idx.toString().padStart(4, '0')}`;
+                    items.push(item);
+                });
+        }
+
+        return items;
     }
 
     // 获取缓存的解析结果

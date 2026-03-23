@@ -1043,6 +1043,15 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             const optionsObj = resolveObjectExpression(optionsArg);
             if (!optionsObj) { return; }
             const templateId = extractTemplateIdFromOptions(optionsObj);
+
+            // 内联模板的 Vue.component(...)：直接把组件选项并入 rootIndex，
+            // 这样模板字符串里的变量跳转 / CodeLens / Hover 都能命中同一个组件作用域。
+            // x-template（template: '#foo'）仍然走 componentsByTemplateId，保持 HTML 侧映射能力。
+            if (!templateId) {
+                populateIndexFromOptions(rootIndex, optionsObj, baseLine);
+                return;
+            }
+
             if (!templateId || componentsByTemplateId.has(templateId)) { return; }
             const compIndex = createIndexShell();
             populateIndexFromOptions(compIndex, optionsObj, baseLine);

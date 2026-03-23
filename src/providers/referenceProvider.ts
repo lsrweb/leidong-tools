@@ -167,7 +167,8 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
 
         const locations: vscode.Location[] = [];
 
-        if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+        if (document.languageId === 'javascript' || document.languageId === 'typescript'
+            || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
             // 检查这个词是否是 Vue 索引中的成员
             let vueIndex: VueIndex | null = null;
             try {

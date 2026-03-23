@@ -77,6 +77,9 @@ export const FILE_SELECTORS = {
     ],
     JAVASCRIPT_ONLY: [
         { scheme: 'file', language: 'javascript' },
+        { scheme: 'file', language: 'typescript' },
+        { scheme: 'file', language: 'javascriptreact' },
+        { scheme: 'file', language: 'typescriptreact' },
         { scheme: 'file', pattern: '**/*.dev.js' }
     ],
     HTML: [

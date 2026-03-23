@@ -25,7 +25,7 @@ export interface TemplateLiteralInfo {
     /** 模板字符串在文档中的完整范围 */
     range: vscode.Range;
     /** 匹配到的模式类型 */
-    kind: 'template-property' | 'backtick-html' | 'string-html';
+    kind: 'template-property' | 'backtick-html' | 'string-html' | 'backtick-css' | 'string-css';
 }
 
 // 将所有需要匹配的模式集中管理
@@ -36,6 +36,8 @@ const BACKTICK_PATTERNS: Array<{ regex: RegExp; kind: TemplateLiteralInfo['kind'
     { regex: /(?:var|let|const)\s+\w+\s*=\s*`/g, kind: 'backtick-html' },
     // xxx = `...`  (赋值)
     { regex: /\w+\s*=\s*`/g, kind: 'backtick-html' },
+    // style.textContent = `...css...`
+    { regex: /(?:style|css|styles|styleText|cssText|styleSheet|styleContent|innerHTML|textContent)(?:\s*\.\s*[a-zA-Z_$][\w$]*)*\s*=\s*`/g, kind: 'backtick-css' },
 ];
 
 /**
@@ -71,8 +73,13 @@ export function getTemplateLiteralAtPosition(
             if (offset >= contentStart && offset <= contentEnd) {
                 const content = text.substring(contentStart, contentEnd);
 
-                // 对于非 template: 模式，验证内容是否包含 HTML
-                if (kind !== 'template-property' && !containsHtmlTags(content)) {
+                // 对于 HTML 模式，验证内容是否包含 HTML
+                if ((kind === 'backtick-html' || kind === 'string-html') && !containsHtmlTags(content)) {
+                    continue;
+                }
+
+                // 对于 CSS 模式，验证内容像 CSS
+                if ((kind === 'backtick-css' || kind === 'string-css') && !containsCssSyntax(content)) {
                     continue;
                 }
 
@@ -95,6 +102,11 @@ export function getTemplateLiteralAtPosition(
     const stringResult = checkQuotedStringAtOffset(text, offset, document);
     if (stringResult) {
         return stringResult;
+    }
+
+    const cssStringResult = checkQuotedCssStringAtOffset(text, offset, document);
+    if (cssStringResult) {
+        return cssStringResult;
     }
 
     return null;
@@ -186,10 +198,69 @@ function checkQuotedStringAtOffset(
 }
 
 /**
+ * 检测光标是否在包含 CSS 的字符串内
+ */
+function checkQuotedCssStringAtOffset(
+    text: string,
+    offset: number,
+    document: vscode.TextDocument
+): TemplateLiteralInfo | null {
+    const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+    const lineEnd = text.indexOf('\n', offset);
+    const line = text.substring(lineStart, lineEnd > 0 ? lineEnd : text.length);
+    const offsetInLine = offset - lineStart;
+
+    // CSS 相关字符串：style.textContent = '...'; / style.cssText = '...';
+    const assignRegex = /(?:style|css|styles|styleText|cssText|styleSheet|styleContent|innerHTML|textContent)(?:\s*\.\s*[a-zA-Z_$][\w$]*)*\s*=\s*(['"])/g;
+    let m: RegExpExecArray | null;
+
+    while ((m = assignRegex.exec(line)) !== null) {
+        const quote = m[1];
+        const strStart = m.index + m[0].length;
+
+        let strEnd = -1;
+        for (let i = strStart; i < line.length; i++) {
+            if (line[i] === '\\') { i++; continue; }
+            if (line[i] === quote) { strEnd = i; break; }
+        }
+        if (strEnd < 0) { continue; }
+
+        if (offsetInLine >= strStart && offsetInLine <= strEnd) {
+            const content = line.substring(strStart, strEnd);
+            if (!containsCssSyntax(content)) { continue; }
+
+            const absStart = lineStart + strStart;
+            const absEnd = lineStart + strEnd;
+            const startPos = document.positionAt(absStart);
+            const endPos = document.positionAt(absEnd);
+
+            return {
+                content,
+                startLine: startPos.line,
+                startCharacter: startPos.character,
+                endLine: endPos.line,
+                range: new vscode.Range(startPos, endPos),
+                kind: 'string-css'
+            };
+        }
+    }
+
+    return null;
+}
+
+/**
  * 快速检测字符串是否包含 HTML 标签
  */
 function containsHtmlTags(str: string): boolean {
     return /<[a-zA-Z][a-zA-Z0-9-]*[\s>\/]/.test(str);
+}
+
+/**
+ * 快速检测字符串是否更像 CSS
+ */
+function containsCssSyntax(str: string): boolean {
+    return /[#.][a-zA-Z0-9_-]+\s*\{|[a-z-]+\s*:\s*[^;{}]+;?/.test(str) ||
+        /@(?:media|keyframes|supports|import)\b/.test(str);
 }
 
 /**

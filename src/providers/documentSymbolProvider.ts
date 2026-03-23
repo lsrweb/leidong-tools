@@ -22,7 +22,8 @@ export class VueDocumentSymbolProvider implements vscode.DocumentSymbolProvider 
         try {
             if (document.languageId === 'html') {
                 vueIndex = resolveVueIndexForHtml(document);
-            } else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
+            } else if (document.languageId === 'javascript' || document.languageId === 'typescript'
+                || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
                 vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
             }
         } catch { /* ignore */ }
