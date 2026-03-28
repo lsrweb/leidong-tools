@@ -1484,18 +1484,25 @@ export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex 
         }
         return null;
     }
-    // 查找内联 <script> new Vue({...})
+    // 查找内联 <script> 中的 Vue.component / new Vue / Vue-like 组件声明
     const text = document.getText();
     const scriptRegex = /<script[^>]*>([\s\S]*?)<\/script>/gi;
     let match: RegExpExecArray | null;
+    const merged = createEmptyVueIndex();
+    let foundAny = false;
     while ((match = scriptRegex.exec(text)) !== null) {
         const content = match[1];
-        if (/new\s+Vue\s*\(/.test(content)) {
-            const startPos = document.positionAt(match.index + match[0].indexOf('>') + 1);
-            return getOrCreateVueIndexFromContent(content, document.uri, startPos.line);
+        if (!/(?:new\s+Vue\s*\(|Vue\.component\s*\(|export\s+default\s+\{|\bdata\s*:\s*|\bmethods\s*:\s*\{|\bcomputed\s*:\s*\{|\bprops\s*:\s*\[|\bprops\s*:\s*\{)/.test(content)) {
+            continue;
         }
+        const startPos = document.positionAt(match.index + match[0].indexOf('>') + 1);
+        const idx = getOrCreateVueIndexFromContent(content, document.uri, startPos.line);
+        mergeVueIndexInto(merged, idx);
+        foundAny = true;
     }
-    return null;
+    if (!foundAny) { return null; }
+    finalizeMergedIndex(merged, [merged.hash || fastHash(text)]);
+    return merged;
 }
 
 /**

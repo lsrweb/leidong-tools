@@ -4,6 +4,10 @@ function isXTemplateScriptTag(tag: string): boolean {
     return /type\s*=\s*(["']?)text\/x-template\1/i.test(tag);
 }
 
+function isTemplateBlockTag(tag: string): boolean {
+    return /<template\b/i.test(tag);
+}
+
 function extractIdFromTag(tag: string): string | null {
     const quoted = /id\s*=\s*(['"])([^'"]+)\1/i.exec(tag);
     if (quoted) { return quoted[2]; }
@@ -15,18 +19,24 @@ export function getXTemplateIdAtPosition(document: vscode.TextDocument, position
     if (document.languageId !== 'html') { return null; }
     const text = document.getText();
     const offset = document.offsetAt(position);
-    const scriptOpenRegex = /<script\b[^>]*>/gi;
+    const blockOpenRegex = /<(script|template)\b[^>]*>/gi;
     let match: RegExpExecArray | null;
 
-    while ((match = scriptOpenRegex.exec(text)) !== null) {
+    while ((match = blockOpenRegex.exec(text)) !== null) {
         const openStart = match.index;
         const openEnd = match.index + match[0].length;
         if (openStart > offset) { break; }
         const tag = match[0];
-        if (!isXTemplateScriptTag(tag)) { continue; }
+        const isScript = /<script\b/i.test(tag);
+        const isTemplate = !isScript && isTemplateBlockTag(tag);
+        if (!isScript && !isTemplate) { continue; }
+
         const templateId = extractIdFromTag(tag);
         if (!templateId) { continue; }
-        const closeIndex = text.indexOf('</script>', openEnd);
+        if (isScript && !isXTemplateScriptTag(tag)) { continue; }
+
+        const closeTag = isTemplate ? '</template>' : '</script>';
+        const closeIndex = text.indexOf(closeTag, openEnd);
         if (closeIndex === -1) { continue; }
         if (offset >= openEnd && offset <= closeIndex) {
             return templateId;
