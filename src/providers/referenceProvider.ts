@@ -155,9 +155,8 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
         _token: vscode.CancellationToken
     ): Promise<vscode.Location[] | null> {
         const config = vscode.workspace.getConfiguration('leidong-tools');
-        // enableReferences 或 enableCodeLens 任一开启时都提供引用查找
-        if (!config.get<boolean>('enableReferences', false)
-            && !config.get<boolean>('enableCodeLens', false)) {
+        // 引用查找只由独立开关控制，不再复用 CodeLens 开关
+        if (!config.get<boolean>('enableReferences', false)) {
             return null;
         }
 
