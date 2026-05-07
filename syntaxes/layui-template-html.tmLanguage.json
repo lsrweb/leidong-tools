@@ -1,0 +1,108 @@
+{
+    "fileTypes": [],
+    "scopeName": "inline.laytpl-html",
+    "injectionSelector": "L:text.html.basic -comment -source.js -source.css",
+    "unbalancedBracketScopes": [
+        "comment.block.laytpl",
+        "meta.embedded.legacy-scriptlet.laytpl",
+        "meta.embedded.block.javascript.laytpl",
+        "meta.embedded.output.laytpl",
+        "meta.embedded.raw-output.laytpl",
+        "meta.embedded.generic.laytpl",
+        "meta.embedded.inline.javascript.laytpl",
+        "punctuation.section.embedded.begin.laytpl",
+        "punctuation.section.embedded.end.laytpl",
+        "punctuation.definition.comment.begin.laytpl",
+        "punctuation.definition.comment.end.laytpl"
+    ],
+    "patterns": [
+        {
+            "begin": "(\\{\\{)(!)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.comment.begin.laytpl" },
+                "2": { "name": "punctuation.definition.comment.begin.laytpl" }
+            },
+            "end": "(!)(\\}\\})",
+            "endCaptures": {
+                "1": { "name": "punctuation.definition.comment.end.laytpl" },
+                "2": { "name": "punctuation.definition.comment.end.laytpl" }
+            },
+            "name": "comment.block.laytpl"
+        },
+        {
+            "begin": "(\\{\\{)(=)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.section.embedded.begin.laytpl" },
+                "2": { "name": "keyword.operator.assignment.laytpl" }
+            },
+            "end": "(\\}\\})",
+            "endCaptures": {
+                "1": { "name": "punctuation.section.embedded.end.laytpl" }
+            },
+            "name": "meta.embedded.output.laytpl",
+            "contentName": "meta.embedded.inline.javascript.laytpl",
+            "patterns": [
+                { "include": "source.js" }
+            ]
+        },
+        {
+            "begin": "(\\{\\{)(-)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.section.embedded.begin.laytpl" },
+                "2": { "name": "keyword.operator.assignment.laytpl" }
+            },
+            "end": "(\\}\\})",
+            "endCaptures": {
+                "1": { "name": "punctuation.section.embedded.end.laytpl" }
+            },
+            "name": "meta.embedded.raw-output.laytpl",
+            "contentName": "meta.embedded.inline.javascript.laytpl",
+            "patterns": [
+                { "include": "source.js" }
+            ]
+        },
+        {
+            "begin": "(\\{\\{)(#)(?=\\s*(?:if\\b|else\\b|for\\b|while\\b|switch\\b|try\\b|catch\\b|finally\\b|var\\b|let\\b|const\\b|return\\b|break\\b|continue\\b|do\\b|function\\b|case\\b|default\\b|\\}|\\)|\\]|[A-Za-z_$][\\w$.]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*\\s*(?:\\(|=|\\.|\\[)|;))",
+            "beginCaptures": {
+                "1": { "name": "punctuation.section.embedded.begin.laytpl" },
+                "2": { "name": "keyword.control.laytpl" }
+            },
+            "end": "(\\}\\})",
+            "endCaptures": {
+                "1": { "name": "punctuation.section.embedded.end.laytpl" }
+            },
+            "name": "meta.embedded.legacy-scriptlet.laytpl",
+            "contentName": "meta.embedded.block.javascript.laytpl",
+            "patterns": [
+                { "include": "source.js" }
+            ]
+        },
+        {
+            "begin": "(\\{\\{)(#)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.comment.begin.laytpl" },
+                "2": { "name": "punctuation.definition.comment.begin.laytpl" }
+            },
+            "end": "(\\}\\})",
+            "endCaptures": {
+                "1": { "name": "punctuation.definition.comment.end.laytpl" }
+            },
+            "name": "comment.block.laytpl"
+        },
+        {
+            "begin": "(\\{\\{)(?![#!=-])",
+            "beginCaptures": {
+                "1": { "name": "punctuation.section.embedded.begin.laytpl" }
+            },
+            "end": "(\\}\\})",
+            "endCaptures": {
+                "1": { "name": "punctuation.section.embedded.end.laytpl" }
+            },
+            "name": "meta.embedded.generic.laytpl",
+            "contentName": "meta.embedded.inline.javascript.laytpl",
+            "patterns": [
+                { "include": "source.js" }
+            ]
+        }
+    ]
+}

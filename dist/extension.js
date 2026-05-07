@@ -50247,10 +50247,12 @@ const documentSymbolProvider_1 = __webpack_require__(201);
 const referenceProvider_1 = __webpack_require__(202);
 const codeLensProvider_1 = __webpack_require__(198);
 const colorProvider_1 = __webpack_require__(203);
-const copilotAnalyzer_1 = __webpack_require__(204);
-const variableIndexWebview_1 = __webpack_require__(205);
-const diagnosticsWebview_1 = __webpack_require__(206);
-const watchServiceTreeView_1 = __webpack_require__(207);
+const laytplBracketHighlighter_1 = __webpack_require__(211);
+const laytplFoldingProvider_1 = __webpack_require__(204);
+const copilotAnalyzer_1 = __webpack_require__(205);
+const variableIndexWebview_1 = __webpack_require__(206);
+const diagnosticsWebview_1 = __webpack_require__(207);
+const watchServiceTreeView_1 = __webpack_require__(208);
 const gameWebviewProvider_1 = __webpack_require__(183);
 const config_1 = __webpack_require__(5);
 /**
@@ -50323,6 +50325,9 @@ function registerProviders(context, fileWatchManager) {
     // CodeLens right 模式：行末装饰更新钩子
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
         (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
+        (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(editor);
+    }), vscode.window.onDidChangeTextEditorSelection((event) => {
+        (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(event.textEditor);
     }), vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('leidong-tools.enableCodeLens') ||
             e.affectsConfiguration('leidong-tools.codeLensPosition') ||
@@ -50338,11 +50343,14 @@ function registerProviders(context, fileWatchManager) {
     }));
     // 初始化当前编辑器的装饰
     (0, codeLensProvider_1.updateInlineRefDecorations)(vscode.window.activeTextEditor);
+    (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(vscode.window.activeTextEditor);
     // 注册颜色选择器提供器
     context.subscriptions.push(vscode.languages.registerColorProvider([
         { scheme: 'file', language: 'html' },
         { scheme: 'file', language: 'css' }
     ], new colorProvider_1.VueColorProvider()));
+    // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
+    context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(config_1.FILE_SELECTORS.HTML, new laytplFoldingProvider_1.LaytplFoldingRangeProvider()));
     // 注册 Copilot Chat 分析参与者
     (0, copilotAnalyzer_1.registerCopilotAnalyzer)(context);
     // 注册侧边栏视图
@@ -55074,6 +55082,59 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LaytplFoldingRangeProvider = exports.findLaytplFoldingRanges = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const laytplParser_1 = __webpack_require__(212);
+var laytplParser_2 = __webpack_require__(212);
+Object.defineProperty(exports, "findLaytplFoldingRanges", ({ enumerable: true, get: function () { return laytplParser_2.findLaytplFoldingRanges; } }));
+class LaytplFoldingRangeProvider {
+    provideFoldingRanges(document, _context, _token) {
+        return (0, laytplParser_1.findLaytplFoldingRanges)(document.getText()).map(range => new vscode.FoldingRange(range.start, range.end, vscode.FoldingRangeKind.Region));
+    }
+}
+exports.LaytplFoldingRangeProvider = LaytplFoldingRangeProvider;
+
+
+/***/ }),
+/* 205 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectReferenceContext = collectReferenceContext;
 exports.registerCopilotAnalyzer = registerCopilotAnalyzer;
 /**
@@ -56143,7 +56204,7 @@ function registerCopilotAnalyzer(context) {
 
 
 /***/ }),
-/* 205 */
+/* 206 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56545,7 +56606,7 @@ __decorate([
 
 
 /***/ }),
-/* 206 */
+/* 207 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56688,7 +56749,7 @@ exports.DiagnosticsWebviewProvider = DiagnosticsWebviewProvider;
 
 
 /***/ }),
-/* 207 */
+/* 208 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56803,7 +56864,7 @@ exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
 
 
 /***/ }),
-/* 208 */
+/* 209 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56871,7 +56932,7 @@ function registerIndexLifecycle(context) {
 
 
 /***/ }),
-/* 209 */
+/* 210 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57245,6 +57306,439 @@ function initVueDiagnostics(context) {
 }
 
 
+/***/ }),
+/* 211 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.clearLaytplBracketHighlights = clearLaytplBracketHighlights;
+exports.updateLaytplBracketHighlights = updateLaytplBracketHighlights;
+const vscode = __importStar(__webpack_require__(2));
+const laytplParser_1 = __webpack_require__(212);
+const BRACKET_CHARS = new Set(['(', ')', '[', ']', '{', '}']);
+const laytplBracketMatchDecorationType = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('editorBracketMatch.background'),
+    borderRadius: '2px'
+});
+let lastDecoratedEditor;
+const pairCache = new Map();
+function isBracketChar(char) {
+    return Boolean(char && BRACKET_CHARS.has(char));
+}
+function getBracketPairs(document) {
+    const cacheKey = document.uri.toString();
+    const cached = pairCache.get(cacheKey);
+    if (cached && cached.version === document.version) {
+        return cached.pairs;
+    }
+    const pairs = (0, laytplParser_1.getLaytplBracketPairs)(document.getText());
+    pairCache.set(cacheKey, { version: document.version, pairs });
+    return pairs;
+}
+function createRangeFromOffset(document, offset) {
+    const start = document.positionAt(offset);
+    const end = document.positionAt(offset + 1);
+    return new vscode.Range(start, end);
+}
+function findCandidateBracketOffsets(document, position) {
+    const text = document.getText();
+    const currentOffset = document.offsetAt(position);
+    const offsets = [];
+    if (currentOffset < text.length && isBracketChar(text[currentOffset])) {
+        offsets.push(currentOffset);
+    }
+    if (currentOffset > 0 && isBracketChar(text[currentOffset - 1])) {
+        offsets.push(currentOffset - 1);
+    }
+    return offsets;
+}
+function clearLaytplBracketHighlights(editor) {
+    if (editor) {
+        editor.setDecorations(laytplBracketMatchDecorationType, []);
+    }
+}
+function updateLaytplBracketHighlights(editor) {
+    if (lastDecoratedEditor && lastDecoratedEditor !== editor) {
+        clearLaytplBracketHighlights(lastDecoratedEditor);
+    }
+    if (!editor || editor.document.languageId !== 'html') {
+        clearLaytplBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    if (editor.selections.length !== 1 || !editor.selection.isEmpty) {
+        clearLaytplBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    const pairs = getBracketPairs(editor.document);
+    const candidates = findCandidateBracketOffsets(editor.document, editor.selection.active);
+    for (const sourceOffset of candidates) {
+        const targetOffset = pairs.get(sourceOffset);
+        if (targetOffset === undefined) {
+            continue;
+        }
+        editor.setDecorations(laytplBracketMatchDecorationType, [
+            { range: createRangeFromOffset(editor.document, sourceOffset) },
+            { range: createRangeFromOffset(editor.document, targetOffset) }
+        ]);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    clearLaytplBracketHighlights(editor);
+    lastDecoratedEditor = editor;
+}
+
+
+/***/ }),
+/* 212 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildLaytplLineOffsets = buildLaytplLineOffsets;
+exports.getLaytplLineAtOffset = getLaytplLineAtOffset;
+exports.scanLaytplTags = scanLaytplTags;
+exports.getLaytplBracketPairs = getLaytplBracketPairs;
+exports.findMatchingLaytplBracket = findMatchingLaytplBracket;
+exports.findLaytplFoldingRanges = findLaytplFoldingRanges;
+const OPEN_BRACKETS = new Map([
+    ['(', ')'],
+    ['[', ']'],
+    ['{', '}']
+]);
+const CLOSE_BRACKETS = new Map([
+    [')', '('],
+    [']', '['],
+    ['}', '{']
+]);
+const LEGACY_SCRIPTLET_START = /^(?:if\b|else\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|var\b|let\b|const\b|return\b|break\b|continue\b|do\b|function\b|case\b|default\b|\}|\)|\]|[A-Za-z_$][\w$.]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*(?:\(|=|\.|\[)|;)/;
+const GENERIC_SCRIPTLET_START = /^(?:if\b|else\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|var\b|let\b|const\b|return\b|break\b|continue\b|do\b|function\b|case\b|default\b|\}|\)|\]|[A-Za-z_$][\w$.]*\s*(?:\(|=))/;
+function buildLaytplLineOffsets(text) {
+    const lineOffsets = [0];
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '\n') {
+            lineOffsets.push(index + 1);
+        }
+    }
+    return lineOffsets;
+}
+function getLaytplLineAtOffset(lineOffsets, offset) {
+    let low = 0;
+    let high = lineOffsets.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const lineOffset = lineOffsets[mid];
+        const nextLineOffset = mid + 1 < lineOffsets.length ? lineOffsets[mid + 1] : Number.MAX_SAFE_INTEGER;
+        if (offset < lineOffset) {
+            high = mid - 1;
+            continue;
+        }
+        if (offset >= nextLineOffset) {
+            low = mid + 1;
+            continue;
+        }
+        return mid;
+    }
+    return 0;
+}
+function looksLikeLegacyScriptlet(code) {
+    const trimmed = code.trim();
+    if (!trimmed) {
+        return false;
+    }
+    return LEGACY_SCRIPTLET_START.test(trimmed) || /[{};]/.test(trimmed);
+}
+function looksLikeGenericScriptlet(code) {
+    const trimmed = code.trim();
+    if (!trimmed) {
+        return false;
+    }
+    return GENERIC_SCRIPTLET_START.test(trimmed) || /[{};]/.test(trimmed);
+}
+function findFirstNonWhitespaceIndex(text, startIndex) {
+    let index = startIndex;
+    while (index < text.length && /\s/.test(text[index])) {
+        index++;
+    }
+    return index;
+}
+function trimTrailingWhitespaceIndex(text, endIndex) {
+    let index = endIndex;
+    while (index > 0 && /\s/.test(text[index - 1])) {
+        index--;
+    }
+    return index;
+}
+function classifyLaytplTag(rawInner) {
+    const firstContentIndex = findFirstNonWhitespaceIndex(rawInner, 0);
+    const contentEndIndex = trimTrailingWhitespaceIndex(rawInner, rawInner.length);
+    if (firstContentIndex >= contentEndIndex) {
+        return {
+            kind: 'output',
+            code: '',
+            codeStartDelta: contentEndIndex,
+            codeEndDelta: contentEndIndex
+        };
+    }
+    const marker = rawInner[firstContentIndex];
+    if (marker === '=' || marker === '-' || marker === '#') {
+        const codeStartDelta = findFirstNonWhitespaceIndex(rawInner, firstContentIndex + 1);
+        const code = rawInner.slice(codeStartDelta, contentEndIndex);
+        if (marker === '=') {
+            return { kind: 'output', code, codeStartDelta, codeEndDelta: contentEndIndex };
+        }
+        if (marker === '-') {
+            return { kind: 'raw-output', code, codeStartDelta, codeEndDelta: contentEndIndex };
+        }
+        return {
+            kind: looksLikeLegacyScriptlet(code) ? 'scriptlet' : 'comment',
+            code,
+            codeStartDelta,
+            codeEndDelta: contentEndIndex
+        };
+    }
+    const code = rawInner.slice(firstContentIndex, contentEndIndex);
+    return {
+        kind: looksLikeGenericScriptlet(code) ? 'scriptlet' : 'output',
+        code,
+        codeStartDelta: firstContentIndex,
+        codeEndDelta: contentEndIndex
+    };
+}
+function scanLaytplTags(text) {
+    const tags = [];
+    const openTag = '{{';
+    let searchIndex = 0;
+    while (searchIndex < text.length) {
+        const startIndex = text.indexOf(openTag, searchIndex);
+        if (startIndex < 0) {
+            break;
+        }
+        const marker = text[startIndex + openTag.length];
+        const isIgnoreTag = marker === '!';
+        const contentStart = startIndex + openTag.length + (isIgnoreTag ? 1 : 0);
+        const closeTag = isIgnoreTag ? '!}}' : '}}';
+        const closeIndex = text.indexOf(closeTag, contentStart);
+        if (closeIndex < 0) {
+            break;
+        }
+        const rawInner = text.slice(contentStart, closeIndex);
+        if (isIgnoreTag) {
+            tags.push({
+                kind: 'ignore',
+                code: rawInner,
+                start: startIndex,
+                end: closeIndex + closeTag.length,
+                codeStart: contentStart,
+                codeEnd: closeIndex
+            });
+        }
+        else {
+            const classified = classifyLaytplTag(rawInner);
+            tags.push({
+                kind: classified.kind,
+                code: classified.code,
+                start: startIndex,
+                end: closeIndex + closeTag.length,
+                codeStart: contentStart + classified.codeStartDelta,
+                codeEnd: contentStart + classified.codeEndDelta
+            });
+        }
+        searchIndex = closeIndex + closeTag.length;
+    }
+    return tags;
+}
+function scanBracketTokens(code, codeStart, lineOffsets) {
+    const tokens = [];
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inTemplateString = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let escaped = false;
+    for (let index = 0; index < code.length; index++) {
+        const char = code[index];
+        const nextChar = code[index + 1];
+        const absoluteOffset = codeStart + index;
+        if (inLineComment) {
+            if (char === '\n') {
+                inLineComment = false;
+            }
+            continue;
+        }
+        if (inBlockComment) {
+            if (char === '*' && nextChar === '/') {
+                inBlockComment = false;
+                index++;
+            }
+            continue;
+        }
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if ((inSingleQuote || inDoubleQuote || inTemplateString) && char === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (inSingleQuote) {
+            if (char === '\'') {
+                inSingleQuote = false;
+            }
+            continue;
+        }
+        if (inDoubleQuote) {
+            if (char === '"') {
+                inDoubleQuote = false;
+            }
+            continue;
+        }
+        if (inTemplateString) {
+            if (char === '`') {
+                inTemplateString = false;
+            }
+            continue;
+        }
+        if (char === '/' && nextChar === '/') {
+            inLineComment = true;
+            continue;
+        }
+        if (char === '/' && nextChar === '*') {
+            inBlockComment = true;
+            index++;
+            continue;
+        }
+        if (char === '\'') {
+            inSingleQuote = true;
+            continue;
+        }
+        if (char === '"') {
+            inDoubleQuote = true;
+            continue;
+        }
+        if (char === '`') {
+            inTemplateString = true;
+            continue;
+        }
+        if (!OPEN_BRACKETS.has(char) && !CLOSE_BRACKETS.has(char)) {
+            continue;
+        }
+        tokens.push({
+            char: char,
+            offset: absoluteOffset,
+            line: getLaytplLineAtOffset(lineOffsets, absoluteOffset)
+        });
+    }
+    return tokens;
+}
+function matchBracketTokens(tokens, pairs) {
+    const stacks = new Map();
+    for (const token of tokens) {
+        if (OPEN_BRACKETS.has(token.char)) {
+            const stack = stacks.get(token.char) ?? [];
+            stack.push(token);
+            stacks.set(token.char, stack);
+            continue;
+        }
+        const openBracket = CLOSE_BRACKETS.get(token.char);
+        if (!openBracket) {
+            continue;
+        }
+        const stack = stacks.get(openBracket);
+        const openToken = stack?.pop();
+        if (!openToken) {
+            continue;
+        }
+        pairs.set(openToken.offset, token.offset);
+        pairs.set(token.offset, openToken.offset);
+    }
+}
+function getLaytplBracketPairs(text) {
+    const pairs = new Map();
+    const tags = scanLaytplTags(text);
+    const lineOffsets = buildLaytplLineOffsets(text);
+    const scriptletTokens = [];
+    for (const tag of tags) {
+        if (tag.kind === 'ignore' || tag.kind === 'comment') {
+            continue;
+        }
+        const tokens = scanBracketTokens(tag.code, tag.codeStart, lineOffsets);
+        if (tag.kind === 'scriptlet') {
+            scriptletTokens.push(...tokens);
+            continue;
+        }
+        matchBracketTokens(tokens, pairs);
+    }
+    matchBracketTokens(scriptletTokens, pairs);
+    return pairs;
+}
+function findMatchingLaytplBracket(text, offset) {
+    return getLaytplBracketPairs(text).get(offset) ?? null;
+}
+function findLaytplFoldingRanges(text) {
+    const tags = scanLaytplTags(text);
+    const lineOffsets = buildLaytplLineOffsets(text);
+    const ranges = [];
+    const stack = [];
+    for (const tag of tags) {
+        if (tag.kind !== 'scriptlet') {
+            continue;
+        }
+        const tokens = scanBracketTokens(tag.code, tag.codeStart, lineOffsets)
+            .filter(token => token.char === '{' || token.char === '}');
+        for (const token of tokens) {
+            if (token.char === '}') {
+                const startLine = stack.pop();
+                const endLine = token.line - 1;
+                if (startLine !== undefined && endLine > startLine) {
+                    ranges.push({ start: startLine, end: endLine });
+                }
+                continue;
+            }
+            stack.push(token.line);
+        }
+    }
+    return ranges;
+}
+
+
 /***/ })
 /******/ 	]);
 /************************************************************************/
@@ -57326,8 +57820,8 @@ exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
 const providers_1 = __webpack_require__(190);
-const indexManager_1 = __webpack_require__(208);
-const vueDiagnosticsProvider_1 = __webpack_require__(209);
+const indexManager_1 = __webpack_require__(209);
+const vueDiagnosticsProvider_1 = __webpack_require__(210);
 /**
  * Extension activation function
  */

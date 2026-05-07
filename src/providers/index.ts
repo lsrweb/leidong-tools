@@ -3,4 +3,5 @@
  */
 export * from './completionProvider';
 export * from './definitionProvider';
+export * from './laytplFoldingProvider';
 export * from './treeViewProvider';

@@ -14,6 +14,8 @@ import { VueDocumentSymbolProvider } from '../providers/documentSymbolProvider';
 import { VueReferenceProvider } from '../providers/referenceProvider';
 import { VueCodeLensProvider, updateInlineRefDecorations, clearInlineRefDecorations } from '../providers/codeLensProvider';
 import { VueColorProvider } from '../providers/colorProvider';
+import { updateLaytplBracketHighlights } from '../providers/laytplBracketHighlighter';
+import { LaytplFoldingRangeProvider } from '../providers/laytplFoldingProvider';
 import { registerCopilotAnalyzer } from '../providers/copilotAnalyzer';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
@@ -148,6 +150,10 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             updateInlineRefDecorations(editor);
+            updateLaytplBracketHighlights(editor);
+        }),
+        vscode.window.onDidChangeTextEditorSelection((event) => {
+            updateLaytplBracketHighlights(event.textEditor);
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
             if (e.affectsConfiguration('leidong-tools.enableCodeLens') || 
@@ -167,6 +173,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     );
     // 初始化当前编辑器的装饰
     updateInlineRefDecorations(vscode.window.activeTextEditor);
+    updateLaytplBracketHighlights(vscode.window.activeTextEditor);
 
     // 注册颜色选择器提供器
     context.subscriptions.push(
@@ -176,6 +183,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
                 { scheme: 'file', language: 'css' }
             ],
             new VueColorProvider()
+        )
+    );
+
+    // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
+    context.subscriptions.push(
+        vscode.languages.registerFoldingRangeProvider(
+            FILE_SELECTORS.HTML,
+            new LaytplFoldingRangeProvider()
         )
     );
 

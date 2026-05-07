@@ -459,6 +459,22 @@
           "meta.embedded.block.html": "html",
           "meta.embedded.block.css": "css"
         }
+      },
+      {
+        "injectTo": [
+          "text.html.basic"
+        ],
+        "scopeName": "inline.laytpl-html",
+        "path": "./syntaxes/layui-template-html.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.javascript.laytpl": "javascript",
+          "meta.embedded.inline.javascript.laytpl": "javascript"
+        },
+        "tokenTypes": {
+          "meta.embedded.block.javascript.laytpl": "other",
+          "meta.embedded.inline.javascript.laytpl": "other",
+          "comment.block.laytpl": "comment"
+        }
       }
     ],
     "semanticTokenProvider": {
