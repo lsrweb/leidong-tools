@@ -44,5 +44,11 @@ const extensionConfig = {
   infrastructureLogging: {
     level: "log", // enables logging required for problem matchers
   },
+  ignoreWarnings: [
+    {
+      module: /node_modules[\\/]prettier[\\/]/,
+      message: /Critical dependency: the request of a dependency is an expression/
+    }
+  ],
 };
 module.exports = [ extensionConfig ];

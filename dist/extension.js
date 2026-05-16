@@ -54,6 +54,7 @@ const config_1 = __webpack_require__(5);
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
 const fileWatchManager_1 = __webpack_require__(182);
+const xTemplateFormattingProvider_1 = __webpack_require__(183);
 /**
  * 注册所有命令
  */
@@ -163,6 +164,9 @@ function registerCommands(context) {
         return Promise.resolve([]);
     };
     context.subscriptions.push(vscode.commands.registerTextEditorCommand('leidong-tools.dotLogReplace', dotLogReplaceHandler));
+    context.subscriptions.push(vscode.commands.registerTextEditorCommand('leidong-tools.formatXTemplateSelection', async (editor) => {
+        await (0, xTemplateFormattingProvider_1.formatXTemplateSelectionOrFallback)(editor);
+    }));
     // Register logging commands
     context.subscriptions.push(vscode.commands.registerCommand(config_1.COMMANDS.LOG_VARIABLE, () => {
         (0, consoleLogger_1.insertConsoleLog)('log');
@@ -238,9 +242,9 @@ function registerCommands(context) {
         vscode.window.showInformationMessage(`Vue 变量跳转功能 ${status}`);
     }));
     // =================== 游戏相关命令 ===================
-    const { GamePanel } = __webpack_require__(183);
-    const { GameManager } = __webpack_require__(189);
-    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = __webpack_require__(185);
+    const { GamePanel } = __webpack_require__(185);
+    const { GameManager } = __webpack_require__(191);
+    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = __webpack_require__(187);
     // 初始化玩家身份（注入 context 以使用 globalState 缓存昵称）
     initPlayerIdentity(context);
     // 打开游戏大厅（加载服务端页面）
@@ -49261,6 +49265,469 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.XTemplateRangeFormattingProvider = void 0;
+exports.getXTemplateRangeFormattingEdits = getXTemplateRangeFormattingEdits;
+exports.formatXTemplateSelectionOrFallback = formatXTemplateSelectionOrFallback;
+const vscode = __importStar(__webpack_require__(2));
+const xTemplateParser_1 = __webpack_require__(184);
+async function loadPrettier() {
+    const imported = await Promise.all(/* import() */[__webpack_require__.e(1), __webpack_require__.e(2)]).then(__webpack_require__.bind(__webpack_require__, 216));
+    const candidate = imported;
+    const prettier = typeof candidate.format === 'function' ? candidate : candidate.default;
+    if (!prettier || typeof prettier.format !== 'function') {
+        throw new Error('Prettier API 加载失败：未找到 format 方法');
+    }
+    return prettier;
+}
+function getContainingXTemplateBlock(document, range) {
+    const text = document.getText();
+    const rangeStart = document.offsetAt(range.start);
+    const rangeEnd = document.offsetAt(range.end);
+    return (0, xTemplateParser_1.scanXTemplateBlocks)(text).find(block => {
+        return rangeStart >= block.openEnd && rangeEnd <= block.closeStart;
+    }) ?? null;
+}
+function expandRangeToFullLines(document, range) {
+    const startLine = range.start.line;
+    const endLine = range.end.character === 0 && range.end.line > range.start.line
+        ? range.end.line - 1
+        : range.end.line;
+    const endLineText = document.lineAt(endLine).text;
+    return new vscode.Range(new vscode.Position(startLine, 0), new vscode.Position(endLine, endLineText.length));
+}
+function getEditorFallbackOptions(options) {
+    return {
+        tabWidth: options.tabSize,
+        useTabs: !options.insertSpaces
+    };
+}
+function getDefaultPrettierOptions() {
+    return {
+        printWidth: 160,
+        singleAttributePerLine: false
+    };
+}
+function getConfiguredExtensionPrettierOptions(resource) {
+    const inspectedOptions = vscode.workspace
+        .getConfiguration('leidong-tools', resource)
+        .inspect('xTemplatePrettierOptions');
+    return {
+        ...(inspectedOptions?.globalValue ?? {}),
+        ...(inspectedOptions?.workspaceValue ?? {}),
+        ...(inspectedOptions?.workspaceFolderValue ?? {})
+    };
+}
+function normalizePrettierOutput(templateText, formattedText) {
+    let normalized = formattedText;
+    if (!templateText.endsWith('\n') && normalized.endsWith('\n')) {
+        normalized = normalized.slice(0, -1);
+    }
+    return normalized;
+}
+function getLeadingWhitespace(text) {
+    return /^[ \t]*/.exec(text)?.[0] ?? '';
+}
+function getCommonIndent(text) {
+    const indents = text
+        .split(/\r?\n/)
+        .filter(line => line.trim().length > 0)
+        .map(getLeadingWhitespace);
+    if (indents.length === 0) {
+        return '';
+    }
+    return indents.reduce((commonIndent, indent) => {
+        let index = 0;
+        while (index < commonIndent.length && index < indent.length && commonIndent[index] === indent[index]) {
+            index++;
+        }
+        return commonIndent.slice(0, index);
+    });
+}
+function stripCommonIndent(text, indent) {
+    if (!indent) {
+        return text;
+    }
+    return text
+        .split(/\r?\n/)
+        .map(line => line.startsWith(indent) ? line.slice(indent.length) : line)
+        .join('\n');
+}
+function restoreCommonIndent(text, indent) {
+    if (!indent) {
+        return text;
+    }
+    return text
+        .split(/\r?\n/)
+        .map(line => line.trim().length > 0 ? `${indent}${line}` : line)
+        .join('\n');
+}
+function createMinimalReplaceEdit(document, block, originalText, formattedText) {
+    if (originalText === formattedText) {
+        return [];
+    }
+    let start = 0;
+    while (start < originalText.length &&
+        start < formattedText.length &&
+        originalText[start] === formattedText[start]) {
+        start++;
+    }
+    let originalEnd = originalText.length;
+    let formattedEnd = formattedText.length;
+    while (originalEnd > start &&
+        formattedEnd > start &&
+        originalText[originalEnd - 1] === formattedText[formattedEnd - 1]) {
+        originalEnd--;
+        formattedEnd--;
+    }
+    return [vscode.TextEdit.replace(new vscode.Range(document.positionAt(block.openEnd + start), document.positionAt(block.openEnd + originalEnd)), formattedText.slice(start, formattedEnd))];
+}
+async function resolvePrettierOptions(document, options) {
+    const prettier = await loadPrettier();
+    const config = await prettier.resolveConfig?.(document.uri.fsPath, {
+        editorconfig: true
+    });
+    return {
+        ...getEditorFallbackOptions(options),
+        ...getDefaultPrettierOptions(),
+        ...(config ?? {}),
+        ...getConfiguredExtensionPrettierOptions(document.uri),
+        filepath: document.uri.fsPath,
+        parser: 'html'
+    };
+}
+async function formatXTemplateSelectionWithPrettier(document, range, block, options) {
+    const prettier = await loadPrettier();
+    const selectedText = document.getText(range);
+    if (!selectedText.trim()) {
+        return [];
+    }
+    const commonIndent = getCommonIndent(selectedText);
+    const normalizedText = stripCommonIndent(selectedText, commonIndent);
+    const prettierOptions = await resolvePrettierOptions(document, options);
+    const formattedText = normalizePrettierOutput(normalizedText, await Promise.resolve(prettier.format(normalizedText, prettierOptions)));
+    const restoredText = restoreCommonIndent(formattedText, commonIndent);
+    return createMinimalReplaceEdit(document, {
+        ...block,
+        openEnd: document.offsetAt(range.start)
+    }, selectedText, restoredText);
+}
+async function getXTemplateRangeFormattingEdits(document, range, options) {
+    if (document.languageId !== 'html' || range.isEmpty) {
+        return [];
+    }
+    const block = getContainingXTemplateBlock(document, range);
+    if (!block) {
+        return [];
+    }
+    const fullLineRange = expandRangeToFullLines(document, range);
+    const fullLineStart = document.offsetAt(fullLineRange.start);
+    const fullLineEnd = document.offsetAt(fullLineRange.end);
+    const clippedRange = new vscode.Range(document.positionAt(Math.max(fullLineStart, block.openEnd)), document.positionAt(Math.min(fullLineEnd, block.closeStart)));
+    return formatXTemplateSelectionWithPrettier(document, clippedRange, block, options);
+}
+function getEditorFormattingOptions(editor) {
+    const tabSize = typeof editor.options.tabSize === 'number' ? editor.options.tabSize : 4;
+    const insertSpaces = typeof editor.options.insertSpaces === 'boolean' ? editor.options.insertSpaces : true;
+    return { tabSize, insertSpaces };
+}
+async function formatXTemplateSelectionOrFallback(editor) {
+    if (editor.selection.isEmpty) {
+        await vscode.commands.executeCommand('editor.action.formatSelection');
+        return;
+    }
+    let edits;
+    try {
+        edits = await getXTemplateRangeFormattingEdits(editor.document, editor.selection, getEditorFormattingOptions(editor));
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`text/x-template Prettier 格式化失败：${message}`);
+        return;
+    }
+    if (edits.length === 0) {
+        if (!getContainingXTemplateBlock(editor.document, editor.selection)) {
+            await vscode.commands.executeCommand('editor.action.formatSelection');
+        }
+        return;
+    }
+    await editor.edit(editBuilder => {
+        for (const edit of edits) {
+            editBuilder.replace(edit.range, edit.newText);
+        }
+    });
+}
+class XTemplateRangeFormattingProvider {
+    async provideDocumentRangeFormattingEdits(document, range, options, _token) {
+        try {
+            return await getXTemplateRangeFormattingEdits(document, range, options);
+        }
+        catch (error) {
+            console.error('[leidong-tools] text/x-template Prettier formatting failed:', error);
+            return [];
+        }
+    }
+}
+exports.XTemplateRangeFormattingProvider = XTemplateRangeFormattingProvider;
+
+
+/***/ }),
+/* 184 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildXTemplateLineOffsets = buildXTemplateLineOffsets;
+exports.getXTemplateLineAtOffset = getXTemplateLineAtOffset;
+exports.scanXTemplateBlocks = scanXTemplateBlocks;
+exports.findXTemplateFoldingRanges = findXTemplateFoldingRanges;
+const VOID_HTML_TAGS = new Set([
+    'area',
+    'base',
+    'br',
+    'col',
+    'embed',
+    'hr',
+    'img',
+    'input',
+    'link',
+    'meta',
+    'param',
+    'source',
+    'track',
+    'wbr'
+]);
+function buildXTemplateLineOffsets(text) {
+    const lineOffsets = [0];
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '\n') {
+            lineOffsets.push(index + 1);
+        }
+    }
+    return lineOffsets;
+}
+function getXTemplateLineAtOffset(lineOffsets, offset) {
+    let low = 0;
+    let high = lineOffsets.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const lineOffset = lineOffsets[mid];
+        const nextLineOffset = mid + 1 < lineOffsets.length ? lineOffsets[mid + 1] : Number.MAX_SAFE_INTEGER;
+        if (offset < lineOffset) {
+            high = mid - 1;
+            continue;
+        }
+        if (offset >= nextLineOffset) {
+            low = mid + 1;
+            continue;
+        }
+        return mid;
+    }
+    return 0;
+}
+function isXTemplateScriptTag(tag) {
+    return /<script\b/i.test(tag) && /type\s*=\s*(?:"text\/x-template"|'text\/x-template'|text\/x-template)(?=\s|>|\/)/i.test(tag);
+}
+function extractIdFromTag(tag) {
+    const quoted = /id\s*=\s*(['"])([^'"]+)\1/i.exec(tag);
+    if (quoted) {
+        return quoted[2];
+    }
+    const unquoted = /id\s*=\s*([^\s>]+)/i.exec(tag);
+    return unquoted ? unquoted[1] : null;
+}
+function scanXTemplateBlocks(text) {
+    const blocks = [];
+    const openScriptRegex = /<script\b[^>]*>/gi;
+    let match;
+    while ((match = openScriptRegex.exec(text)) !== null) {
+        const openTag = match[0];
+        if (!isXTemplateScriptTag(openTag)) {
+            continue;
+        }
+        const openStart = match.index;
+        const openEnd = openStart + openTag.length;
+        const closeMatch = /<\/script\s*>/i.exec(text.slice(openEnd));
+        if (!closeMatch) {
+            break;
+        }
+        const closeStart = openEnd + closeMatch.index;
+        const closeEnd = closeStart + closeMatch[0].length;
+        blocks.push({
+            id: extractIdFromTag(openTag),
+            openStart,
+            openEnd,
+            closeStart,
+            closeEnd
+        });
+        openScriptRegex.lastIndex = closeEnd;
+    }
+    return blocks;
+}
+function findTagEnd(text, start, limit) {
+    let quote = null;
+    for (let index = start; index < limit; index++) {
+        const char = text[index];
+        if (quote) {
+            if (char === quote) {
+                quote = null;
+            }
+            continue;
+        }
+        if (char === '"' || char === '\'') {
+            quote = char;
+            continue;
+        }
+        if (char === '>') {
+            return index;
+        }
+    }
+    return -1;
+}
+function readHtmlTagToken(text, start, limit) {
+    if (text[start] !== '<') {
+        return null;
+    }
+    const nextChar = text[start + 1];
+    if (!nextChar || nextChar === '!' || nextChar === '?' || nextChar === '%') {
+        return null;
+    }
+    let nameStart = start + 1;
+    let kind = 'open';
+    if (nextChar === '/') {
+        kind = 'close';
+        nameStart++;
+    }
+    while (nameStart < limit && /\s/.test(text[nameStart])) {
+        nameStart++;
+    }
+    const nameMatch = /^[A-Za-z][\w:.-]*/.exec(text.slice(nameStart, limit));
+    if (!nameMatch) {
+        return null;
+    }
+    const name = nameMatch[0].toLowerCase();
+    const end = findTagEnd(text, nameStart + name.length, limit);
+    if (end < 0) {
+        return null;
+    }
+    const beforeEnd = text.slice(nameStart + name.length, end).trimEnd();
+    return {
+        name,
+        kind,
+        selfClosing: kind === 'open' && (beforeEnd.endsWith('/') || VOID_HTML_TAGS.has(name)),
+        start,
+        end: end + 1
+    };
+}
+function skipHtmlComment(text, start, limit) {
+    if (!text.startsWith('<!--', start)) {
+        return null;
+    }
+    const commentEnd = text.indexOf('-->', start + 4);
+    if (commentEnd < 0 || commentEnd >= limit) {
+        return limit;
+    }
+    return commentEnd + 3;
+}
+function findHtmlTagFoldingRangesInBlock(text, block, lineOffsets) {
+    const ranges = [];
+    const stack = [];
+    let index = block.openEnd;
+    while (index < block.closeStart) {
+        const tagStart = text.indexOf('<', index);
+        if (tagStart < 0 || tagStart >= block.closeStart) {
+            break;
+        }
+        const commentEnd = skipHtmlComment(text, tagStart, block.closeStart);
+        if (commentEnd !== null) {
+            index = commentEnd;
+            continue;
+        }
+        const token = readHtmlTagToken(text, tagStart, block.closeStart);
+        if (!token) {
+            index = tagStart + 1;
+            continue;
+        }
+        if (token.kind === 'open' && !token.selfClosing) {
+            stack.push({
+                name: token.name,
+                line: getXTemplateLineAtOffset(lineOffsets, token.start)
+            });
+            index = token.end;
+            continue;
+        }
+        if (token.kind === 'close') {
+            const matchingIndex = stack.map(item => item.name).lastIndexOf(token.name);
+            if (matchingIndex >= 0) {
+                const openTag = stack[matchingIndex];
+                stack.length = matchingIndex;
+                const closeLine = getXTemplateLineAtOffset(lineOffsets, token.start);
+                const endLine = closeLine - 1;
+                if (endLine > openTag.line) {
+                    ranges.push({ start: openTag.line, end: endLine });
+                }
+            }
+        }
+        index = token.end;
+    }
+    return ranges;
+}
+function findXTemplateFoldingRanges(text) {
+    const lineOffsets = buildXTemplateLineOffsets(text);
+    const ranges = [];
+    for (const block of scanXTemplateBlocks(text)) {
+        const contentRanges = findHtmlTagFoldingRangesInBlock(text, block, lineOffsets);
+        ranges.push(...contentRanges);
+        const openLine = getXTemplateLineAtOffset(lineOffsets, block.openStart);
+        const closeLine = getXTemplateLineAtOffset(lineOffsets, block.closeStart);
+        if (closeLine - 1 > openLine) {
+            ranges.push({ start: openLine, end: closeLine - 1 });
+        }
+    }
+    return ranges;
+}
+
+
+/***/ }),
+/* 185 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GamePanel = exports.GameSidebarProvider = void 0;
 /**
  * 游戏面板 Webview Provider - 轻量级远程加载器
@@ -49271,8 +49738,8 @@ exports.GamePanel = exports.GameSidebarProvider = void 0;
  *   更新游戏只需部署服务器，无需重新发布扩展
  */
 const vscode = __importStar(__webpack_require__(2));
-const gameTypes_1 = __webpack_require__(184);
-const playerIdentity_1 = __webpack_require__(185);
+const gameTypes_1 = __webpack_require__(186);
+const playerIdentity_1 = __webpack_require__(187);
 /**
  * 游戏侧边栏 - 显示服务器连接和游戏入口
  */
@@ -49324,7 +49791,7 @@ class GameSidebarProvider {
     /** 检查服务器是否在线 */
     async _checkServer(url) {
         try {
-            const http = __webpack_require__(188);
+            const http = __webpack_require__(190);
             return new Promise((resolve) => {
                 const req = http.get(`${url}/api/status`, (res) => {
                     resolve(res.statusCode === 200);
@@ -49858,7 +50325,7 @@ exports.GamePanel = GamePanel;
 
 
 /***/ }),
-/* 184 */
+/* 186 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -49880,7 +50347,7 @@ exports.DEFAULT_SERVER_CONFIG = {
 
 
 /***/ }),
-/* 185 */
+/* 187 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -49937,8 +50404,8 @@ exports.changePlayerNickname = changePlayerNickname;
  * - nickname: 用户自定义昵称，首次使用时弹窗输入，缓存在 globalState 中
  */
 const vscode = __importStar(__webpack_require__(2));
-const os = __importStar(__webpack_require__(186));
-const crypto = __importStar(__webpack_require__(187));
+const os = __importStar(__webpack_require__(188));
+const crypto = __importStar(__webpack_require__(189));
 const NICKNAME_KEY = 'leidong-games.playerNickname';
 const UID_OVERRIDE_KEY = 'leidong-games.uidOverride';
 /** 全局 context 引用，由 activate 时注入 */
@@ -50072,28 +50539,28 @@ async function changePlayerNickname() {
 
 
 /***/ }),
-/* 186 */
+/* 188 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("os");
 
 /***/ }),
-/* 187 */
+/* 189 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("crypto");
 
 /***/ }),
-/* 188 */
+/* 190 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("http");
 
 /***/ }),
-/* 189 */
+/* 191 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50146,7 +50613,7 @@ exports.GameManager = void 0;
  *   NO WebSocket, NO 房间管理, NO 游戏状态 —— 全在服务端
  */
 const vscode = __importStar(__webpack_require__(2));
-const gameTypes_1 = __webpack_require__(184);
+const gameTypes_1 = __webpack_require__(186);
 class GameManager {
     constructor() {
         const vsConfig = vscode.workspace.getConfiguration('leidong-tools');
@@ -50175,7 +50642,7 @@ class GameManager {
     async checkServer(url) {
         const target = url || this._config.httpUrl;
         try {
-            const http = __webpack_require__(188);
+            const http = __webpack_require__(190);
             return new Promise((resolve) => {
                 const req = http.get(`${target}/api/status`, (res) => {
                     resolve(res.statusCode === 200);
@@ -50196,7 +50663,7 @@ exports.GameManager = GameManager;
 
 
 /***/ }),
-/* 190 */
+/* 192 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50240,20 +50707,22 @@ exports.registerProviders = registerProviders;
  * Provider 注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
-const definitionProvider_1 = __webpack_require__(191);
-const hoverProvider_1 = __webpack_require__(197);
-const completionProvider_1 = __webpack_require__(199);
-const documentSymbolProvider_1 = __webpack_require__(201);
-const referenceProvider_1 = __webpack_require__(202);
-const codeLensProvider_1 = __webpack_require__(198);
-const colorProvider_1 = __webpack_require__(203);
-const laytplBracketHighlighter_1 = __webpack_require__(211);
-const laytplFoldingProvider_1 = __webpack_require__(204);
-const copilotAnalyzer_1 = __webpack_require__(205);
-const variableIndexWebview_1 = __webpack_require__(206);
-const diagnosticsWebview_1 = __webpack_require__(207);
-const watchServiceTreeView_1 = __webpack_require__(208);
-const gameWebviewProvider_1 = __webpack_require__(183);
+const definitionProvider_1 = __webpack_require__(193);
+const hoverProvider_1 = __webpack_require__(199);
+const completionProvider_1 = __webpack_require__(201);
+const documentSymbolProvider_1 = __webpack_require__(203);
+const referenceProvider_1 = __webpack_require__(204);
+const codeLensProvider_1 = __webpack_require__(200);
+const colorProvider_1 = __webpack_require__(205);
+const laytplBracketHighlighter_1 = __webpack_require__(206);
+const laytplFoldingProvider_1 = __webpack_require__(208);
+const xTemplateFoldingProvider_1 = __webpack_require__(209);
+const xTemplateFormattingProvider_1 = __webpack_require__(183);
+const copilotAnalyzer_1 = __webpack_require__(210);
+const variableIndexWebview_1 = __webpack_require__(211);
+const diagnosticsWebview_1 = __webpack_require__(212);
+const watchServiceTreeView_1 = __webpack_require__(213);
+const gameWebviewProvider_1 = __webpack_require__(185);
 const config_1 = __webpack_require__(5);
 /**
  * 注册所有 Language Providers
@@ -50351,6 +50820,10 @@ function registerProviders(context, fileWatchManager) {
     ], new colorProvider_1.VueColorProvider()));
     // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
     context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(config_1.FILE_SELECTORS.HTML, new laytplFoldingProvider_1.LaytplFoldingRangeProvider()));
+    // 注册 text/x-template 折叠提供器（让 script 内封装的组件 HTML 标签可折叠）
+    context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(config_1.FILE_SELECTORS.HTML, new xTemplateFoldingProvider_1.XTemplateFoldingRangeProvider()));
+    // 注册 text/x-template 局部格式化（Format Selection）
+    context.subscriptions.push(vscode.languages.registerDocumentRangeFormattingEditProvider(config_1.FILE_SELECTORS.HTML, new xTemplateFormattingProvider_1.XTemplateRangeFormattingProvider()));
     // 注册 Copilot Chat 分析参与者
     (0, copilotAnalyzer_1.registerCopilotAnalyzer)(context);
     // 注册侧边栏视图
@@ -50377,14 +50850,14 @@ function registerProviders(context, fileWatchManager) {
 
 
 /***/ }),
-/* 191 */
+/* 193 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueHtmlDefinitionProvider = void 0;
-const enhancedDefinitionLogic_1 = __webpack_require__(192);
+const enhancedDefinitionLogic_1 = __webpack_require__(194);
 class VueHtmlDefinitionProvider {
     constructor() {
         this.definitionLogic = new enhancedDefinitionLogic_1.EnhancedDefinitionLogic();
@@ -50397,7 +50870,7 @@ exports.VueHtmlDefinitionProvider = VueHtmlDefinitionProvider;
 
 
 /***/ }),
-/* 192 */
+/* 194 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50450,11 +50923,11 @@ exports.enhancedDefinitionLogic = exports.EnhancedDefinitionLogic = void 0;
  */
 const vscode = __importStar(__webpack_require__(2));
 const performanceMonitor_1 = __webpack_require__(179);
-const jsSymbolParser_1 = __webpack_require__(193);
+const jsSymbolParser_1 = __webpack_require__(195);
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
 const templateContext_1 = __webpack_require__(178);
-const templateLiteralHelper_1 = __webpack_require__(196);
+const templateLiteralHelper_1 = __webpack_require__(198);
 const HTML_ATTR_BLACKLIST = new Set([
     'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'type', 'value', 'name', 'placeholder', 'rel', 'for', 'aria-label'
 ]);
@@ -50802,7 +51275,7 @@ exports.enhancedDefinitionLogic = new EnhancedDefinitionLogic();
 
 
 /***/ }),
-/* 193 */
+/* 195 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50861,7 +51334,7 @@ const vscode = __importStar(__webpack_require__(2));
 const resilientParse_1 = __webpack_require__(8);
 const traverse_1 = __importDefault(__webpack_require__(10));
 const t = __importStar(__webpack_require__(29));
-const cacheManager_1 = __webpack_require__(194);
+const cacheManager_1 = __webpack_require__(196);
 const performanceMonitor_1 = __webpack_require__(179);
 /**
  * 符号类型枚举
@@ -51393,14 +51866,14 @@ exports.jsSymbolParser = new JSSymbolParser();
 
 
 /***/ }),
-/* 194 */
+/* 196 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.documentParseCache = exports.astIndexCache = exports.DocumentParseCacheManager = exports.ASTIndexCacheManager = exports.CacheManager = void 0;
-const errorHandler_1 = __webpack_require__(195);
+const errorHandler_1 = __webpack_require__(197);
 // 默认缓存配置
 const DEFAULT_CACHE_CONFIG = {
     maxSize: 1000,
@@ -51705,7 +52178,7 @@ exports.documentParseCache = DocumentParseCacheManager.getInstance();
 
 
 /***/ }),
-/* 195 */
+/* 197 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -51957,7 +52430,7 @@ function handleCacheError(error, operation) {
 
 
 /***/ }),
-/* 196 */
+/* 198 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52258,7 +52731,7 @@ function isVueTemplateContext(linePrefix) {
 
 
 /***/ }),
-/* 197 */
+/* 199 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52302,9 +52775,9 @@ const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
 const templateContext_1 = __webpack_require__(178);
-const jsSymbolParser_1 = __webpack_require__(193);
-const templateLiteralHelper_1 = __webpack_require__(196);
-const codeLensProvider_1 = __webpack_require__(198);
+const jsSymbolParser_1 = __webpack_require__(195);
+const templateLiteralHelper_1 = __webpack_require__(198);
+const codeLensProvider_1 = __webpack_require__(200);
 const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(176));
 class VueHoverProvider {
@@ -52608,7 +53081,7 @@ exports.VueHoverProvider = VueHoverProvider;
 
 
 /***/ }),
-/* 198 */
+/* 200 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -53216,7 +53689,7 @@ function getRefCountAtLine(document, line) {
 
 
 /***/ }),
-/* 199 */
+/* 201 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -53265,8 +53738,8 @@ exports.VonCompletionProvider = exports.HtmlVueCompletionProvider = exports.Java
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
 const templateContext_1 = __webpack_require__(178);
-const propertyInference_1 = __webpack_require__(200);
-const templateLiteralHelper_1 = __webpack_require__(196);
+const propertyInference_1 = __webpack_require__(202);
+const templateLiteralHelper_1 = __webpack_require__(198);
 const templateIndexer_1 = __webpack_require__(181);
 const fs = __importStar(__webpack_require__(176));
 /**
@@ -54337,7 +54810,7 @@ exports.VonCompletionProvider = VonCompletionProvider;
 
 
 /***/ }),
-/* 200 */
+/* 202 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -54367,7 +54840,7 @@ function inferObjectProperties(text, root) {
 
 
 /***/ }),
-/* 201 */
+/* 203 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54510,7 +54983,7 @@ exports.VueDocumentSymbolProvider = VueDocumentSymbolProvider;
 
 
 /***/ }),
-/* 202 */
+/* 204 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54823,7 +55296,7 @@ exports.VueReferenceProvider = VueReferenceProvider;
 
 
 /***/ }),
-/* 203 */
+/* 205 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55043,7 +55516,440 @@ exports.VueColorProvider = VueColorProvider;
 
 
 /***/ }),
-/* 204 */
+/* 206 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.clearLaytplBracketHighlights = clearLaytplBracketHighlights;
+exports.updateLaytplBracketHighlights = updateLaytplBracketHighlights;
+const vscode = __importStar(__webpack_require__(2));
+const laytplParser_1 = __webpack_require__(207);
+const BRACKET_CHARS = new Set(['(', ')', '[', ']', '{', '}']);
+const laytplBracketMatchDecorationType = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('editorBracketMatch.background'),
+    borderRadius: '2px'
+});
+let lastDecoratedEditor;
+const pairCache = new Map();
+function isBracketChar(char) {
+    return Boolean(char && BRACKET_CHARS.has(char));
+}
+function getBracketPairs(document) {
+    const cacheKey = document.uri.toString();
+    const cached = pairCache.get(cacheKey);
+    if (cached && cached.version === document.version) {
+        return cached.pairs;
+    }
+    const pairs = (0, laytplParser_1.getLaytplBracketPairs)(document.getText());
+    pairCache.set(cacheKey, { version: document.version, pairs });
+    return pairs;
+}
+function createRangeFromOffset(document, offset) {
+    const start = document.positionAt(offset);
+    const end = document.positionAt(offset + 1);
+    return new vscode.Range(start, end);
+}
+function findCandidateBracketOffsets(document, position) {
+    const text = document.getText();
+    const currentOffset = document.offsetAt(position);
+    const offsets = [];
+    if (currentOffset < text.length && isBracketChar(text[currentOffset])) {
+        offsets.push(currentOffset);
+    }
+    if (currentOffset > 0 && isBracketChar(text[currentOffset - 1])) {
+        offsets.push(currentOffset - 1);
+    }
+    return offsets;
+}
+function clearLaytplBracketHighlights(editor) {
+    if (editor) {
+        editor.setDecorations(laytplBracketMatchDecorationType, []);
+    }
+}
+function updateLaytplBracketHighlights(editor) {
+    if (lastDecoratedEditor && lastDecoratedEditor !== editor) {
+        clearLaytplBracketHighlights(lastDecoratedEditor);
+    }
+    if (!editor || editor.document.languageId !== 'html') {
+        clearLaytplBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    if (editor.selections.length !== 1 || !editor.selection.isEmpty) {
+        clearLaytplBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    const pairs = getBracketPairs(editor.document);
+    const candidates = findCandidateBracketOffsets(editor.document, editor.selection.active);
+    for (const sourceOffset of candidates) {
+        const targetOffset = pairs.get(sourceOffset);
+        if (targetOffset === undefined) {
+            continue;
+        }
+        editor.setDecorations(laytplBracketMatchDecorationType, [
+            { range: createRangeFromOffset(editor.document, sourceOffset) },
+            { range: createRangeFromOffset(editor.document, targetOffset) }
+        ]);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    clearLaytplBracketHighlights(editor);
+    lastDecoratedEditor = editor;
+}
+
+
+/***/ }),
+/* 207 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildLaytplLineOffsets = buildLaytplLineOffsets;
+exports.getLaytplLineAtOffset = getLaytplLineAtOffset;
+exports.scanLaytplTags = scanLaytplTags;
+exports.getLaytplBracketPairs = getLaytplBracketPairs;
+exports.findMatchingLaytplBracket = findMatchingLaytplBracket;
+exports.findLaytplFoldingRanges = findLaytplFoldingRanges;
+const OPEN_BRACKETS = new Map([
+    ['(', ')'],
+    ['[', ']'],
+    ['{', '}']
+]);
+const CLOSE_BRACKETS = new Map([
+    [')', '('],
+    [']', '['],
+    ['}', '{']
+]);
+const LEGACY_SCRIPTLET_START = /^(?:if\b|else\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|var\b|let\b|const\b|return\b|break\b|continue\b|do\b|function\b|case\b|default\b|\}|\)|\]|[A-Za-z_$][\w$.]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*(?:\(|=|\.|\[)|;)/;
+const GENERIC_SCRIPTLET_START = /^(?:if\b|else\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|var\b|let\b|const\b|return\b|break\b|continue\b|do\b|function\b|case\b|default\b|\}|\)|\]|[A-Za-z_$][\w$.]*\s*(?:\(|=))/;
+function buildLaytplLineOffsets(text) {
+    const lineOffsets = [0];
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '\n') {
+            lineOffsets.push(index + 1);
+        }
+    }
+    return lineOffsets;
+}
+function getLaytplLineAtOffset(lineOffsets, offset) {
+    let low = 0;
+    let high = lineOffsets.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const lineOffset = lineOffsets[mid];
+        const nextLineOffset = mid + 1 < lineOffsets.length ? lineOffsets[mid + 1] : Number.MAX_SAFE_INTEGER;
+        if (offset < lineOffset) {
+            high = mid - 1;
+            continue;
+        }
+        if (offset >= nextLineOffset) {
+            low = mid + 1;
+            continue;
+        }
+        return mid;
+    }
+    return 0;
+}
+function looksLikeLegacyScriptlet(code) {
+    const trimmed = code.trim();
+    if (!trimmed) {
+        return false;
+    }
+    return LEGACY_SCRIPTLET_START.test(trimmed) || /[{};]/.test(trimmed);
+}
+function looksLikeGenericScriptlet(code) {
+    const trimmed = code.trim();
+    if (!trimmed) {
+        return false;
+    }
+    return GENERIC_SCRIPTLET_START.test(trimmed) || /[{};]/.test(trimmed);
+}
+function findFirstNonWhitespaceIndex(text, startIndex) {
+    let index = startIndex;
+    while (index < text.length && /\s/.test(text[index])) {
+        index++;
+    }
+    return index;
+}
+function trimTrailingWhitespaceIndex(text, endIndex) {
+    let index = endIndex;
+    while (index > 0 && /\s/.test(text[index - 1])) {
+        index--;
+    }
+    return index;
+}
+function classifyLaytplTag(rawInner) {
+    const firstContentIndex = findFirstNonWhitespaceIndex(rawInner, 0);
+    const contentEndIndex = trimTrailingWhitespaceIndex(rawInner, rawInner.length);
+    if (firstContentIndex >= contentEndIndex) {
+        return {
+            kind: 'output',
+            code: '',
+            codeStartDelta: contentEndIndex,
+            codeEndDelta: contentEndIndex
+        };
+    }
+    const marker = rawInner[firstContentIndex];
+    if (marker === '=' || marker === '-' || marker === '#') {
+        const codeStartDelta = findFirstNonWhitespaceIndex(rawInner, firstContentIndex + 1);
+        const code = rawInner.slice(codeStartDelta, contentEndIndex);
+        if (marker === '=') {
+            return { kind: 'output', code, codeStartDelta, codeEndDelta: contentEndIndex };
+        }
+        if (marker === '-') {
+            return { kind: 'raw-output', code, codeStartDelta, codeEndDelta: contentEndIndex };
+        }
+        return {
+            kind: looksLikeLegacyScriptlet(code) ? 'scriptlet' : 'comment',
+            code,
+            codeStartDelta,
+            codeEndDelta: contentEndIndex
+        };
+    }
+    const code = rawInner.slice(firstContentIndex, contentEndIndex);
+    return {
+        kind: looksLikeGenericScriptlet(code) ? 'scriptlet' : 'output',
+        code,
+        codeStartDelta: firstContentIndex,
+        codeEndDelta: contentEndIndex
+    };
+}
+function scanLaytplTags(text) {
+    const tags = [];
+    const openTag = '{{';
+    let searchIndex = 0;
+    while (searchIndex < text.length) {
+        const startIndex = text.indexOf(openTag, searchIndex);
+        if (startIndex < 0) {
+            break;
+        }
+        const marker = text[startIndex + openTag.length];
+        const isIgnoreTag = marker === '!';
+        const contentStart = startIndex + openTag.length + (isIgnoreTag ? 1 : 0);
+        const closeTag = isIgnoreTag ? '!}}' : '}}';
+        const closeIndex = text.indexOf(closeTag, contentStart);
+        if (closeIndex < 0) {
+            break;
+        }
+        const rawInner = text.slice(contentStart, closeIndex);
+        if (isIgnoreTag) {
+            tags.push({
+                kind: 'ignore',
+                code: rawInner,
+                start: startIndex,
+                end: closeIndex + closeTag.length,
+                codeStart: contentStart,
+                codeEnd: closeIndex
+            });
+        }
+        else {
+            const classified = classifyLaytplTag(rawInner);
+            tags.push({
+                kind: classified.kind,
+                code: classified.code,
+                start: startIndex,
+                end: closeIndex + closeTag.length,
+                codeStart: contentStart + classified.codeStartDelta,
+                codeEnd: contentStart + classified.codeEndDelta
+            });
+        }
+        searchIndex = closeIndex + closeTag.length;
+    }
+    return tags;
+}
+function scanBracketTokens(code, codeStart, lineOffsets) {
+    const tokens = [];
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inTemplateString = false;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let escaped = false;
+    for (let index = 0; index < code.length; index++) {
+        const char = code[index];
+        const nextChar = code[index + 1];
+        const absoluteOffset = codeStart + index;
+        if (inLineComment) {
+            if (char === '\n') {
+                inLineComment = false;
+            }
+            continue;
+        }
+        if (inBlockComment) {
+            if (char === '*' && nextChar === '/') {
+                inBlockComment = false;
+                index++;
+            }
+            continue;
+        }
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if ((inSingleQuote || inDoubleQuote || inTemplateString) && char === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (inSingleQuote) {
+            if (char === '\'') {
+                inSingleQuote = false;
+            }
+            continue;
+        }
+        if (inDoubleQuote) {
+            if (char === '"') {
+                inDoubleQuote = false;
+            }
+            continue;
+        }
+        if (inTemplateString) {
+            if (char === '`') {
+                inTemplateString = false;
+            }
+            continue;
+        }
+        if (char === '/' && nextChar === '/') {
+            inLineComment = true;
+            continue;
+        }
+        if (char === '/' && nextChar === '*') {
+            inBlockComment = true;
+            index++;
+            continue;
+        }
+        if (char === '\'') {
+            inSingleQuote = true;
+            continue;
+        }
+        if (char === '"') {
+            inDoubleQuote = true;
+            continue;
+        }
+        if (char === '`') {
+            inTemplateString = true;
+            continue;
+        }
+        if (!OPEN_BRACKETS.has(char) && !CLOSE_BRACKETS.has(char)) {
+            continue;
+        }
+        tokens.push({
+            char: char,
+            offset: absoluteOffset,
+            line: getLaytplLineAtOffset(lineOffsets, absoluteOffset)
+        });
+    }
+    return tokens;
+}
+function matchBracketTokens(tokens, pairs) {
+    const stacks = new Map();
+    for (const token of tokens) {
+        if (OPEN_BRACKETS.has(token.char)) {
+            const stack = stacks.get(token.char) ?? [];
+            stack.push(token);
+            stacks.set(token.char, stack);
+            continue;
+        }
+        const openBracket = CLOSE_BRACKETS.get(token.char);
+        if (!openBracket) {
+            continue;
+        }
+        const stack = stacks.get(openBracket);
+        const openToken = stack?.pop();
+        if (!openToken) {
+            continue;
+        }
+        pairs.set(openToken.offset, token.offset);
+        pairs.set(token.offset, openToken.offset);
+    }
+}
+function getLaytplBracketPairs(text) {
+    const pairs = new Map();
+    const tags = scanLaytplTags(text);
+    const lineOffsets = buildLaytplLineOffsets(text);
+    const scriptletTokens = [];
+    for (const tag of tags) {
+        if (tag.kind === 'ignore' || tag.kind === 'comment') {
+            continue;
+        }
+        const tokens = scanBracketTokens(tag.code, tag.codeStart, lineOffsets);
+        if (tag.kind === 'scriptlet') {
+            scriptletTokens.push(...tokens);
+            continue;
+        }
+        matchBracketTokens(tokens, pairs);
+    }
+    matchBracketTokens(scriptletTokens, pairs);
+    return pairs;
+}
+function findMatchingLaytplBracket(text, offset) {
+    return getLaytplBracketPairs(text).get(offset) ?? null;
+}
+function findLaytplFoldingRanges(text) {
+    const tags = scanLaytplTags(text);
+    const lineOffsets = buildLaytplLineOffsets(text);
+    const ranges = [];
+    const stack = [];
+    for (const tag of tags) {
+        if (tag.kind !== 'scriptlet') {
+            continue;
+        }
+        const tokens = scanBracketTokens(tag.code, tag.codeStart, lineOffsets)
+            .filter(token => token.char === '{' || token.char === '}');
+        for (const token of tokens) {
+            if (token.char === '}') {
+                const startLine = stack.pop();
+                const endLine = token.line - 1;
+                if (startLine !== undefined && endLine > startLine) {
+                    ranges.push({ start: startLine, end: endLine });
+                }
+                continue;
+            }
+            stack.push(token.line);
+        }
+    }
+    return ranges;
+}
+
+
+/***/ }),
+/* 208 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55084,8 +55990,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LaytplFoldingRangeProvider = exports.findLaytplFoldingRanges = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const laytplParser_1 = __webpack_require__(212);
-var laytplParser_2 = __webpack_require__(212);
+const laytplParser_1 = __webpack_require__(207);
+var laytplParser_2 = __webpack_require__(207);
 Object.defineProperty(exports, "findLaytplFoldingRanges", ({ enumerable: true, get: function () { return laytplParser_2.findLaytplFoldingRanges; } }));
 class LaytplFoldingRangeProvider {
     provideFoldingRanges(document, _context, _token) {
@@ -55096,7 +56002,60 @@ exports.LaytplFoldingRangeProvider = LaytplFoldingRangeProvider;
 
 
 /***/ }),
-/* 205 */
+/* 209 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.XTemplateFoldingRangeProvider = exports.findXTemplateFoldingRanges = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const xTemplateParser_1 = __webpack_require__(184);
+var xTemplateParser_2 = __webpack_require__(184);
+Object.defineProperty(exports, "findXTemplateFoldingRanges", ({ enumerable: true, get: function () { return xTemplateParser_2.findXTemplateFoldingRanges; } }));
+class XTemplateFoldingRangeProvider {
+    provideFoldingRanges(document, _context, _token) {
+        return (0, xTemplateParser_1.findXTemplateFoldingRanges)(document.getText()).map(range => new vscode.FoldingRange(range.start, range.end, vscode.FoldingRangeKind.Region));
+    }
+}
+exports.XTemplateFoldingRangeProvider = XTemplateFoldingRangeProvider;
+
+
+/***/ }),
+/* 210 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56204,7 +57163,7 @@ function registerCopilotAnalyzer(context) {
 
 
 /***/ }),
-/* 206 */
+/* 211 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56251,7 +57210,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VariableIndexWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const jsSymbolParser_1 = __webpack_require__(193);
+const jsSymbolParser_1 = __webpack_require__(195);
 const parseDocument_1 = __webpack_require__(7);
 const performanceMonitor_1 = __webpack_require__(179);
 const path = __importStar(__webpack_require__(3));
@@ -56606,7 +57565,7 @@ __decorate([
 
 
 /***/ }),
-/* 207 */
+/* 212 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56649,7 +57608,7 @@ exports.DiagnosticsWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
-const cacheManager_1 = __webpack_require__(194);
+const cacheManager_1 = __webpack_require__(196);
 class DiagnosticsWebviewProvider {
     static { this.viewType = 'leidong-tools.diagnosticsWebview'; }
     constructor(extensionUri) {
@@ -56749,7 +57708,7 @@ exports.DiagnosticsWebviewProvider = DiagnosticsWebviewProvider;
 
 
 /***/ }),
-/* 208 */
+/* 213 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56864,7 +57823,7 @@ exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
 
 
 /***/ }),
-/* 209 */
+/* 214 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56932,7 +57891,7 @@ function registerIndexLifecycle(context) {
 
 
 /***/ }),
-/* 210 */
+/* 215 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57307,437 +58266,48 @@ function initVueDiagnostics(context) {
 
 
 /***/ }),
-/* 211 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+/* 216 */,
+/* 217 */
+/***/ ((module) => {
 
 "use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.clearLaytplBracketHighlights = clearLaytplBracketHighlights;
-exports.updateLaytplBracketHighlights = updateLaytplBracketHighlights;
-const vscode = __importStar(__webpack_require__(2));
-const laytplParser_1 = __webpack_require__(212);
-const BRACKET_CHARS = new Set(['(', ')', '[', ']', '{', '}']);
-const laytplBracketMatchDecorationType = vscode.window.createTextEditorDecorationType({
-    backgroundColor: new vscode.ThemeColor('editorBracketMatch.background'),
-    borderRadius: '2px'
-});
-let lastDecoratedEditor;
-const pairCache = new Map();
-function isBracketChar(char) {
-    return Boolean(char && BRACKET_CHARS.has(char));
-}
-function getBracketPairs(document) {
-    const cacheKey = document.uri.toString();
-    const cached = pairCache.get(cacheKey);
-    if (cached && cached.version === document.version) {
-        return cached.pairs;
-    }
-    const pairs = (0, laytplParser_1.getLaytplBracketPairs)(document.getText());
-    pairCache.set(cacheKey, { version: document.version, pairs });
-    return pairs;
-}
-function createRangeFromOffset(document, offset) {
-    const start = document.positionAt(offset);
-    const end = document.positionAt(offset + 1);
-    return new vscode.Range(start, end);
-}
-function findCandidateBracketOffsets(document, position) {
-    const text = document.getText();
-    const currentOffset = document.offsetAt(position);
-    const offsets = [];
-    if (currentOffset < text.length && isBracketChar(text[currentOffset])) {
-        offsets.push(currentOffset);
-    }
-    if (currentOffset > 0 && isBracketChar(text[currentOffset - 1])) {
-        offsets.push(currentOffset - 1);
-    }
-    return offsets;
-}
-function clearLaytplBracketHighlights(editor) {
-    if (editor) {
-        editor.setDecorations(laytplBracketMatchDecorationType, []);
-    }
-}
-function updateLaytplBracketHighlights(editor) {
-    if (lastDecoratedEditor && lastDecoratedEditor !== editor) {
-        clearLaytplBracketHighlights(lastDecoratedEditor);
-    }
-    if (!editor || editor.document.languageId !== 'html') {
-        clearLaytplBracketHighlights(editor);
-        lastDecoratedEditor = editor;
-        return;
-    }
-    if (editor.selections.length !== 1 || !editor.selection.isEmpty) {
-        clearLaytplBracketHighlights(editor);
-        lastDecoratedEditor = editor;
-        return;
-    }
-    const pairs = getBracketPairs(editor.document);
-    const candidates = findCandidateBracketOffsets(editor.document, editor.selection.active);
-    for (const sourceOffset of candidates) {
-        const targetOffset = pairs.get(sourceOffset);
-        if (targetOffset === undefined) {
-            continue;
-        }
-        editor.setDecorations(laytplBracketMatchDecorationType, [
-            { range: createRangeFromOffset(editor.document, sourceOffset) },
-            { range: createRangeFromOffset(editor.document, targetOffset) }
-        ]);
-        lastDecoratedEditor = editor;
-        return;
-    }
-    clearLaytplBracketHighlights(editor);
-    lastDecoratedEditor = editor;
-}
-
+module.exports = require("module");
 
 /***/ }),
-/* 212 */
-/***/ ((__unused_webpack_module, exports) => {
+/* 218 */
+/***/ ((module) => {
 
 "use strict";
+module.exports = require("url");
 
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.buildLaytplLineOffsets = buildLaytplLineOffsets;
-exports.getLaytplLineAtOffset = getLaytplLineAtOffset;
-exports.scanLaytplTags = scanLaytplTags;
-exports.getLaytplBracketPairs = getLaytplBracketPairs;
-exports.findMatchingLaytplBracket = findMatchingLaytplBracket;
-exports.findLaytplFoldingRanges = findLaytplFoldingRanges;
-const OPEN_BRACKETS = new Map([
-    ['(', ')'],
-    ['[', ']'],
-    ['{', '}']
-]);
-const CLOSE_BRACKETS = new Map([
-    [')', '('],
-    [']', '['],
-    ['}', '{']
-]);
-const LEGACY_SCRIPTLET_START = /^(?:if\b|else\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|var\b|let\b|const\b|return\b|break\b|continue\b|do\b|function\b|case\b|default\b|\}|\)|\]|[A-Za-z_$][\w$.]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*(?:\(|=|\.|\[)|;)/;
-const GENERIC_SCRIPTLET_START = /^(?:if\b|else\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|var\b|let\b|const\b|return\b|break\b|continue\b|do\b|function\b|case\b|default\b|\}|\)|\]|[A-Za-z_$][\w$.]*\s*(?:\(|=))/;
-function buildLaytplLineOffsets(text) {
-    const lineOffsets = [0];
-    for (let index = 0; index < text.length; index++) {
-        if (text[index] === '\n') {
-            lineOffsets.push(index + 1);
-        }
-    }
-    return lineOffsets;
-}
-function getLaytplLineAtOffset(lineOffsets, offset) {
-    let low = 0;
-    let high = lineOffsets.length - 1;
-    while (low <= high) {
-        const mid = Math.floor((low + high) / 2);
-        const lineOffset = lineOffsets[mid];
-        const nextLineOffset = mid + 1 < lineOffsets.length ? lineOffsets[mid + 1] : Number.MAX_SAFE_INTEGER;
-        if (offset < lineOffset) {
-            high = mid - 1;
-            continue;
-        }
-        if (offset >= nextLineOffset) {
-            low = mid + 1;
-            continue;
-        }
-        return mid;
-    }
-    return 0;
-}
-function looksLikeLegacyScriptlet(code) {
-    const trimmed = code.trim();
-    if (!trimmed) {
-        return false;
-    }
-    return LEGACY_SCRIPTLET_START.test(trimmed) || /[{};]/.test(trimmed);
-}
-function looksLikeGenericScriptlet(code) {
-    const trimmed = code.trim();
-    if (!trimmed) {
-        return false;
-    }
-    return GENERIC_SCRIPTLET_START.test(trimmed) || /[{};]/.test(trimmed);
-}
-function findFirstNonWhitespaceIndex(text, startIndex) {
-    let index = startIndex;
-    while (index < text.length && /\s/.test(text[index])) {
-        index++;
-    }
-    return index;
-}
-function trimTrailingWhitespaceIndex(text, endIndex) {
-    let index = endIndex;
-    while (index > 0 && /\s/.test(text[index - 1])) {
-        index--;
-    }
-    return index;
-}
-function classifyLaytplTag(rawInner) {
-    const firstContentIndex = findFirstNonWhitespaceIndex(rawInner, 0);
-    const contentEndIndex = trimTrailingWhitespaceIndex(rawInner, rawInner.length);
-    if (firstContentIndex >= contentEndIndex) {
-        return {
-            kind: 'output',
-            code: '',
-            codeStartDelta: contentEndIndex,
-            codeEndDelta: contentEndIndex
-        };
-    }
-    const marker = rawInner[firstContentIndex];
-    if (marker === '=' || marker === '-' || marker === '#') {
-        const codeStartDelta = findFirstNonWhitespaceIndex(rawInner, firstContentIndex + 1);
-        const code = rawInner.slice(codeStartDelta, contentEndIndex);
-        if (marker === '=') {
-            return { kind: 'output', code, codeStartDelta, codeEndDelta: contentEndIndex };
-        }
-        if (marker === '-') {
-            return { kind: 'raw-output', code, codeStartDelta, codeEndDelta: contentEndIndex };
-        }
-        return {
-            kind: looksLikeLegacyScriptlet(code) ? 'scriptlet' : 'comment',
-            code,
-            codeStartDelta,
-            codeEndDelta: contentEndIndex
-        };
-    }
-    const code = rawInner.slice(firstContentIndex, contentEndIndex);
-    return {
-        kind: looksLikeGenericScriptlet(code) ? 'scriptlet' : 'output',
-        code,
-        codeStartDelta: firstContentIndex,
-        codeEndDelta: contentEndIndex
-    };
-}
-function scanLaytplTags(text) {
-    const tags = [];
-    const openTag = '{{';
-    let searchIndex = 0;
-    while (searchIndex < text.length) {
-        const startIndex = text.indexOf(openTag, searchIndex);
-        if (startIndex < 0) {
-            break;
-        }
-        const marker = text[startIndex + openTag.length];
-        const isIgnoreTag = marker === '!';
-        const contentStart = startIndex + openTag.length + (isIgnoreTag ? 1 : 0);
-        const closeTag = isIgnoreTag ? '!}}' : '}}';
-        const closeIndex = text.indexOf(closeTag, contentStart);
-        if (closeIndex < 0) {
-            break;
-        }
-        const rawInner = text.slice(contentStart, closeIndex);
-        if (isIgnoreTag) {
-            tags.push({
-                kind: 'ignore',
-                code: rawInner,
-                start: startIndex,
-                end: closeIndex + closeTag.length,
-                codeStart: contentStart,
-                codeEnd: closeIndex
-            });
-        }
-        else {
-            const classified = classifyLaytplTag(rawInner);
-            tags.push({
-                kind: classified.kind,
-                code: classified.code,
-                start: startIndex,
-                end: closeIndex + closeTag.length,
-                codeStart: contentStart + classified.codeStartDelta,
-                codeEnd: contentStart + classified.codeEndDelta
-            });
-        }
-        searchIndex = closeIndex + closeTag.length;
-    }
-    return tags;
-}
-function scanBracketTokens(code, codeStart, lineOffsets) {
-    const tokens = [];
-    let inSingleQuote = false;
-    let inDoubleQuote = false;
-    let inTemplateString = false;
-    let inLineComment = false;
-    let inBlockComment = false;
-    let escaped = false;
-    for (let index = 0; index < code.length; index++) {
-        const char = code[index];
-        const nextChar = code[index + 1];
-        const absoluteOffset = codeStart + index;
-        if (inLineComment) {
-            if (char === '\n') {
-                inLineComment = false;
-            }
-            continue;
-        }
-        if (inBlockComment) {
-            if (char === '*' && nextChar === '/') {
-                inBlockComment = false;
-                index++;
-            }
-            continue;
-        }
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if ((inSingleQuote || inDoubleQuote || inTemplateString) && char === '\\') {
-            escaped = true;
-            continue;
-        }
-        if (inSingleQuote) {
-            if (char === '\'') {
-                inSingleQuote = false;
-            }
-            continue;
-        }
-        if (inDoubleQuote) {
-            if (char === '"') {
-                inDoubleQuote = false;
-            }
-            continue;
-        }
-        if (inTemplateString) {
-            if (char === '`') {
-                inTemplateString = false;
-            }
-            continue;
-        }
-        if (char === '/' && nextChar === '/') {
-            inLineComment = true;
-            continue;
-        }
-        if (char === '/' && nextChar === '*') {
-            inBlockComment = true;
-            index++;
-            continue;
-        }
-        if (char === '\'') {
-            inSingleQuote = true;
-            continue;
-        }
-        if (char === '"') {
-            inDoubleQuote = true;
-            continue;
-        }
-        if (char === '`') {
-            inTemplateString = true;
-            continue;
-        }
-        if (!OPEN_BRACKETS.has(char) && !CLOSE_BRACKETS.has(char)) {
-            continue;
-        }
-        tokens.push({
-            char: char,
-            offset: absoluteOffset,
-            line: getLaytplLineAtOffset(lineOffsets, absoluteOffset)
-        });
-    }
-    return tokens;
-}
-function matchBracketTokens(tokens, pairs) {
-    const stacks = new Map();
-    for (const token of tokens) {
-        if (OPEN_BRACKETS.has(token.char)) {
-            const stack = stacks.get(token.char) ?? [];
-            stack.push(token);
-            stacks.set(token.char, stack);
-            continue;
-        }
-        const openBracket = CLOSE_BRACKETS.get(token.char);
-        if (!openBracket) {
-            continue;
-        }
-        const stack = stacks.get(openBracket);
-        const openToken = stack?.pop();
-        if (!openToken) {
-            continue;
-        }
-        pairs.set(openToken.offset, token.offset);
-        pairs.set(token.offset, openToken.offset);
-    }
-}
-function getLaytplBracketPairs(text) {
-    const pairs = new Map();
-    const tags = scanLaytplTags(text);
-    const lineOffsets = buildLaytplLineOffsets(text);
-    const scriptletTokens = [];
-    for (const tag of tags) {
-        if (tag.kind === 'ignore' || tag.kind === 'comment') {
-            continue;
-        }
-        const tokens = scanBracketTokens(tag.code, tag.codeStart, lineOffsets);
-        if (tag.kind === 'scriptlet') {
-            scriptletTokens.push(...tokens);
-            continue;
-        }
-        matchBracketTokens(tokens, pairs);
-    }
-    matchBracketTokens(scriptletTokens, pairs);
-    return pairs;
-}
-function findMatchingLaytplBracket(text, offset) {
-    return getLaytplBracketPairs(text).get(offset) ?? null;
-}
-function findLaytplFoldingRanges(text) {
-    const tags = scanLaytplTags(text);
-    const lineOffsets = buildLaytplLineOffsets(text);
-    const ranges = [];
-    const stack = [];
-    for (const tag of tags) {
-        if (tag.kind !== 'scriptlet') {
-            continue;
-        }
-        const tokens = scanBracketTokens(tag.code, tag.codeStart, lineOffsets)
-            .filter(token => token.char === '{' || token.char === '}');
-        for (const token of tokens) {
-            if (token.char === '}') {
-                const startLine = stack.pop();
-                const endLine = token.line - 1;
-                if (startLine !== undefined && endLine > startLine) {
-                    ranges.push({ start: startLine, end: endLine });
-                }
-                continue;
-            }
-            stack.push(token.line);
-        }
-    }
-    return ranges;
-}
+/***/ }),
+/* 219 */
+/***/ ((module) => {
 
+"use strict";
+module.exports = require("fs/promises");
+
+/***/ }),
+/* 220 */
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("process");
+
+/***/ }),
+/* 221 */,
+/* 222 */
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("assert");
+
+/***/ }),
+/* 223 */
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("v8");
 
 /***/ })
 /******/ 	]);
@@ -57769,6 +58339,9 @@ function findLaytplFoldingRanges(text) {
 /******/ 		return module.exports;
 /******/ 	}
 /******/ 	
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__webpack_require__.m = __webpack_modules__;
+/******/ 	
 /************************************************************************/
 /******/ 	/* webpack/runtime/define property getters */
 /******/ 	(() => {
@@ -57779,6 +58352,28 @@ function findLaytplFoldingRanges(text) {
 /******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
 /******/ 				}
 /******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/ensure chunk */
+/******/ 	(() => {
+/******/ 		__webpack_require__.f = {};
+/******/ 		// This file contains only the entry chunk.
+/******/ 		// The chunk loading function for additional chunks
+/******/ 		__webpack_require__.e = (chunkId) => {
+/******/ 			return Promise.all(Object.keys(__webpack_require__.f).reduce((promises, key) => {
+/******/ 				__webpack_require__.f[key](chunkId, promises);
+/******/ 				return promises;
+/******/ 			}, []));
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/get javascript chunk filename */
+/******/ 	(() => {
+/******/ 		// This function allow to reference async chunks
+/******/ 		__webpack_require__.u = (chunkId) => {
+/******/ 			// return url for filenames based on template
+/******/ 			return "" + chunkId + ".extension.js";
 /******/ 		};
 /******/ 	})();
 /******/ 	
@@ -57807,6 +58402,51 @@ function findLaytplFoldingRanges(text) {
 /******/ 		};
 /******/ 	})();
 /******/ 	
+/******/ 	/* webpack/runtime/require chunk loading */
+/******/ 	(() => {
+/******/ 		// no baseURI
+/******/ 		
+/******/ 		// object to store loaded chunks
+/******/ 		// "1" means "loaded", otherwise not loaded yet
+/******/ 		var installedChunks = {
+/******/ 			0: 1
+/******/ 		};
+/******/ 		
+/******/ 		// no on chunks loaded
+/******/ 		
+/******/ 		var installChunk = (chunk) => {
+/******/ 			var moreModules = chunk.modules, chunkIds = chunk.ids, runtime = chunk.runtime;
+/******/ 			for(var moduleId in moreModules) {
+/******/ 				if(__webpack_require__.o(moreModules, moduleId)) {
+/******/ 					__webpack_require__.m[moduleId] = moreModules[moduleId];
+/******/ 				}
+/******/ 			}
+/******/ 			if(runtime) runtime(__webpack_require__);
+/******/ 			for(var i = 0; i < chunkIds.length; i++)
+/******/ 				installedChunks[chunkIds[i]] = 1;
+/******/ 		
+/******/ 		};
+/******/ 		
+/******/ 		// require() chunk loading for javascript
+/******/ 		__webpack_require__.f.require = (chunkId, promises) => {
+/******/ 			// "1" is the signal for "already loaded"
+/******/ 			if(!installedChunks[chunkId]) {
+/******/ 				if(true) { // all chunks have JS
+/******/ 					var installedChunk = require("./" + __webpack_require__.u(chunkId));
+/******/ 					if (!installedChunks[chunkId]) {
+/******/ 						installChunk(installedChunk);
+/******/ 					}
+/******/ 				} else installedChunks[chunkId] = 1;
+/******/ 			}
+/******/ 		};
+/******/ 		
+/******/ 		// no external install chunk
+/******/ 		
+/******/ 		// no HMR
+/******/ 		
+/******/ 		// no HMR manifest
+/******/ 	})();
+/******/ 	
 /************************************************************************/
 var __webpack_exports__ = {};
 // This entry needs to be wrapped in an IIFE because it needs to be in strict mode.
@@ -57819,9 +58459,9 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
-const providers_1 = __webpack_require__(190);
-const indexManager_1 = __webpack_require__(209);
-const vueDiagnosticsProvider_1 = __webpack_require__(210);
+const providers_1 = __webpack_require__(192);
+const indexManager_1 = __webpack_require__(214);
+const vueDiagnosticsProvider_1 = __webpack_require__(215);
 /**
  * Extension activation function
  */

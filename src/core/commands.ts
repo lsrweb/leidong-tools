@@ -15,6 +15,7 @@ import { COMMANDS } from './config';
 import { clearVueIndexCache } from '../parsers/parseDocument';
 import { pruneTemplateIndex, showTemplateIndexSummary } from '../finders/templateIndexer';
 import { FileWatchManager } from '../managers/fileWatchManager';
+import { formatXTemplateSelectionOrFallback } from '../providers/xTemplateFormattingProvider';
 
 /**
  * 日志配置项接口 (用于 dotLogReplace 命令)
@@ -185,6 +186,15 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
         vscode.commands.registerTextEditorCommand(
             'leidong-tools.dotLogReplace',
             dotLogReplaceHandler
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerTextEditorCommand(
+            'leidong-tools.formatXTemplateSelection',
+            async (editor: vscode.TextEditor) => {
+                await formatXTemplateSelectionOrFallback(editor);
+            }
         )
     );
     

@@ -1,0 +1,22 @@
+{
+    "fileTypes": [],
+    "scopeName": "inline.x-template-html",
+    "injectionSelector": "L:text.html.basic -comment",
+    "patterns": [
+        {
+            "begin": "(<script\\b(?=[^>]*\\btype\\s*=\\s*(?:\"text/x-template\"|'text/x-template'|text/x-template)(?=\\s|>|/))[^>]*>)",
+            "beginCaptures": {
+                "1": { "name": "meta.tag.script.begin.html" }
+            },
+            "end": "(</script\\s*>)",
+            "endCaptures": {
+                "1": { "name": "meta.tag.script.end.html" }
+            },
+            "name": "meta.embedded.block.html.x-template",
+            "contentName": "meta.embedded.block.html",
+            "patterns": [
+                { "include": "text.html.basic" }
+            ]
+        }
+    ]
+}

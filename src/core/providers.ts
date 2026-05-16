@@ -16,6 +16,8 @@ import { VueCodeLensProvider, updateInlineRefDecorations, clearInlineRefDecorati
 import { VueColorProvider } from '../providers/colorProvider';
 import { updateLaytplBracketHighlights } from '../providers/laytplBracketHighlighter';
 import { LaytplFoldingRangeProvider } from '../providers/laytplFoldingProvider';
+import { XTemplateFoldingRangeProvider } from '../providers/xTemplateFoldingProvider';
+import { XTemplateRangeFormattingProvider } from '../providers/xTemplateFormattingProvider';
 import { registerCopilotAnalyzer } from '../providers/copilotAnalyzer';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
@@ -191,6 +193,22 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.languages.registerFoldingRangeProvider(
             FILE_SELECTORS.HTML,
             new LaytplFoldingRangeProvider()
+        )
+    );
+
+    // 注册 text/x-template 折叠提供器（让 script 内封装的组件 HTML 标签可折叠）
+    context.subscriptions.push(
+        vscode.languages.registerFoldingRangeProvider(
+            FILE_SELECTORS.HTML,
+            new XTemplateFoldingRangeProvider()
+        )
+    );
+
+    // 注册 text/x-template 局部格式化（Format Selection）
+    context.subscriptions.push(
+        vscode.languages.registerDocumentRangeFormattingEditProvider(
+            FILE_SELECTORS.HTML,
+            new XTemplateRangeFormattingProvider()
         )
     );
 

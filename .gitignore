@@ -2,3 +2,5 @@ node_modules
 *.vsix
 server/vendor
 out/
+dist/
+.codex*

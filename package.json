@@ -101,6 +101,11 @@
         "category": "雷动三千工具集"
       },
       {
+        "command": "leidong-tools.formatXTemplateSelection",
+        "title": "格式化 text/x-template 选定内容",
+        "category": "雷动三千工具集"
+      },
+      {
         "command": "leidong-tools.quickConsoleLog",
         "title": "Quick Console Log (Ctrl+L)",
         "category": "雷动三千工具集"
@@ -316,6 +321,35 @@
           "type": "boolean",
           "default": false,
           "description": "启用/关闭 AI 分析功能。开启后将在变量定义处显示「AI 分析」按钮。"
+        },
+        "leidong-tools.xTemplatePrettierOptions": {
+          "type": "object",
+          "default": {
+            "printWidth": 160,
+            "singleAttributePerLine": false
+          },
+          "description": "text/x-template 选区格式化使用的 Prettier 配置。会继承项目根目录 Prettier 配置，本设置中的字段优先级更高。默认属性不强制换行，printWidth 为 160。",
+          "additionalProperties": true,
+          "properties": {
+            "printWidth": {
+              "type": "number",
+              "default": 160,
+              "description": "Prettier printWidth，控制最大换行宽度。"
+            },
+            "singleAttributePerLine": {
+              "type": "boolean",
+              "default": false,
+              "description": "Prettier singleAttributePerLine。false 表示不强制每个属性单独换行。"
+            },
+            "tabWidth": {
+              "type": "number",
+              "description": "Prettier tabWidth。未设置时使用当前编辑器 tabSize。"
+            },
+            "useTabs": {
+              "type": "boolean",
+              "description": "Prettier useTabs。未设置时使用当前编辑器 insertSpaces 推导。"
+            }
+          }
         }
       }
     },
@@ -355,6 +389,12 @@
         "key": "ctrl+alt+/",
         "mac": "cmd+alt+/",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.formatXTemplateSelection",
+        "key": "ctrl+k ctrl+f",
+        "mac": "cmd+k cmd+f",
+        "when": "editorTextFocus && editorLangId == html && editorHasSelection"
       }
     ],
     "viewsContainers": {
@@ -407,6 +447,11 @@
       ],
       "editor/context": [
         {
+          "command": "leidong-tools.formatXTemplateSelection",
+          "when": "editorLangId == html && editorHasSelection",
+          "group": "1_modification@0"
+        },
+        {
           "command": "leidong-tools.compressLines",
           "when": "editorHasSelection",
           "group": "1_modification@1"
@@ -458,6 +503,16 @@
         "embeddedLanguages": {
           "meta.embedded.block.html": "html",
           "meta.embedded.block.css": "css"
+        }
+      },
+      {
+        "injectTo": [
+          "text.html.basic"
+        ],
+        "scopeName": "inline.x-template-html",
+        "path": "./syntaxes/x-template-html.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.html": "html"
         }
       },
       {
@@ -531,6 +586,7 @@
     "acorn-walk": "^8.3.0",
     "axios": "^1.6.0",
     "cheerio": "^1.0.0-rc.12",
+    "prettier": "^3.8.3",
     "vue-template-compiler": "^2.7.15"
   },
   "devDependencies": {
