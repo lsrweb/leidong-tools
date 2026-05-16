@@ -2,6 +2,17 @@
 
 所有重要的变更都将记录在此文件中。
 
+## [2.5.0] - 2026-05-16
+
+### ✨ 新增
+- **text/x-template 选区格式化**：新增 `formatXTemplateSelection` 命令，可对 HTML 中 `text/x-template` 片段使用 Prettier 进行格式化。
+- **x-template 折叠支持**：新增 `XTemplateFoldingRangeProvider`，支持 `text/x-template` 模板区域的结构化折叠。
+- **Prettier 配置透传**：新增 `leidong-tools.xTemplatePrettierOptions` 设置，可在扩展配置中覆盖 `printWidth`、`singleAttributePerLine`、`tabWidth`、`useTabs` 等格式化选项。
+
+### 💄 优化
+- **Provider 注册完善**：补齐 x-template 格式化与折叠相关 provider 注册和导出，提升 HTML 模板编辑体验。
+- **语法能力整合**：同步完善 `package.json` 的命令、快捷键和 grammar 配置，使 x-template 工作流更顺手。
+
 ## [2.4.0] - 2026-05-07
 
 ### ✨ 新增
