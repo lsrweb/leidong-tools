@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { jsSymbolParser, SymbolType } from '../parsers/jsSymbolParser';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, getCachedVueIndexForContent } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -292,7 +292,7 @@ export class LeidongTreeDataProvider implements vscode.TreeDataProvider<TreeItem
             if (document.languageId === 'html') {
                 vueIndex = resolveVueIndexForHtml(document);
             } else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+                vueIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
             }
         } catch { /* ignore */ }
         

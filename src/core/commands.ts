@@ -15,7 +15,10 @@ import { COMMANDS } from './config';
 import { clearVueIndexCache } from '../parsers/parseDocument';
 import { pruneTemplateIndex, showTemplateIndexSummary } from '../finders/templateIndexer';
 import { FileWatchManager } from '../managers/fileWatchManager';
+import { buildVueRelatedIndexesForDocument } from '../managers/indexManager';
 import { formatXTemplateSelectionOrFallback } from '../providers/xTemplateFormattingProvider';
+import { refreshAllOpenVueDiagnostics, refreshVueDiagnostics } from '../providers/vueDiagnosticsProvider';
+import { refreshProviderConfiguration } from './providers';
 
 /**
  * 日志配置项接口 (用于 dotLogReplace 命令)
@@ -291,6 +294,28 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
         })
     );
 
+    // 手动构建当前文件索引。默认索引模式为 manual，所有 provider 只读取这个缓存。
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.buildCurrentVueIndex', async (uri?: vscode.Uri) => {
+            const document = uri?.scheme === 'file'
+                ? await vscode.workspace.openTextDocument(uri)
+                : vscode.window.activeTextEditor?.document;
+            if (!document) {
+                vscode.window.showWarningMessage('没有可构建索引的活动文件');
+                return;
+            }
+            const ok = buildVueRelatedIndexesForDocument(document);
+            if (ok) {
+                refreshProviderConfiguration();
+                refreshVueDiagnostics(document);
+                refreshAllOpenVueDiagnostics();
+                vscode.window.showInformationMessage(`Vue 索引已构建: ${path.basename(document.uri.fsPath)}`);
+            } else {
+                vscode.window.showWarningMessage('当前文件类型不支持 Vue 索引构建');
+            }
+        })
+    );
+
     // 展示索引摘要
     context.subscriptions.push(
         vscode.commands.registerCommand('leidong-tools.showIndexSummary', () => {
@@ -303,7 +328,7 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
     context.subscriptions.push(
         vscode.commands.registerCommand('leidong-tools.toggleIndexLogging', async () => {
             const cfg = vscode.workspace.getConfiguration('leidong-tools');
-            const current = cfg.get<boolean>('indexLogging', true) === true;
+            const current = cfg.get<boolean>('indexLogging', false) === true;
             await cfg.update('indexLogging', !current, vscode.ConfigurationTarget.Workspace);
             vscode.window.showInformationMessage(`Index Logging 已切换为 ${!current}`);
         })
@@ -333,7 +358,7 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
         vscode.commands.registerCommand('leidong-tools.openGameLobby', async () => {
             // 确保玩家有昵称（首次使用会弹窗输入）
             const nickname = await ensurePlayerNickname();
-            if (!nickname) return; // 用户取消了
+            if (!nickname) { return; } // 用户取消了
             const gm = GameManager.getInstance();
             GamePanel.createOrShow(context.extensionUri, gm.httpUrl);
         })

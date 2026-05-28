@@ -54,7 +54,10 @@ const config_1 = __webpack_require__(5);
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
 const fileWatchManager_1 = __webpack_require__(182);
-const xTemplateFormattingProvider_1 = __webpack_require__(183);
+const indexManager_1 = __webpack_require__(183);
+const xTemplateFormattingProvider_1 = __webpack_require__(184);
+const vueDiagnosticsProvider_1 = __webpack_require__(186);
+const providers_1 = __webpack_require__(188);
 /**
  * 注册所有命令
  */
@@ -221,6 +224,26 @@ function registerCommands(context) {
         (0, templateIndexer_1.pruneTemplateIndex)(0); // 清理全部
         vscode.window.showInformationMessage('索引缓存已清理');
     }));
+    // 手动构建当前文件索引。默认索引模式为 manual，所有 provider 只读取这个缓存。
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.buildCurrentVueIndex', async (uri) => {
+        const document = uri?.scheme === 'file'
+            ? await vscode.workspace.openTextDocument(uri)
+            : vscode.window.activeTextEditor?.document;
+        if (!document) {
+            vscode.window.showWarningMessage('没有可构建索引的活动文件');
+            return;
+        }
+        const ok = (0, indexManager_1.buildVueRelatedIndexesForDocument)(document);
+        if (ok) {
+            (0, providers_1.refreshProviderConfiguration)();
+            (0, vueDiagnosticsProvider_1.refreshVueDiagnostics)(document);
+            (0, vueDiagnosticsProvider_1.refreshAllOpenVueDiagnostics)();
+            vscode.window.showInformationMessage(`Vue 索引已构建: ${path.basename(document.uri.fsPath)}`);
+        }
+        else {
+            vscode.window.showWarningMessage('当前文件类型不支持 Vue 索引构建');
+        }
+    }));
     // 展示索引摘要
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.showIndexSummary', () => {
         (0, templateIndexer_1.showTemplateIndexSummary)();
@@ -229,7 +252,7 @@ function registerCommands(context) {
     // 切换日志
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.toggleIndexLogging', async () => {
         const cfg = vscode.workspace.getConfiguration('leidong-tools');
-        const current = cfg.get('indexLogging', true) === true;
+        const current = cfg.get('indexLogging', false) === true;
         await cfg.update('indexLogging', !current, vscode.ConfigurationTarget.Workspace);
         vscode.window.showInformationMessage(`Index Logging 已切换为 ${!current}`);
     }));
@@ -242,17 +265,18 @@ function registerCommands(context) {
         vscode.window.showInformationMessage(`Vue 变量跳转功能 ${status}`);
     }));
     // =================== 游戏相关命令 ===================
-    const { GamePanel } = __webpack_require__(185);
-    const { GameManager } = __webpack_require__(191);
-    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = __webpack_require__(187);
+    const { GamePanel } = __webpack_require__(210);
+    const { GameManager } = __webpack_require__(216);
+    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = __webpack_require__(212);
     // 初始化玩家身份（注入 context 以使用 globalState 缓存昵称）
     initPlayerIdentity(context);
     // 打开游戏大厅（加载服务端页面）
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.openGameLobby', async () => {
         // 确保玩家有昵称（首次使用会弹窗输入）
         const nickname = await ensurePlayerNickname();
-        if (!nickname)
-            return; // 用户取消了
+        if (!nickname) {
+            return;
+        } // 用户取消了
         const gm = GameManager.getInstance();
         GamePanel.createOrShow(context.extensionUri, gm.httpUrl);
     }));
@@ -738,7 +762,7 @@ async function addVariableComment() {
     let targetUri = document.uri;
     let targetLine = sourceRange.start.line;
     if (document.languageId === 'html') {
-        let vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+        let vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document, true);
         const templateId = (0, templateContext_1.getXTemplateIdAtPosition)(document, selection.active);
         if (templateId && vueIndex?.componentsByTemplateId?.has(templateId)) {
             vueIndex = vueIndex.componentsByTemplateId.get(templateId) || null;
@@ -811,6 +835,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getCachedVueIndexForContent = getCachedVueIndexForContent;
+exports.buildVueIndexForContent = buildVueIndexForContent;
 exports.getOrCreateVueIndexFromContent = getOrCreateVueIndexFromContent;
 exports.getCachedVueIndex = getCachedVueIndex;
 exports.removeVueIndexForUri = removeVueIndexForUri;
@@ -833,6 +859,7 @@ const path = __importStar(__webpack_require__(3));
 const lruCache_1 = __webpack_require__(177);
 let lastVueIndexBuiltAt = 0;
 let lastExternalIndexBuiltAt = 0;
+let blockedAutoBuildWarned = false;
 // 使用 LRU 缓存
 function getMaxIndexEntries() {
     try {
@@ -846,11 +873,18 @@ let indexCache = new lruCache_1.LRUCache(getMaxIndexEntries());
 function loggingEnabled() {
     try {
         const cfg = vscode.workspace.getConfiguration('leidong-tools');
-        return cfg.get('indexLogging', true) === true;
+        return cfg.get('indexLogging', false) === true;
     }
     catch {
-        return true;
+        return false;
     }
+}
+function logBlockedAutoBuild(uri) {
+    if (!loggingEnabled() || blockedAutoBuildWarned) {
+        return;
+    }
+    blockedAutoBuildWarned = true;
+    console.log(`[vue-index][skip-build] ${uri.fsPath} provider requested an index but automatic provider builds are disabled. Run "Leidong Tools: Build Vue Index for Current File".`);
 }
 // 快速 hash（非安全）
 function fastHash(str) {
@@ -1004,7 +1038,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         builtAt: Date.now()
     });
     const mergeAllMaps = (index) => {
-        for (const m of [index.props, index.data, index.computed, index.methods, index.filters, index.mixinData, index.mixinComputed, index.mixinMethods]) {
+        for (const m of [index.props, index.data, index.computed, index.methods, index.watch, index.filters, index.lifecycle, index.refs, index.emits, index.mixinData, index.mixinComputed, index.mixinMethods]) {
             m.forEach((loc, k) => { if (!index.all.has(k)) {
                 index.all.set(k, loc);
             } });
@@ -1492,14 +1526,28 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                 }
                 else if (t.isObjectExpression(val)) {
                     // 形如 someProp: { get(){}, set(){} }
-                    const hasGetter = val.properties.some(p => t.isObjectMethod(p) && (p.kind === 'get'));
-                    if (hasGetter) {
+                    const getter = val.properties.find(p => {
+                        if (!t.isObjectMethod(p) && !t.isObjectProperty(p)) {
+                            return false;
+                        }
+                        const name = getPropertyName(p.key);
+                        if (name !== 'get') {
+                            return false;
+                        }
+                        if (t.isObjectMethod(p)) {
+                            return true;
+                        }
+                        return t.isFunctionExpression(p.value) || t.isArrowFunctionExpression(p.value);
+                    });
+                    if (getter) {
                         const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column), new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)));
                         target.set(prop.key.name, loc);
-                        const getter = val.properties.find(p => t.isObjectMethod(p) && p.kind === 'get');
-                        if (getter) {
-                            const doc = getDocFromProp(getter) || getDocFromProp(prop);
+                        const doc = getDocFromProp(getter) || getDocFromProp(prop);
+                        if (t.isObjectMethod(getter)) {
                             recordFunctionMeta(prop.key.name, getter.params, doc, metaTarget);
+                        }
+                        else if (t.isObjectProperty(getter) && (t.isFunctionExpression(getter.value) || t.isArrowFunctionExpression(getter.value))) {
+                            recordFunctionMeta(prop.key.name, getter.value.params, doc, metaTarget);
                         }
                     }
                 }
@@ -1510,7 +1558,10 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
     const LIFECYCLE_HOOKS = new Set([
         'beforeCreate', 'created', 'beforeMount', 'mounted',
         'beforeUpdate', 'updated', 'beforeDestroy', 'destroyed',
-        'activated', 'deactivated', 'errorCaptured'
+        'beforeUnmount', 'unmounted',
+        'activated', 'deactivated', 'errorCaptured',
+        'renderTracked', 'renderTriggered', 'serverPrefetch',
+        'beforeRouteEnter', 'beforeRouteUpdate', 'beforeRouteLeave'
     ]);
     /**
      * 提取 watch 属性
@@ -2131,7 +2182,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         }
     }
     const all = new Map();
-    for (const m of [props, data, computed, methods, filters, mixinData, mixinComputed, mixinMethods]) {
+    for (const m of [props, data, computed, methods, watch, filters, lifecycle, refs, emits, mixinData, mixinComputed, mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) {
             all.set(k, loc);
         } });
@@ -2151,23 +2202,23 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
         componentsByTemplateId: componentsByTemplateId.size > 0 ? componentsByTemplateId : undefined
     };
 }
-/**
- * 获取（或构建）某个 JS 源的 VueIndex，带缓存
- */
-/**
- * 获取或创建 VueIndex。默认只在没有缓存时构建。
- * 如果需要强制重建（例如文件首次打开或显示时），传入 force=true。
- */
-function getOrCreateVueIndexFromContent(content, uri, baseLine = 0, force = false) {
+/** 只读取指定内容对应的 VueIndex 缓存；未命中时返回空索引，不触发解析。 */
+function getCachedVueIndexForContent(content, uri, baseLine = 0) {
     const key = uri.toString();
     const hash = fastHash(content);
     const cached = indexCache.get(key);
-    if (!force && cached && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
+    if (cached && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
         if (loggingEnabled()) {
             console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} baseLine=${baseLine} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`);
         }
         return cached.index;
     }
+    logBlockedAutoBuild(uri);
+    return createEmptyVueIndex();
+}
+/** 显式构建并缓存指定内容的 VueIndex。只能由手动/保存/定时等明确入口调用。 */
+function buildVueIndexForContent(content, uri, baseLine = 0) {
+    const key = uri.toString();
     // 构建新索引并缓存（baseLine 变化也需重建，确保行号正确）
     const index = buildVueIndex(content, uri, baseLine);
     lastVueIndexBuiltAt = Math.max(lastVueIndexBuiltAt, index.builtAt);
@@ -2177,13 +2228,22 @@ function getOrCreateVueIndexFromContent(content, uri, baseLine = 0, force = fals
     }
     return index;
 }
+/** @deprecated 使用 getCachedVueIndexForContent 或 buildVueIndexForContent 明确表达意图。 */
+function getOrCreateVueIndexFromContent(content, uri, baseLine = 0, force = false) {
+    return force
+        ? buildVueIndexForContent(content, uri, baseLine)
+        : getCachedVueIndexForContent(content, uri, baseLine);
+}
 /** 返回当前缓存（不触发解析） */
 function getCachedVueIndex(uri) {
     const entry = indexCache.get(uri.toString());
     return entry ? entry.index : null;
 }
 /** 删除指定 uri 的缓存 */
-function removeVueIndexForUri(uri) { indexCache.delete(uri.toString()); }
+function removeVueIndexForUri(uri) {
+    indexCache.delete(uri.toString());
+    externalFileCache.delete(uri.fsPath);
+}
 /**
  * 针对当前激活文档（JS/TS）生成补全所需的 ParseResult
  */
@@ -2193,7 +2253,7 @@ async function parseDocument(document) {
             return null;
         }
         const text = document.getText();
-        const index = getOrCreateVueIndexFromContent(text, document.uri, 0);
+        const index = getCachedVueIndexForContent(text, document.uri, 0);
         const variables = [];
         const methods = [];
         const thisReferences = new Map();
@@ -2348,7 +2408,7 @@ function findExternalDevScriptPaths(htmlPath) {
     htmlScriptCache.set(htmlPath, { scriptPaths: [], checkedAt: now });
     return [];
 }
-function getExternalFileIndex(fullPath) {
+function getExternalFileIndex(fullPath, force = false) {
     try {
         const stat = fs.statSync(fullPath);
         const cached = externalFileCache.get(fullPath);
@@ -2358,12 +2418,25 @@ function getExternalFileIndex(fullPath) {
             }
             return cached.index;
         }
-        const content = fs.readFileSync(fullPath, 'utf8');
-        const index = getOrCreateVueIndexFromContent(content, vscode.Uri.file(fullPath), 0);
+        const uri = vscode.Uri.file(fullPath);
+        const cachedVueIndex = getCachedVueIndex(uri);
+        if (!force && cachedVueIndex) {
+            externalFileCache.set(fullPath, { mtimeMs: stat.mtimeMs, hash: cachedVueIndex.hash, index: cachedVueIndex });
+            if (loggingEnabled()) {
+                console.log(`[vue-index][external-bridge-hit] ${fullPath} mtime=${stat.mtimeMs} hash=${cachedVueIndex.hash}`);
+            }
+            return cachedVueIndex;
+        }
+        // 缓存未命中时：不论 force 与否都从磁盘读取并构建。
+        // CRLF 规范化：fs.readFileSync 在 Windows 返回原始 CRLF，而
+        // document.getText() 被 VS Code 规范化为 LF，两者哈希不同会导致
+        // getCachedVueIndexForContent 缓存未命中（CodeLens 全部显示"未引用"）。
+        const content = fs.readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n');
+        const index = buildVueIndexForContent(content, uri, 0);
         externalFileCache.set(fullPath, { mtimeMs: stat.mtimeMs, hash: index.hash, index });
         lastExternalIndexBuiltAt = Math.max(lastExternalIndexBuiltAt, index.builtAt);
         if (loggingEnabled()) {
-            console.log(`[vue-index][external-build] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`);
+            console.log(`[vue-index][external-${force ? 'build' : 'auto-build'}] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`);
         }
         return index;
     }
@@ -2442,7 +2515,7 @@ function mergeVueIndexInto(target, source) {
 }
 function finalizeMergedIndex(target, hashes) {
     const all = new Map();
-    for (const m of [target.data, target.computed, target.methods, target.filters, target.mixinData, target.mixinComputed, target.mixinMethods]) {
+    for (const m of [target.props, target.data, target.computed, target.methods, target.watch, target.filters, target.lifecycle, target.refs, target.emits, target.mixinData, target.mixinComputed, target.mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) {
             all.set(k, loc);
         } });
@@ -2453,14 +2526,14 @@ function finalizeMergedIndex(target, hashes) {
 function getExternalDevScriptPathsForHtml(document) {
     return findExternalDevScriptPaths(document.uri.fsPath);
 }
-function resolveVueIndexForHtml(document) {
+function resolveVueIndexForHtml(document, force = false) {
     const htmlPath = document.uri.fsPath;
     const externalPaths = findExternalDevScriptPaths(htmlPath);
     if (externalPaths.length > 0) {
         const merged = createEmptyVueIndex();
         const hashes = [];
         for (const externalPath of externalPaths) {
-            const extIdx = getExternalFileIndex(externalPath);
+            const extIdx = getExternalFileIndex(externalPath, force);
             if (extIdx) {
                 mergeVueIndexInto(merged, extIdx);
                 hashes.push(extIdx.hash);
@@ -2484,7 +2557,9 @@ function resolveVueIndexForHtml(document) {
             continue;
         }
         const startPos = document.positionAt(match.index + match[0].indexOf('>') + 1);
-        const idx = getOrCreateVueIndexFromContent(content, document.uri, startPos.line);
+        const idx = force
+            ? buildVueIndexForContent(content, document.uri, startPos.line)
+            : getCachedVueIndexForContent(content, document.uri, startPos.line);
         mergeVueIndexInto(merged, idx);
         foundAny = true;
     }
@@ -2528,6 +2603,12 @@ function findDefinitionInIndex(name, index) {
     }
     if (index.lifecycle.has(name)) {
         return index.lifecycle.get(name);
+    }
+    if (index.refs.has(name)) {
+        return index.refs.get(name);
+    }
+    if (index.emits.has(name)) {
+        return index.emits.get(name);
     }
     return index.all.get(name) || null;
 }
@@ -48235,10 +48316,10 @@ function fastHash(str) {
 }
 function loggingEnabled() {
     try {
-        return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', true) === true;
+        return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', false) === true;
     }
     catch {
-        return true;
+        return false;
     }
 }
 /**
@@ -48387,7 +48468,7 @@ function findTemplateVar(document, position, name) {
 }
 /** 获取模板中所有 ref="xxx" 的名称列表 */
 function getTemplateRefs(document) {
-    const idx = getTemplateIndex(document) || buildAndCacheTemplateIndex(document);
+    const idx = getTemplateIndex(document);
     return idx ? idx.refs : new Map();
 }
 function showTemplateIndexSummary() {
@@ -49265,13 +49346,159 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildVueRelatedIndexesForDocument = buildVueRelatedIndexesForDocument;
+exports.registerIndexLifecycle = registerIndexLifecycle;
+const templateIndexer_1 = __webpack_require__(181);
+const parseDocument_1 = __webpack_require__(7);
+const vscode = __importStar(__webpack_require__(2));
+function getIndexBuildMode() {
+    try {
+        const mode = vscode.workspace.getConfiguration('leidong-tools').get('indexBuildMode', 'manual');
+        if (mode === 'onSave' || mode === 'interval') {
+            return mode;
+        }
+        return 'manual';
+    }
+    catch {
+        return 'manual';
+    }
+}
+function getIndexBuildIntervalMs() {
+    try {
+        const minutes = vscode.workspace.getConfiguration('leidong-tools').get('indexBuildIntervalMinutes', 10);
+        return Math.max(1, minutes || 10) * 60 * 1000;
+    }
+    catch {
+        return 10 * 60 * 1000;
+    }
+}
+function isIndexableDocument(document) {
+    return document.languageId === 'html'
+        || document.languageId === 'javascript'
+        || document.languageId === 'typescript'
+        || document.languageId === 'javascriptreact'
+        || document.languageId === 'typescriptreact'
+        || document.languageId === 'vue';
+}
+function buildVueRelatedIndexesForDocument(document) {
+    if (!isIndexableDocument(document)) {
+        return false;
+    }
+    if (document.languageId === 'html') {
+        (0, parseDocument_1.resolveVueIndexForHtml)(document, true);
+        (0, templateIndexer_1.buildAndCacheTemplateIndex)(document);
+        return true;
+    }
+    (0, parseDocument_1.buildVueIndexForContent)(document.getText(), document.uri, 0);
+    return true;
+}
+/** 管理索引生命周期：默认只清理/失效缓存；构建必须由手动命令、保存模式或定时模式触发。 */
+function registerIndexLifecycle(context) {
+    const disposables = [];
+    let intervalTimer = null;
+    // watch for config change
+    disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
+        if (e.affectsConfiguration('leidong-tools.maxIndexEntries')) {
+            (0, parseDocument_1.recreateVueIndexCache)();
+        }
+        if (e.affectsConfiguration('leidong-tools.maxTemplateIndexEntries')) {
+            (0, templateIndexer_1.recreateTemplateIndexCache)();
+        }
+        if (e.affectsConfiguration('leidong-tools.indexBuildMode') || e.affectsConfiguration('leidong-tools.indexBuildIntervalMinutes')) {
+            resetIntervalBuild();
+        }
+    }));
+    disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {
+        // 关闭文件时清理缓存
+        (0, templateIndexer_1.removeTemplateIndex)(doc);
+        (0, parseDocument_1.removeVueIndexForUri)(doc.uri);
+    }));
+    disposables.push(vscode.workspace.onDidSaveTextDocument((doc) => {
+        (0, templateIndexer_1.removeTemplateIndex)(doc);
+        (0, parseDocument_1.removeVueIndexForUri)(doc.uri);
+        if (getIndexBuildMode() === 'onSave') {
+            buildVueRelatedIndexesForDocument(doc);
+        }
+    }));
+    function resetIntervalBuild() {
+        if (intervalTimer) {
+            clearInterval(intervalTimer);
+            intervalTimer = null;
+        }
+        if (getIndexBuildMode() !== 'interval') {
+            return;
+        }
+        intervalTimer = setInterval(() => {
+            const seen = new Set();
+            for (const editor of vscode.window.visibleTextEditors) {
+                const doc = editor.document;
+                const key = doc.uri.toString();
+                if (seen.has(key) || doc.isClosed || doc.isDirty) {
+                    continue;
+                }
+                seen.add(key);
+                buildVueRelatedIndexesForDocument(doc);
+            }
+        }, getIndexBuildIntervalMs());
+    }
+    resetIntervalBuild();
+    // 定期修剪长时间未访问的缓存（每 5 分钟，最长保留 30 分钟）
+    const pruneInterval = setInterval(() => { (0, templateIndexer_1.pruneTemplateIndex)(); (0, parseDocument_1.pruneVueIndexCache)(1000 * 60 * 30); }, 1000 * 60 * 5);
+    context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
+    context.subscriptions.push({ dispose: () => { if (intervalTimer) {
+            clearInterval(intervalTimer);
+        } } });
+    disposables.forEach(d => context.subscriptions.push(d));
+}
+
+
+/***/ }),
+/* 184 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.XTemplateRangeFormattingProvider = void 0;
 exports.getXTemplateRangeFormattingEdits = getXTemplateRangeFormattingEdits;
 exports.formatXTemplateSelectionOrFallback = formatXTemplateSelectionOrFallback;
 const vscode = __importStar(__webpack_require__(2));
-const xTemplateParser_1 = __webpack_require__(184);
+const xTemplateParser_1 = __webpack_require__(185);
 async function loadPrettier() {
-    const imported = await Promise.all(/* import() */[__webpack_require__.e(1), __webpack_require__.e(2)]).then(__webpack_require__.bind(__webpack_require__, 216));
+    const imported = await Promise.all(/* import() */[__webpack_require__.e(1), __webpack_require__.e(2)]).then(__webpack_require__.bind(__webpack_require__, 217));
     const candidate = imported;
     const prettier = typeof candidate.format === 'function' ? candidate : candidate.default;
     if (!prettier || typeof prettier.format !== 'function') {
@@ -49471,7 +49698,7 @@ exports.XTemplateRangeFormattingProvider = XTemplateRangeFormattingProvider;
 
 
 /***/ }),
-/* 184 */
+/* 185 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -49689,7 +49916,7 @@ function findXTemplateFoldingRanges(text) {
 
 
 /***/ }),
-/* 185 */
+/* 186 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -49728,622 +49955,318 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GamePanel = exports.GameSidebarProvider = void 0;
+exports.refreshVueDiagnostics = refreshVueDiagnostics;
+exports.refreshAllOpenVueDiagnostics = refreshAllOpenVueDiagnostics;
+exports.initVueDiagnostics = initVueDiagnostics;
 /**
- * 游戏面板 Webview Provider - 轻量级远程加载器
+ * Vue 诊断提供器
+ * 功能：
+ * 1. 未使用变量检测：data/methods/computed 中定义但模板未引用的变量
+ * 2. 模板表达式诊断：{{ expr }} 和 :prop="expr" 中引用了不存在的变量
  *
- * 设计理念：
- *   扩展端只是一个「浏览器壳」
- *   所有游戏页面、逻辑、资源都由服务端提供
- *   更新游戏只需部署服务器，无需重新发布扩展
+ * 可通过设置 leidong-tools.enableVueDiagnostics 关闭
  */
 const vscode = __importStar(__webpack_require__(2));
-const gameTypes_1 = __webpack_require__(186);
-const playerIdentity_1 = __webpack_require__(187);
-/**
- * 游戏侧边栏 - 显示服务器连接和游戏入口
- */
-class GameSidebarProvider {
-    static { this.viewType = 'leidong-tools.gameSidebar'; }
-    constructor(_extensionUri) {
-        this._extensionUri = _extensionUri;
-        const config = vscode.workspace.getConfiguration('leidong-tools');
-        this._serverUrl = config.get('gameServerUrl', gameTypes_1.DEFAULT_SERVER_CONFIG.httpUrl);
+const fs = __importStar(__webpack_require__(176));
+const parseDocument_1 = __webpack_require__(7);
+const templateExpressionScanner_1 = __webpack_require__(187);
+const DIAGNOSTICS_SOURCE = '雷动三千';
+let diagnosticCollection;
+let debounceTimer = null;
+function isEnabled() {
+    try {
+        return vscode.workspace.getConfiguration('leidong-tools').get('enableVueDiagnostics', true) === true;
     }
-    resolveWebviewView(webviewView, _context, _token) {
-        this._view = webviewView;
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this._extensionUri],
-        };
-        webviewView.webview.html = this._getHtml();
-        // 处理来自 webview 的消息
-        webviewView.webview.onDidReceiveMessage(async (message) => {
-            switch (message.command) {
-                case 'openGame':
-                    GamePanel.createOrShow(this._extensionUri, message.serverUrl || this._serverUrl);
-                    break;
-                case 'updateServerUrl':
-                    this._serverUrl = message.serverUrl;
-                    break;
-                case 'checkServer': {
-                    const ok = await this._checkServer(message.serverUrl || this._serverUrl);
-                    this._view?.webview.postMessage({ command: 'serverStatus', online: ok });
-                    break;
-                }
-                case 'getPlayerInfo': {
-                    const nickname = (0, playerIdentity_1.getPlayerNickname)() || '未设置';
-                    const uid = (0, playerIdentity_1.getPlayerUid)();
-                    const deviceHash = (0, playerIdentity_1.getDeviceHash)();
-                    this._view?.webview.postMessage({ command: 'playerInfo', nickname, uid, deviceHash });
-                    break;
-                }
-                case 'changeNickname': {
-                    const newName = await (0, playerIdentity_1.changePlayerNickname)();
-                    if (newName) {
-                        this._view?.webview.postMessage({ command: 'playerInfo', nickname: newName, uid: (0, playerIdentity_1.getPlayerUid)() });
-                    }
-                    break;
-                }
+    catch {
+        return true;
+    }
+}
+function shouldLog() {
+    try {
+        return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', false) === true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * 从 HTML 模板中提取所有被引用的标识符
+ */
+function extractTemplateIdentifiers(htmlText) {
+    const identifiers = (0, templateExpressionScanner_1.extractIdentifiersFromVueTemplateExpressions)(htmlText);
+    // 额外兼容 Vue2 过滤器写法：{{ value | filterName }}
+    const filterRegex = /\|\s*([a-zA-Z_$][\w$]*)/g;
+    let match;
+    while ((match = filterRegex.exec(htmlText)) !== null) {
+        identifiers.add(match[1]);
+    }
+    return identifiers;
+}
+/**
+ * 从 JS 表达式中提取标识符（简单版本）
+ */
+function extractIdentifiersFromExpr(expr, identifiers) {
+    // 去掉字符串字面量
+    let cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+    // 去掉箭头函数参数：(a, b) => 或 a =>
+    cleaned = cleaned.replace(/\(([^)]*)\)\s*=>/g, '=>');
+    cleaned = cleaned.replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, '=>');
+    // 提取标识符 (排除关键字)
+    const idRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
+    const keywords = new Set(['true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
+        'new', 'in', 'of', 'if', 'else', 'return', 'var', 'let', 'const', 'function',
+        'this', 'that', 'self', 'vm', 'console', 'window', 'document', 'Math', 'JSON',
+        'Object', 'Array', 'String', 'Number', 'Boolean', 'Date', 'RegExp', 'Error',
+        'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'NaN', 'Infinity',
+        'item', 'index', 'key', 'value', 'event', '$event', 'arguments',
+        'alert', 'confirm', 'prompt', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval']);
+    let m;
+    while ((m = idRegex.exec(cleaned)) !== null) {
+        if (!keywords.has(m[1])) {
+            identifiers.add(m[1]);
+        }
+    }
+}
+/**
+ * 从整个 HTML 文档中一次性收集所有 v-for / slot-scope / v-slot / #xxx 局部变量
+ * 返回全局集合（不做作用域精确追踪，避免复杂 DOM 树分析导致误报）
+ */
+function collectAllLocalVars(text) {
+    const localVars = new Set();
+    const attrVal = `(?:"([^"]*)"|'([^']*)')`; // 同时支持双引号和单引号
+    // v-for="(item, index) in list" or v-for="item in list"
+    const vForRe = new RegExp(`v-for\\s*=\\s*${attrVal}`, 'g');
+    let m;
+    while ((m = vForRe.exec(text)) !== null) {
+        const val = m[1] || m[2];
+        if (!val) {
+            continue;
+        }
+        const inner = /(?:\(\s*)?([a-zA-Z_$][\w$]*)\s*(?:,\s*([a-zA-Z_$][\w$]*)\s*(?:,\s*([a-zA-Z_$][\w$]*)\s*)?)?\)?\s+(?:in|of)\s/.exec(val);
+        if (inner) {
+            localVars.add(inner[1]);
+            if (inner[2]) {
+                localVars.add(inner[2]);
+            }
+            if (inner[3]) {
+                localVars.add(inner[3]);
+            }
+        }
+    }
+    // slot-scope="scope" or slot-scope="{ row, $index }"
+    const slotScopeRe = new RegExp(`slot-scope\\s*=\\s*${attrVal}`, 'g');
+    while ((m = slotScopeRe.exec(text)) !== null) {
+        const val = m[1] || m[2];
+        if (!val) {
+            continue;
+        }
+        const stripped = val.replace(/[{}]/g, '');
+        stripped.split(',').forEach(v => {
+            const name = v.trim().replace(/\s*=.*/, '');
+            if (/^[a-zA-Z_$][\w$]*$/.test(name)) {
+                localVars.add(name);
             }
         });
     }
-    /** 检查服务器是否在线 */
-    async _checkServer(url) {
+    // v-slot:name="slotProps" / v-slot="data" / #default="{ row }"
+    const vSlotRe = new RegExp(`(?:v-slot(?::[\\w-]*)?|#[\\w-]+)\\s*=\\s*${attrVal}`, 'g');
+    while ((m = vSlotRe.exec(text)) !== null) {
+        const val = m[1] || m[2];
+        if (!val) {
+            continue;
+        }
+        const stripped = val.replace(/[{}]/g, '');
+        stripped.split(',').forEach(v => {
+            const name = v.trim().replace(/\s*=.*/, '');
+            if (/^[a-zA-Z_$][\w$]*$/.test(name)) {
+                localVars.add(name);
+            }
+        });
+    }
+    return localVars;
+}
+/**
+ * 从 JS 内容中提取全局函数声明名（Vue 实例外部的 function xxx() {}）
+ */
+function collectGlobalFunctionNames(jsContent) {
+    const names = new Set();
+    // 匹配顶层 function 声明
+    const re = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
+    let m;
+    while ((m = re.exec(jsContent)) !== null) {
+        names.add(m[1]);
+    }
+    return names;
+}
+/**
+ * 获取与 HTML 关联的 JS 内容
+ */
+function getAssociatedJsContent(document) {
+    try {
+        const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(document);
+        if (scriptPaths.length > 0 && fs.existsSync(scriptPaths[0])) {
+            return fs.readFileSync(scriptPaths[0], 'utf8');
+        }
+    }
+    catch { /* ignore */ }
+    return null;
+}
+/**
+ * 检测 HTML 文件中的 Vue 诊断问题
+ */
+function diagnoseHtmlDocument(document) {
+    const diagnostics = [];
+    const text = document.getText();
+    const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+    if (!vueIndex) {
+        return diagnostics;
+    }
+    const templateIdentifiers = extractTemplateIdentifiers(text);
+    // -- 未使用变量检测 --
+    const checkUnused = (map, category) => {
+        map.forEach((loc, name) => {
+            if (!templateIdentifiers.has(name)) {
+                if (name.startsWith('_') || name.startsWith('$')) {
+                    return;
+                }
+                const range = new vscode.Range(loc.range.start.line, loc.range.start.character, loc.range.start.line, loc.range.start.character + name.length);
+                const diag = new vscode.Diagnostic(range, `"${name}" 在 ${category} 中定义但未在模板中使用`, vscode.DiagnosticSeverity.Hint);
+                diag.source = DIAGNOSTICS_SOURCE;
+                diag.tags = [vscode.DiagnosticTag.Unnecessary];
+                diagnostics.push(diag);
+            }
+        });
+    };
+    checkUnused(vueIndex.data, 'data');
+    checkUnused(vueIndex.methods, 'methods');
+    checkUnused(vueIndex.computed, 'computed');
+    // -- 模板表达式诊断 --
+    // 构建已知标识符集合
+    const knownIdentifiers = new Set();
+    [vueIndex.data, vueIndex.methods, vueIndex.computed, vueIndex.props,
+        vueIndex.filters, vueIndex.mixinData, vueIndex.mixinMethods, vueIndex.mixinComputed]
+        .forEach(m => m.forEach((_loc, name) => knownIdentifiers.add(name)));
+    // 收集全局函数名（Vue 实例外部的 function 声明）
+    const jsContent = getAssociatedJsContent(document);
+    if (jsContent) {
+        collectGlobalFunctionNames(jsContent).forEach(fn => knownIdentifiers.add(fn));
+    }
+    // 一次性收集整个文档的 v-for / slot-scope / v-slot 局部变量
+    const allLocalVars = collectAllLocalVars(text);
+    // 扫描 {{ }} 中的标识符
+    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
+    let match;
+    while ((match = mustacheRegex.exec(text)) !== null) {
+        const exprStart = match.index + 2; // skip {{
+        const expr = match[1];
+        // 去掉字符串字面量
+        let cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
+        // 去掉箭头函数参数
+        cleaned = cleaned.replace(/\(([^)]*)\)\s*=>/g, '=>');
+        cleaned = cleaned.replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, '=>');
+        const idRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
+        const keywords = new Set(['true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
+            'new', 'in', 'of', 'if', 'else', 'return', 'this', 'that', 'self', 'vm',
+            'console', 'window', 'document', 'Math', 'JSON', 'Object', 'Array', 'String',
+            'Number', 'Boolean', 'Date', 'parseInt', 'parseFloat', 'isNaN', 'NaN', 'Infinity',
+            'item', 'index', 'key', 'value', 'event', '$event', 'arguments',
+            'alert', 'confirm', 'prompt', 'setTimeout', 'setInterval']);
+        let idMatch;
+        while ((idMatch = idRegex.exec(cleaned)) !== null) {
+            const id = idMatch[1];
+            if (keywords.has(id)) {
+                continue;
+            }
+            // 跳过属性访问链中的标识符：.xxx 不应告警
+            const charBefore = idMatch.index > 0 ? cleaned[idMatch.index - 1] : '';
+            if (charBefore === '.') {
+                continue;
+            }
+            // 跳过 v-for / slot-scope 局部变量
+            if (allLocalVars.has(id)) {
+                continue;
+            }
+            if (!knownIdentifiers.has(id)) {
+                const pos = document.positionAt(exprStart + idMatch.index);
+                const range = new vscode.Range(pos.line, pos.character, pos.line, pos.character + id.length);
+                const diag = new vscode.Diagnostic(range, `"${id}" 未在 Vue 实例中定义 (data/props/computed/methods/filters)`, vscode.DiagnosticSeverity.Warning);
+                diag.source = DIAGNOSTICS_SOURCE;
+                diagnostics.push(diag);
+            }
+        }
+    }
+    return diagnostics;
+}
+/**
+ * 运行诊断（带 debounce）
+ */
+function runDiagnostics(document) {
+    if (!isEnabled()) {
+        diagnosticCollection.delete(document.uri);
+        return;
+    }
+    if (document.languageId !== 'html') {
+        return;
+    }
+    if (debounceTimer) {
+        clearTimeout(debounceTimer);
+    }
+    debounceTimer = setTimeout(() => {
         try {
-            const http = __webpack_require__(190);
-            return new Promise((resolve) => {
-                const req = http.get(`${url}/api/status`, (res) => {
-                    resolve(res.statusCode === 200);
-                });
-                req.on('error', () => resolve(false));
-                req.setTimeout(3000, () => { req.destroy(); resolve(false); });
-            });
-        }
-        catch {
-            return false;
-        }
-    }
-    _getHtml() {
-        return /* html */ `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            color: var(--vscode-foreground);
-            background: var(--vscode-sideBar-background);
-            padding: 10px;
-        }
-        .section { margin-bottom: 14px; }
-        .section-title {
-            font-size: 11px;
-            text-transform: uppercase;
-            color: var(--vscode-sideBarSectionHeader-foreground);
-            margin-bottom: 6px;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-        }
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            padding: 6px 12px;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 12px;
-            color: var(--vscode-button-foreground);
-            background: var(--vscode-button-background);
-            width: 100%;
-            justify-content: center;
-            margin-bottom: 4px;
-            transition: background 0.2s;
-        }
-        .btn:hover { background: var(--vscode-button-hoverBackground); }
-        .btn.secondary {
-            background: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-        }
-        input {
-            width: 100%;
-            padding: 5px 8px;
-            border: 1px solid var(--vscode-input-border);
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border-radius: 3px;
-            margin-bottom: 6px;
-            font-size: 12px;
-            outline: none;
-        }
-        input:focus { border-color: var(--vscode-focusBorder); }
-        .status-row {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-bottom: 8px;
-            font-size: 12px;
-        }
-        .status-dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-            transition: background 0.3s;
-        }
-        .status-dot.online { background: #4caf50; }
-        .status-dot.offline { background: #f44336; }
-        .status-dot.checking { background: #ff9800; animation: pulse 1s infinite; }
-        @keyframes pulse { 50% { opacity: 0.3; } }
-        .tip {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 8px;
-            padding: 8px;
-            background: var(--vscode-editor-background);
-            border-radius: 4px;
-            border: 1px solid var(--vscode-panel-border);
-            line-height: 1.5;
-        }
-    </style>
-</head>
-<body>
-    <!-- 玩家信息 -->
-    <div class="section">
-        <div class="section-title">👤 玩家信息</div>
-        <div class="status-row" style="justify-content:space-between">
-            <span>昵称：<strong id="nicknameDisplay">加载中...</strong></span>
-            <span style="font-size:11px;cursor:pointer;color:var(--vscode-textLink-foreground)" onclick="changeNickname()">✏️ 修改</span>
-        </div>
-        <div style="font-size:11px;color:var(--vscode-descriptionForeground);margin-top:-4px">UID: <code id="uidDisplay" style="font-size:10px">-</code></div>
-    </div>
-
-    <!-- 服务器配置 -->
-    <div class="section">
-        <div class="section-title">🌐 游戏服务器</div>
-        <div class="status-row">
-            <span class="status-dot offline" id="statusDot"></span>
-            <span id="statusText">未检测</span>
-        </div>
-        <input type="text" id="serverUrl" value="${this._serverUrl}" placeholder="http://gserver.srliforever.ltd" />
-        <button class="btn secondary" onclick="checkServer()">🔍 检测服务器</button>
-        <div id="serverGuide" class="tip" style="display:none;margin-top:4px;border-color:var(--vscode-editorWarning-foreground)">
-            ⚠️ 服务器未启动，请在终端运行：<br>
-            <code style="font-size:11px">cd server && php start.php --dev</code><br>
-            <span style="font-size:10px;opacity:0.7">将在 <span id="retryCountdown">30</span>s 后自动重试</span>
-        </div>
-    </div>
-
-    <!-- 进入游戏 -->
-    <div class="section">
-        <div class="section-title">🎮 小游戏</div>
-        <button class="btn" onclick="openGame()">🚀 打开游戏大厅</button>
-    </div>
-
-    <div class="tip">
-        💡 所有游戏在服务端运行，扩展只是浏览器壳。<br>
-        新游戏上线只需更新服务器，无需更新扩展。
-    </div>
-
-    <script>
-        const vscode = acquireVsCodeApi();
-        let retryTimer = null;
-        let retrySeconds = 0;
-
-        function getServerUrl() {
-            return document.getElementById('serverUrl').value.replace(/\\/+$/, '');
-        }
-
-        function checkServer() {
-            const dot = document.getElementById('statusDot');
-            const text = document.getElementById('statusText');
-            dot.className = 'status-dot checking';
-            text.textContent = '检测中...';
-            stopRetry();
-            vscode.postMessage({ command: 'checkServer', serverUrl: getServerUrl() });
-        }
-
-        function openGame() {
-            const url = getServerUrl();
-            vscode.postMessage({ command: 'updateServerUrl', serverUrl: url });
-            vscode.postMessage({ command: 'openGame', serverUrl: url });
-        }
-
-        function changeNickname() {
-            vscode.postMessage({ command: 'changeNickname' });
-        }
-
-        function startRetry() {
-            stopRetry();
-            retrySeconds = 30;
-            const guide = document.getElementById('serverGuide');
-            const countdown = document.getElementById('retryCountdown');
-            if (guide) guide.style.display = 'block';
-            retryTimer = setInterval(() => {
-                retrySeconds--;
-                if (countdown) countdown.textContent = retrySeconds;
-                if (retrySeconds <= 0) {
-                    checkServer();
-                }
-            }, 1000);
-        }
-
-        function stopRetry() {
-            if (retryTimer) clearInterval(retryTimer);
-            retryTimer = null;
-            const guide = document.getElementById('serverGuide');
-            if (guide) guide.style.display = 'none';
-        }
-
-        // 接收消息
-        window.addEventListener('message', (event) => {
-            const msg = event.data;
-            if (msg.command === 'serverStatus') {
-                const dot = document.getElementById('statusDot');
-                const text = document.getElementById('statusText');
-                dot.className = 'status-dot ' + (msg.online ? 'online' : 'offline');
-                text.textContent = msg.online ? '✅ 在线' : '❌ 离线';
-                if (msg.online) {
-                    stopRetry();
-                } else {
-                    startRetry();
-                }
+            const diagnostics = diagnoseHtmlDocument(document);
+            diagnosticCollection.set(document.uri, diagnostics);
+            if (shouldLog()) {
+                console.log(`[vue-diagnostics] ${document.uri.fsPath}: ${diagnostics.length} issues`);
             }
-            if (msg.command === 'playerInfo') {
-                document.getElementById('nicknameDisplay').textContent = msg.nickname || '-';
-                document.getElementById('uidDisplay').textContent = msg.uid || '-';
-            }
-        });
-
-        // 初始化：获取玩家信息 + 检测服务器
-        vscode.postMessage({ command: 'getPlayerInfo' });
-        setTimeout(checkServer, 500);
-    </script>
-</body>
-</html>`;
+        }
+        catch (e) {
+            console.error('[vue-diagnostics] error:', e);
+        }
+    }, 2500);
+}
+function refreshVueDiagnostics(document) {
+    runDiagnostics(document);
+}
+function refreshAllOpenVueDiagnostics() {
+    for (const document of vscode.workspace.textDocuments) {
+        if (!document.isClosed && document.languageId === 'html') {
+            runDiagnostics(document);
+        }
     }
 }
-exports.GameSidebarProvider = GameSidebarProvider;
 /**
- * 全屏游戏面板 - 加载服务端页面
- *
- * 这是一个极简的 WebView 容器：
- *   1. 创建一个允许脚本和外部资源的 WebView
- *   2. 生成一个 iframe 加载服务器页面
- *   3. 通过 URL 参数传递 VS Code 主题等信息
- *   4. 就这么多，所有游戏逻辑都在服务端
+ * 初始化诊断功能
  */
-class GamePanel {
-    static { this.viewType = 'leidong-tools.gamePanel'; }
-    constructor(panel, serverUrl) {
-        this._panel = panel;
-        this._serverUrl = serverUrl;
-        this._panel.webview.html = this._getHtml();
-        this._panel.onDidDispose(() => {
-            GamePanel.currentPanel = undefined;
-        });
-        // 处理来自 webview 的消息
-        this._panel.webview.onDidReceiveMessage(async (msg) => {
-            switch (msg.command) {
-                case 'showInfo':
-                    vscode.window.showInformationMessage(msg.text || '');
-                    break;
-                case 'showError':
-                    vscode.window.showErrorMessage(msg.text || '');
-                    break;
-                case 'copyToClipboard':
-                    vscode.env.clipboard.writeText(msg.text || '');
-                    vscode.window.showInformationMessage('已复制到剪贴板');
-                    break;
-                case 'changeNickname': {
-                    const newName = await (0, playerIdentity_1.changePlayerNickname)();
-                    if (newName) {
-                        // 通知 iframe 刷新昵称
-                        this._panel.webview.postMessage({
-                            command: 'nicknameChanged',
-                            nickname: newName,
-                            uid: (0, playerIdentity_1.getPlayerUid)(),
-                        });
-                    }
-                    break;
-                }
-                case 'uidConflict': {
-                    // 服务端检测到设备码冲突，缓存新uid
-                    if (msg.newUid) {
-                        await (0, playerIdentity_1.handleUidConflict)(msg.newUid);
-                    }
-                    break;
+function initVueDiagnostics(context) {
+    diagnosticCollection = vscode.languages.createDiagnosticCollection('leidong-vue');
+    context.subscriptions.push(diagnosticCollection);
+    // 文件关闭时清除诊断
+    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => {
+        diagnosticCollection.delete(document.uri);
+    }));
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((document) => {
+        runDiagnostics(document);
+    }));
+    // 配置变更时清除或重新运行
+    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('leidong-tools.enableVueDiagnostics')) {
+            if (!isEnabled()) {
+                diagnosticCollection.clear();
+            }
+            else {
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    runDiagnostics(editor.document);
                 }
             }
-        });
-    }
-    static createOrShow(extensionUri, serverUrl) {
-        const column = vscode.window.activeTextEditor
-            ? vscode.window.activeTextEditor.viewColumn
-            : undefined;
-        if (GamePanel.currentPanel) {
-            GamePanel.currentPanel._panel.reveal(column);
-            return;
         }
-        const panel = vscode.window.createWebviewPanel(GamePanel.viewType, '🎮 小游戏大厅', column || vscode.ViewColumn.One, {
-            enableScripts: true,
-            retainContextWhenHidden: true,
-        });
-        GamePanel.currentPanel = new GamePanel(panel, serverUrl);
-    }
-    _getHtml() {
-        // 收集 VS Code 主题信息传递给服务端
-        const theme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark
-            ? 'dark' : vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Light
-            ? 'light' : 'hc';
-        const uid = (0, playerIdentity_1.getPlayerUid)();
-        const deviceHash = (0, playerIdentity_1.getDeviceHash)();
-        const nickname = encodeURIComponent((0, playerIdentity_1.getPlayerNickname)() || '未设置昵称');
-        const iframeSrc = `${this._serverUrl}?theme=${theme}&playerName=${nickname}&uid=${uid}&deviceHash=${deviceHash}&source=vscode`;
-        return /* html */ `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 100%; height: 100%; overflow: hidden; }
-        body {
-            background: var(--vscode-editor-background, #1e1e1e);
-            display: flex;
-            flex-direction: column;
-        }
-        .toolbar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 4px 12px;
-            background: var(--vscode-titleBar-activeBackground, #333);
-            border-bottom: 1px solid var(--vscode-panel-border, #555);
-            height: 32px;
-            flex-shrink: 0;
-        }
-        .toolbar-left {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 12px;
-            color: var(--vscode-titleBar-activeForeground, #ccc);
-        }
-        .toolbar-right {
-            display: flex;
-            gap: 6px;
-        }
-        .tool-btn {
-            background: none;
-            border: 1px solid var(--vscode-button-secondaryBackground, #555);
-            color: var(--vscode-foreground, #ccc);
-            padding: 2px 8px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 11px;
-        }
-        .tool-btn:hover {
-            background: var(--vscode-button-secondaryHoverBackground, #444);
-        }
-        #gameFrame {
-            flex: 1;
-            width: 100%;
-            border: none;
-            background: var(--vscode-editor-background, #1e1e1e);
-        }
-        .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            font-size: 14px;
-            color: var(--vscode-descriptionForeground, #888);
-            flex-direction: column;
-            gap: 12px;
-        }
-        .loading .spinner {
-            width: 32px; height: 32px;
-            border: 3px solid var(--vscode-panel-border, #555);
-            border-top: 3px solid var(--vscode-focusBorder, #007acc);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .error-page {
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            gap: 12px;
-            text-align: center;
-            padding: 20px;
-        }
-        .error-page .err-icon { font-size: 48px; }
-        .error-page .err-title { font-size: 18px; font-weight: 600; }
-        .error-page .err-detail {
-            font-size: 13px;
-            color: var(--vscode-descriptionForeground, #888);
-            max-width: 400px;
-        }
-        .error-page .btn {
-            padding: 8px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            color: var(--vscode-button-foreground, #fff);
-            background: var(--vscode-button-background, #0e639c);
-            margin-top: 8px;
-        }
-    </style>
-</head>
-<body>
-    <div class="toolbar">
-        <div class="toolbar-left">
-            <span>🎮</span>
-            <span>游戏大厅</span>
-            <span style="opacity:0.5">|</span>
-            <span id="serverAddr" style="opacity:0.6">${this._serverUrl}</span>
-        </div>
-        <div class="toolbar-right">
-            <button class="tool-btn" onclick="reload()">🔄 刷新</button>
-            <button class="tool-btn" onclick="copyLink()">📋 复制链接</button>
-        </div>
-    </div>
-
-    <div id="loadingView" class="loading">
-        <div class="spinner"></div>
-        <span>正在连接游戏服务器...</span>
-    </div>
-
-    <div id="errorView" class="error-page">
-        <div class="err-icon">😵</div>
-        <div class="err-title">无法连接到游戏服务器</div>
-        <div class="err-detail">
-            请确认服务器已启动：<br>
-            <code style="color:var(--vscode-textLink-foreground)">${this._serverUrl}</code>
-        </div>
-        <div style="margin-top:16px;font-size:12px;text-align:left;max-width:380px;line-height:1.8;color:var(--vscode-descriptionForeground,#888)">
-            <div style="font-weight:600;margin-bottom:6px;color:var(--vscode-foreground,#ccc)">📋 启动指南：</div>
-            <div>1. 打开终端，进入服务器目录</div>
-            <div>2. 运行 <code style="background:var(--vscode-textCodeBlock-background,#2d2d2d);padding:2px 6px;border-radius:3px">composer install</code>（首次）</div>
-            <div>3. 运行 <code style="background:var(--vscode-textCodeBlock-background,#2d2d2d);padding:2px 6px;border-radius:3px">php start.php --dev</code></div>
-            <div>4. 看到 "📡 服务器已就绪" 后点击下方重试</div>
-        </div>
-        <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-            <button class="btn" onclick="reload()">🔄 重试连接</button>
-            <span id="reconnectInfo" style="font-size:11px;color:var(--vscode-descriptionForeground,#888)"></span>
-        </div>
-    </div>
-
-    <iframe id="gameFrame" style="display:none"
-        src="${iframeSrc}"
-        sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-        allow="clipboard-write"
-    ></iframe>
-
-    <script>
-        const vscode = acquireVsCodeApi();
-        const frame = document.getElementById('gameFrame');
-        const loading = document.getElementById('loadingView');
-        const errorView = document.getElementById('errorView');
-        const reconnectInfo = document.getElementById('reconnectInfo');
-
-        let loadTimeout;
-        let reconnectTimer;
-        let reconnectAttempt = 0;
-        const MAX_RECONNECT = 30; // 最多自动重试30次
-        const RECONNECT_INTERVALS = [5, 10, 15, 30]; // 重试间隔递增（秒）
-
-        function showFrame() {
-            clearTimeout(loadTimeout);
-            stopReconnect();
-            loading.style.display = 'none';
-            errorView.style.display = 'none';
-            frame.style.display = 'block';
-        }
-
-        function showError() {
-            clearTimeout(loadTimeout);
-            loading.style.display = 'none';
-            frame.style.display = 'none';
-            errorView.style.display = 'flex';
-            scheduleReconnect();
-        }
-
-        function stopReconnect() {
-            clearInterval(reconnectTimer);
-            reconnectTimer = null;
-            reconnectAttempt = 0;
-        }
-
-        function scheduleReconnect() {
-            if (reconnectTimer) return;
-            reconnectAttempt++;
-            if (reconnectAttempt > MAX_RECONNECT) {
-                reconnectInfo.textContent = '已停止自动重试，请手动重试';
-                return;
-            }
-            const idx = Math.min(reconnectAttempt - 1, RECONNECT_INTERVALS.length - 1);
-            let countdown = RECONNECT_INTERVALS[idx];
-            reconnectInfo.textContent = countdown + 's 后自动重试 (' + reconnectAttempt + '/' + MAX_RECONNECT + ')';
-            reconnectTimer = setInterval(() => {
-                countdown--;
-                if (countdown <= 0) {
-                    clearInterval(reconnectTimer);
-                    reconnectTimer = null;
-                    reconnectInfo.textContent = '正在重试...';
-                    reload();
-                } else {
-                    reconnectInfo.textContent = countdown + 's 后自动重试 (' + reconnectAttempt + '/' + MAX_RECONNECT + ')';
-                }
-            }, 1000);
-        }
-
-        frame.onload = () => showFrame();
-        frame.onerror = () => showError();
-
-        // 超时检测
-        loadTimeout = setTimeout(() => {
-            if (frame.style.display === 'none') {
-                showError();
-            }
-        }, 8000);
-
-        function reload() {
-            loading.style.display = 'flex';
-            errorView.style.display = 'none';
-            frame.style.display = 'none';
-            frame.src = frame.src;
-            loadTimeout = setTimeout(() => {
-                if (frame.style.display === 'none') showError();
-            }, 8000);
-        }
-
-        function copyLink() {
-            vscode.postMessage({ command: 'copyToClipboard', text: '${iframeSrc}' });
-        }
-
-        // 监听来自 iframe 的消息（服务端可以通过 postMessage 与扩展通信）
-        window.addEventListener('message', (event) => {
-            const msg = event.data;
-            if (msg && msg.target === 'vscode') {
-                vscode.postMessage(msg);
-            }
-        });
-    </script>
-</body>
-</html>`;
+    }));
+    // 初始运行
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+        runDiagnostics(editor.document);
     }
 }
-exports.GamePanel = GamePanel;
-
-
-/***/ }),
-/* 186 */
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-/**
- * 游戏模块类型定义 - 极简版
- *
- * 设计理念：所有游戏逻辑和前端代码都在服务端
- * 扩展端只是一个「浏览器壳」，通过 WebView 加载服务器页面
- * 更新游戏只需部署服务器，无需重新发布扩展
- */
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.DEFAULT_SERVER_CONFIG = void 0;
-/** 默认服务器配置 */
-exports.DEFAULT_SERVER_CONFIG = {
-    httpUrl: 'http://gserver.srliforever.ltd',
-    wsUrl: 'ws://gserver.srliforever.ltd/ws',
-};
 
 
 /***/ }),
@@ -50386,181 +50309,145 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.initPlayerIdentity = initPlayerIdentity;
-exports.getDeviceHash = getDeviceHash;
-exports.getPlayerUid = getPlayerUid;
-exports.handleUidConflict = handleUidConflict;
-exports.getPlayerNickname = getPlayerNickname;
-exports.setPlayerNickname = setPlayerNickname;
-exports.ensurePlayerNickname = ensurePlayerNickname;
-exports.changePlayerNickname = changePlayerNickname;
-/**
- * 玩家身份管理
- *
- * - uid: 基于系统关键信息（machineId + username + homedir）加密生成，
- *        确保同一台机器上始终是同一个玩家，即使修改昵称也不变
- * - 如果服务端检测到设备码冲突（两台机器生成了相同哈希），
- *   服务端会分配一个新 uid，客户端缓存该新 uid 以保持后续一致
- * - nickname: 用户自定义昵称，首次使用时弹窗输入，缓存在 globalState 中
- */
+exports.extractVueTemplateExpressionRanges = extractVueTemplateExpressionRanges;
+exports.extractIdentifiersFromVueTemplateExpressions = extractIdentifiersFromVueTemplateExpressions;
+exports.countVueTemplateIdentifierReferences = countVueTemplateIdentifierReferences;
+exports.findVueTemplateIdentifierReferences = findVueTemplateIdentifierReferences;
 const vscode = __importStar(__webpack_require__(2));
-const os = __importStar(__webpack_require__(188));
-const crypto = __importStar(__webpack_require__(189));
-const NICKNAME_KEY = 'leidong-games.playerNickname';
-const UID_OVERRIDE_KEY = 'leidong-games.uidOverride';
-/** 全局 context 引用，由 activate 时注入 */
-let _context;
-/**
- * 初始化（必须在 activate 时调用一次）
- */
-function initPlayerIdentity(context) {
-    _context = context;
-}
-/**
- * 生成原始设备哈希（同一台机器始终相同）
- *
- * 取以下系统信息拼接后做 SHA-256：
- *   - vscode.env.machineId（VS Code 为每台机器分配的唯一ID）
- *   - os.hostname()
- *   - os.userInfo().username
- *   - os.homedir()
- */
-function getDeviceHash() {
-    const raw = [
-        vscode.env.machineId,
-        os.hostname(),
-        os.userInfo().username,
-        os.homedir(),
-    ].join('|');
-    return crypto
-        .createHash('sha256')
-        .update(raw)
-        .digest('hex')
-        .substring(0, 16);
-}
-/**
- * 获取玩家 UID
- *
- * 优先返回服务端分配的 uid（冲突后的新uid），
- * 否则返回本地计算的设备哈希
- */
-function getPlayerUid() {
-    const override = _context?.globalState.get(UID_OVERRIDE_KEY);
-    if (override) {
-        return override;
+const IDENTIFIER_RE = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
+const TEMPLATE_ATTR_RE = /(?:^|[\s<])((?:v-[\w.-]+(?::[\w.-]+)?|[:@#][\w.-]+|slot-scope|scope|key|ref|\bon\w+|[\w-]+))\s*=\s*("([^"]*)"|'([^']*)')/gi;
+const VUE_ATTR_NAME_RE = /^(?:v-|[:@#]|slot-scope$|scope$|key$|ref$|on\w+$)/i;
+const HTML_LITERAL_ATTRS = new Set([
+    'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height',
+    'type', 'value', 'name', 'placeholder', 'rel', 'for', 'role'
+]);
+const KEYWORDS = new Set([
+    'true', 'false', 'null', 'undefined', 'typeof', 'instanceof', 'new',
+    'in', 'of', 'if', 'else', 'return', 'var', 'let', 'const', 'function',
+    'this', 'that', 'self', 'vm', 'console', 'window', 'document', 'Math',
+    'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Date',
+    'RegExp', 'Error', 'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+    'NaN', 'Infinity', 'arguments', 'await', 'async'
+]);
+function isTemplateExpressionAttribute(attrName, expression) {
+    const normalized = attrName.replace(/^\s+/, '');
+    if (VUE_ATTR_NAME_RE.test(normalized)) {
+        return true;
     }
-    return getDeviceHash();
-}
-/**
- * 处理服务端返回的 uid 冲突
- *
- * 当服务端检测到两台机器生成了相同的设备码时，
- * 会为后注册的机器分配一个新 uid。
- * 客户端缓存这个新 uid，后续始终使用它。
- */
-async function handleUidConflict(newUid) {
-    if (_context) {
-        await _context.globalState.update(UID_OVERRIDE_KEY, newUid);
-        vscode.window.showWarningMessage(`设备码冲突已自动处理，你的新设备ID: ${newUid.substring(0, 8)}...`);
+    if (HTML_LITERAL_ATTRS.has(normalized.toLowerCase())) {
+        return false;
     }
+    return /[(){}[\]?:+*|&=!<>]|=>/.test(expression);
 }
-/**
- * 获取缓存的昵称（无则返回 undefined）
- */
-function getPlayerNickname() {
-    return _context?.globalState.get(NICKNAME_KEY);
+function maskStringsAndComments(expr) {
+    return expr
+        .replace(/\/\*[\s\S]*?\*\//g, m => ' '.repeat(m.length))
+        .replace(/\/\/[^\n\r]*/g, m => ' '.repeat(m.length))
+        .replace(/'[^'\\]*(?:\\.[^'\\]*)*'/g, m => ' '.repeat(m.length))
+        .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, m => ' '.repeat(m.length))
+        .replace(/`[^`\\]*(?:\\.[^`\\]*)*`/g, m => ' '.repeat(m.length));
 }
-/**
- * 保存昵称到缓存
- */
-async function setPlayerNickname(nickname) {
-    if (_context) {
-        await _context.globalState.update(NICKNAME_KEY, nickname);
-    }
+function maskArrowParams(expr) {
+    return expr
+        .replace(/\([^)]*\)\s*=>/g, m => `${' '.repeat(Math.max(0, m.length - 2))}=>`)
+        .replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, m => `${' '.repeat(Math.max(0, m.length - 2))}=>`);
 }
-/**
- * 确保玩家有昵称
- *
- * 如果缓存中没有昵称，弹出输入框让用户填写
- * 返回最终昵称；用户取消则返回 undefined
- */
-async function ensurePlayerNickname() {
-    let nickname = getPlayerNickname();
-    if (nickname) {
-        return nickname;
-    }
-    // 首次使用，弹窗输入
-    nickname = await vscode.window.showInputBox({
-        title: '🎮 设置游戏昵称',
-        prompt: '给自己取一个响亮的名字吧！（之后可以在大厅右上角修改）',
-        placeHolder: '例如：超级玩家、剑圣归来...',
-        validateInput: (value) => {
-            const trimmed = value.trim();
-            if (!trimmed)
-                return '昵称不能为空';
-            if (trimmed.length > 20)
-                return '昵称最多 20 个字符';
-            return null;
-        },
-    });
-    if (nickname) {
-        nickname = nickname.trim();
-        await setPlayerNickname(nickname);
-        return nickname;
-    }
-    return undefined;
+function maskExpression(expr) {
+    return maskArrowParams(maskStringsAndComments(expr));
 }
-/**
- * 弹窗修改昵称
- */
-async function changePlayerNickname() {
-    const current = getPlayerNickname() || '';
-    const nickname = await vscode.window.showInputBox({
-        title: '🎮 修改游戏昵称',
-        prompt: '输入新昵称',
-        value: current,
-        placeHolder: '新昵称...',
-        validateInput: (value) => {
-            const trimmed = value.trim();
-            if (!trimmed)
-                return '昵称不能为空';
-            if (trimmed.length > 20)
-                return '昵称最多 20 个字符';
-            return null;
-        },
-    });
-    if (nickname) {
-        const trimmed = nickname.trim();
-        await setPlayerNickname(trimmed);
-        return trimmed;
+function extractVueTemplateExpressionRanges(text) {
+    const ranges = [];
+    let match;
+    const mustacheRe = /\{\{([\s\S]*?)\}\}/g;
+    while ((match = mustacheRe.exec(text)) !== null) {
+        ranges.push({
+            expression: match[1],
+            startOffset: match.index + 2
+        });
     }
-    return undefined;
+    TEMPLATE_ATTR_RE.lastIndex = 0;
+    while ((match = TEMPLATE_ATTR_RE.exec(text)) !== null) {
+        const attrName = match[1];
+        const expression = match[3] ?? match[4] ?? '';
+        if (!expression || !isTemplateExpressionAttribute(attrName, expression)) {
+            continue;
+        }
+        const quotedValue = match[2];
+        const valueOffsetInMatch = match[0].lastIndexOf(quotedValue);
+        const startOffset = match.index + valueOffsetInMatch + 1;
+        ranges.push({ expression, startOffset });
+    }
+    return ranges;
+}
+function extractIdentifiersFromVueTemplateExpressions(text) {
+    const identifiers = new Set();
+    for (const range of extractVueTemplateExpressionRanges(text)) {
+        const masked = maskExpression(range.expression);
+        let match;
+        IDENTIFIER_RE.lastIndex = 0;
+        while ((match = IDENTIFIER_RE.exec(masked)) !== null) {
+            const name = match[1];
+            if (KEYWORDS.has(name)) {
+                continue;
+            }
+            identifiers.add(name);
+        }
+    }
+    return identifiers;
+}
+function countVueTemplateIdentifierReferences(text, names) {
+    const counts = new Map();
+    names.forEach(name => counts.set(name, 0));
+    if (!text || names.size === 0) {
+        return counts;
+    }
+    for (const range of extractVueTemplateExpressionRanges(text)) {
+        const masked = maskExpression(range.expression);
+        let match;
+        IDENTIFIER_RE.lastIndex = 0;
+        while ((match = IDENTIFIER_RE.exec(masked)) !== null) {
+            const current = counts.get(match[1]);
+            if (current !== undefined) {
+                counts.set(match[1], current + 1);
+            }
+        }
+    }
+    return counts;
+}
+function findVueTemplateIdentifierReferences(text, identifier, uri) {
+    const locations = [];
+    if (!identifier) {
+        return locations;
+    }
+    const seen = new Set();
+    const escaped = identifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const identifierRe = new RegExp(`\\b${escaped}\\b`, 'g');
+    for (const range of extractVueTemplateExpressionRanges(text)) {
+        const masked = maskExpression(range.expression);
+        let match;
+        identifierRe.lastIndex = 0;
+        while ((match = identifierRe.exec(masked)) !== null) {
+            const absoluteOffset = range.startOffset + match.index;
+            const docPosition = positionAt(text, absoluteOffset);
+            const key = `${docPosition.line}:${docPosition.character}`;
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            locations.push(new vscode.Location(uri, new vscode.Range(docPosition, docPosition.translate(0, identifier.length))));
+        }
+    }
+    return locations;
+}
+function positionAt(text, offset) {
+    const prefix = text.slice(0, offset);
+    const lines = prefix.split(/\r?\n/);
+    return new vscode.Position(lines.length - 1, lines[lines.length - 1].length);
 }
 
 
 /***/ }),
 /* 188 */
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("os");
-
-/***/ }),
-/* 189 */
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("crypto");
-
-/***/ }),
-/* 190 */
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("http");
-
-/***/ }),
-/* 191 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50599,156 +50486,57 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.GameManager = void 0;
-/**
- * 游戏管理器 - 极简版
- *
- * 设计理念：
- *   所有游戏逻辑、WebSocket 通信、前端页面都在服务端
- *   扩展端 GameManager 只负责：
- *   1. 管理服务器地址配置
- *   2. 检测服务器状态
- *   3. 打开/关闭游戏面板
- *
- *   NO WebSocket, NO 房间管理, NO 游戏状态 —— 全在服务端
- */
-const vscode = __importStar(__webpack_require__(2));
-const gameTypes_1 = __webpack_require__(186);
-class GameManager {
-    constructor() {
-        const vsConfig = vscode.workspace.getConfiguration('leidong-tools');
-        this._config = {
-            httpUrl: vsConfig.get('gameServerUrl', gameTypes_1.DEFAULT_SERVER_CONFIG.httpUrl),
-            wsUrl: vsConfig.get('gameServerWsUrl', gameTypes_1.DEFAULT_SERVER_CONFIG.wsUrl),
-        };
-    }
-    static getInstance() {
-        if (!GameManager._instance) {
-            GameManager._instance = new GameManager();
-        }
-        return GameManager._instance;
-    }
-    get config() {
-        return this._config;
-    }
-    get httpUrl() {
-        return this._config.httpUrl;
-    }
-    /** 更新服务器地址 */
-    setServerUrl(httpUrl) {
-        this._config.httpUrl = httpUrl.replace(/\/+$/, '');
-    }
-    /** 检测服务器是否在线 */
-    async checkServer(url) {
-        const target = url || this._config.httpUrl;
-        try {
-            const http = __webpack_require__(190);
-            return new Promise((resolve) => {
-                const req = http.get(`${target}/api/status`, (res) => {
-                    resolve(res.statusCode === 200);
-                });
-                req.on('error', () => resolve(false));
-                req.setTimeout(3000, () => { req.destroy(); resolve(false); });
-            });
-        }
-        catch {
-            return false;
-        }
-    }
-    dispose() {
-        // 极简版无需清理资源
-    }
-}
-exports.GameManager = GameManager;
-
-
-/***/ }),
-/* 192 */
-/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
-
-"use strict";
-
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.refreshProviderConfiguration = refreshProviderConfiguration;
 exports.registerProviders = registerProviders;
 /**
  * Provider 注册模块
  */
 const vscode = __importStar(__webpack_require__(2));
-const definitionProvider_1 = __webpack_require__(193);
-const hoverProvider_1 = __webpack_require__(199);
-const completionProvider_1 = __webpack_require__(201);
-const documentSymbolProvider_1 = __webpack_require__(203);
-const referenceProvider_1 = __webpack_require__(204);
-const codeLensProvider_1 = __webpack_require__(200);
-const colorProvider_1 = __webpack_require__(205);
-const laytplBracketHighlighter_1 = __webpack_require__(206);
-const laytplFoldingProvider_1 = __webpack_require__(208);
-const xTemplateFoldingProvider_1 = __webpack_require__(209);
-const xTemplateFormattingProvider_1 = __webpack_require__(183);
-const copilotAnalyzer_1 = __webpack_require__(210);
-const variableIndexWebview_1 = __webpack_require__(211);
-const diagnosticsWebview_1 = __webpack_require__(212);
-const watchServiceTreeView_1 = __webpack_require__(213);
-const gameWebviewProvider_1 = __webpack_require__(185);
+const definitionProvider_1 = __webpack_require__(189);
+const hoverProvider_1 = __webpack_require__(195);
+const completionProvider_1 = __webpack_require__(197);
+const documentSymbolProvider_1 = __webpack_require__(199);
+const referenceProvider_1 = __webpack_require__(200);
+const codeLensProvider_1 = __webpack_require__(196);
+const colorProvider_1 = __webpack_require__(201);
+const laytplBracketHighlighter_1 = __webpack_require__(202);
+const laytplFoldingProvider_1 = __webpack_require__(204);
+const xTemplateFoldingProvider_1 = __webpack_require__(205);
+const xTemplateFormattingProvider_1 = __webpack_require__(184);
+const copilotAnalyzer_1 = __webpack_require__(206);
+const variableIndexWebview_1 = __webpack_require__(207);
+const diagnosticsWebview_1 = __webpack_require__(208);
+const watchServiceTreeView_1 = __webpack_require__(209);
+const gameWebviewProvider_1 = __webpack_require__(210);
 const config_1 = __webpack_require__(5);
+let refreshProviderConfigurationImpl;
+function refreshProviderConfiguration() {
+    refreshProviderConfigurationImpl?.();
+}
 /**
  * 注册所有 Language Providers
  */
 function registerProviders(context, fileWatchManager) {
-    // 注册 HTML/JS Vue 定义提供器 
-    // 确保只注册一次
-    if (!context.subscriptions.some(sub => sub.constructor.name === 'DefinitionProviderRegistration')) {
-        context.subscriptions.push(vscode.languages.registerDefinitionProvider([
-            { scheme: 'file', language: 'html' },
-            { scheme: 'file', language: 'javascript' },
-            { scheme: 'file', language: 'typescript' },
-            { scheme: 'file', language: 'javascriptreact' },
-            { scheme: 'file', language: 'typescriptreact' }
-        ], new definitionProvider_1.VueHtmlDefinitionProvider()));
-    }
-    // 注册悬停提供器
-    context.subscriptions.push(vscode.languages.registerHoverProvider([
+    const vueLanguageSelector = [
         { scheme: 'file', language: 'html' },
         { scheme: 'file', language: 'javascript' },
         { scheme: 'file', language: 'typescript' },
         { scheme: 'file', language: 'javascriptreact' },
         { scheme: 'file', language: 'typescriptreact' }
-    ], new hoverProvider_1.VueHoverProvider()));
+    ];
+    const vueLanguageWithVueSelector = [
+        ...vueLanguageSelector,
+        { scheme: 'file', language: 'vue' }
+    ];
+    // 注册 HTML/JS Vue 定义提供器 
+    // 确保只注册一次
+    if (!context.subscriptions.some(sub => sub.constructor.name === 'DefinitionProviderRegistration')) {
+        context.subscriptions.push(vscode.languages.registerDefinitionProvider(vueLanguageSelector, new definitionProvider_1.VueHtmlDefinitionProvider()));
+    }
+    // 注册悬停提供器
+    context.subscriptions.push(vscode.languages.registerHoverProvider(vueLanguageSelector, new hoverProvider_1.VueHoverProvider()));
     // 注册 JavaScript 补全提供器
-    context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT_ONLY, new completionProvider_1.JavaScriptCompletionProvider(), '.', '<', ':', '@', '{', ';', '#', '-', '"', '\'' // 触发补全的字符
+    context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT_ONLY, new completionProvider_1.JavaScriptCompletionProvider(), '.', '"', '\'' // 仅在 Vue 成员和事件名场景主动触发，降低对原生 JS/TS/Emmet 的干扰
     ));
     // 注册 HTML 模板补全提供器
     context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.HTML, new completionProvider_1.HtmlVueCompletionProvider(), '.', ':', '@', '{'));
@@ -50760,64 +50548,85 @@ function registerProviders(context, fileWatchManager) {
         { scheme: 'file', language: 'javascript' },
         { scheme: 'file', language: 'typescript' },
         { scheme: 'file', language: 'html' },
-        { scheme: 'file', language: 'css' },
         { scheme: 'file', language: 'json' },
     ], new completionProvider_1.VonCompletionProvider()
     // 不设置 trigger characters，仅在用户主动请求补全（如输入 von 后按 Ctrl+Space）时触发
     ));
-    // 注册文档符号提供器（面包屑 / Outline 增强）
-    context.subscriptions.push(vscode.languages.registerDocumentSymbolProvider([
-        { scheme: 'file', language: 'html' },
-        { scheme: 'file', language: 'javascript' },
-        { scheme: 'file', language: 'typescript' },
-        { scheme: 'file', language: 'javascriptreact' },
-        { scheme: 'file', language: 'typescriptreact' }
-    ], new documentSymbolProvider_1.VueDocumentSymbolProvider()));
-    // 注册引用查找提供器 (Go to References)
-    context.subscriptions.push(vscode.languages.registerReferenceProvider([
-        { scheme: 'file', language: 'html' },
-        { scheme: 'file', language: 'javascript' },
-        { scheme: 'file', language: 'typescript' },
-        { scheme: 'file', language: 'javascriptreact' },
-        { scheme: 'file', language: 'typescriptreact' }
-    ], new referenceProvider_1.VueReferenceProvider()));
-    // 注册 CodeLens 引用计数提供器 (支持 JS/TS 以及 HTML 模板中的变量定义)
-    const codeLensProvider = new codeLensProvider_1.VueCodeLensProvider();
-    context.subscriptions.push(vscode.languages.registerCodeLensProvider([
-        { scheme: 'file', language: 'javascript' },
-        { scheme: 'file', language: 'typescript' },
-        { scheme: 'file', language: 'javascriptreact' },
-        { scheme: 'file', language: 'typescriptreact' },
-        { scheme: 'file', language: 'html' },
-        { scheme: 'file', language: 'vue' }
-    ], codeLensProvider));
-    // CodeLens right 模式：行末装饰更新钩子
+    let outlineRegistration;
+    let referenceRegistration;
+    let codeLensRegistration;
+    let colorRegistration;
+    let codeLensProvider;
+    const registerOptionalProviders = () => {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
+        outlineRegistration?.dispose();
+        outlineRegistration = undefined;
+        if (cfg.get('enableOutlineSymbols', false)) {
+            outlineRegistration = vscode.languages.registerDocumentSymbolProvider(vueLanguageSelector, new documentSymbolProvider_1.VueDocumentSymbolProvider());
+        }
+        referenceRegistration?.dispose();
+        referenceRegistration = undefined;
+        if (cfg.get('enableReferences', false)) {
+            referenceRegistration = vscode.languages.registerReferenceProvider(vueLanguageSelector, new referenceProvider_1.VueReferenceProvider());
+        }
+        codeLensRegistration?.dispose();
+        codeLensRegistration = undefined;
+        codeLensProvider = undefined;
+        if (cfg.get('enableCodeLens', false) || cfg.get('enableAIAnalysis', false)) {
+            codeLensProvider = new codeLensProvider_1.VueCodeLensProvider();
+            codeLensRegistration = vscode.languages.registerCodeLensProvider(vueLanguageWithVueSelector, codeLensProvider);
+            codeLensProvider.refresh();
+        }
+        colorRegistration?.dispose();
+        colorRegistration = undefined;
+        if (cfg.get('enableColorPicker', false)) {
+            colorRegistration = vscode.languages.registerColorProvider([
+                { scheme: 'file', language: 'html' },
+                { scheme: 'file', language: 'css' }
+            ], new colorProvider_1.VueColorProvider());
+        }
+    };
+    const refreshConfiguration = () => {
+        registerOptionalProviders();
+        codeLensProvider?.refresh();
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            (0, codeLensProvider_1.clearInlineRefDecorations)(editor);
+            (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
+        }
+    };
+    refreshProviderConfigurationImpl = refreshConfiguration;
+    refreshConfiguration();
+    context.subscriptions.push({
+        dispose: () => {
+            outlineRegistration?.dispose();
+            referenceRegistration?.dispose();
+            codeLensRegistration?.dispose();
+            colorRegistration?.dispose();
+            if (refreshProviderConfigurationImpl === refreshConfiguration) {
+                refreshProviderConfigurationImpl = undefined;
+            }
+        }
+    });
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
         (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
         (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(editor);
     }), vscode.window.onDidChangeTextEditorSelection((event) => {
         (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(event.textEditor);
     }), vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('leidong-tools.enableCodeLens') ||
+        if (e.affectsConfiguration('leidong-tools.enableOutlineSymbols') ||
+            e.affectsConfiguration('leidong-tools.enableReferences') ||
+            e.affectsConfiguration('leidong-tools.enableCodeLens') ||
+            e.affectsConfiguration('leidong-tools.enableAIAnalysis') ||
+            e.affectsConfiguration('leidong-tools.enableColorPicker') ||
             e.affectsConfiguration('leidong-tools.codeLensPosition') ||
             e.affectsConfiguration('leidong-tools.enableAIAnalysis')) {
-            const editor = vscode.window.activeTextEditor;
-            // 刷新 CodeLens 缓存
-            codeLensProvider.refresh();
-            if (editor) {
-                (0, codeLensProvider_1.clearInlineRefDecorations)(editor);
-                (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
-            }
+            refreshConfiguration();
         }
     }));
     // 初始化当前编辑器的装饰
     (0, codeLensProvider_1.updateInlineRefDecorations)(vscode.window.activeTextEditor);
     (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(vscode.window.activeTextEditor);
-    // 注册颜色选择器提供器
-    context.subscriptions.push(vscode.languages.registerColorProvider([
-        { scheme: 'file', language: 'html' },
-        { scheme: 'file', language: 'css' }
-    ], new colorProvider_1.VueColorProvider()));
     // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
     context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(config_1.FILE_SELECTORS.HTML, new laytplFoldingProvider_1.LaytplFoldingRangeProvider()));
     // 注册 text/x-template 折叠提供器（让 script 内封装的组件 HTML 标签可折叠）
@@ -50850,14 +50659,14 @@ function registerProviders(context, fileWatchManager) {
 
 
 /***/ }),
-/* 193 */
+/* 189 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueHtmlDefinitionProvider = void 0;
-const enhancedDefinitionLogic_1 = __webpack_require__(194);
+const enhancedDefinitionLogic_1 = __webpack_require__(190);
 class VueHtmlDefinitionProvider {
     constructor() {
         this.definitionLogic = new enhancedDefinitionLogic_1.EnhancedDefinitionLogic();
@@ -50870,7 +50679,7 @@ exports.VueHtmlDefinitionProvider = VueHtmlDefinitionProvider;
 
 
 /***/ }),
-/* 194 */
+/* 190 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -50923,11 +50732,11 @@ exports.enhancedDefinitionLogic = exports.EnhancedDefinitionLogic = void 0;
  */
 const vscode = __importStar(__webpack_require__(2));
 const performanceMonitor_1 = __webpack_require__(179);
-const jsSymbolParser_1 = __webpack_require__(195);
+const jsSymbolParser_1 = __webpack_require__(191);
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
 const templateContext_1 = __webpack_require__(178);
-const templateLiteralHelper_1 = __webpack_require__(198);
+const templateLiteralHelper_1 = __webpack_require__(194);
 const HTML_ATTR_BLACKLIST = new Set([
     'class', 'id', 'style', 'src', 'href', 'alt', 'title', 'width', 'height', 'type', 'value', 'name', 'placeholder', 'rel', 'for', 'aria-label'
 ]);
@@ -51033,7 +50842,7 @@ class EnhancedDefinitionLogic {
                 console.log(`[enhanced-jump][js][fallback] Using legacy parser`);
             }
             const content = document.getText();
-            const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+            const index = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
             let target = (0, parseDocument_1.findDefinitionInIndex)(word, index);
             if (!target && fullChain) {
                 target = (0, parseDocument_1.findChainedRootDefinition)(fullChain, index);
@@ -51052,7 +50861,7 @@ class EnhancedDefinitionLogic {
             console.error('[enhanced-jump][js][error]', e);
             // 发生错误时降级
             const content = document.getText();
-            const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+            const index = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
             return (0, parseDocument_1.findDefinitionInIndex)(word, index);
         }
         return null;
@@ -51111,7 +50920,7 @@ class EnhancedDefinitionLogic {
         try {
             // 解析整个 JS 文件构建 Vue 索引
             const content = document.getText();
-            const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+            const index = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
             // 在 Vue 索引中查找定义
             let target = (0, parseDocument_1.findDefinitionInIndex)(word, index);
             if (!target && fullChain) {
@@ -51257,10 +51066,10 @@ class EnhancedDefinitionLogic {
     shouldLog() {
         try {
             return vscode.workspace.getConfiguration('leidong-tools')
-                .get('indexLogging', true) === true;
+                .get('indexLogging', false) === true;
         }
         catch {
-            return true;
+            return false;
         }
     }
 }
@@ -51275,7 +51084,7 @@ exports.enhancedDefinitionLogic = new EnhancedDefinitionLogic();
 
 
 /***/ }),
-/* 195 */
+/* 191 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -51334,7 +51143,7 @@ const vscode = __importStar(__webpack_require__(2));
 const resilientParse_1 = __webpack_require__(8);
 const traverse_1 = __importDefault(__webpack_require__(10));
 const t = __importStar(__webpack_require__(29));
-const cacheManager_1 = __webpack_require__(196);
+const cacheManager_1 = __webpack_require__(192);
 const performanceMonitor_1 = __webpack_require__(179);
 /**
  * 符号类型枚举
@@ -51362,7 +51171,9 @@ class JSSymbolParser {
     invalidateCache(uri, baseLine = 0) {
         const cacheKey = `${uri.toString()}:${baseLine}`;
         this.cacheManager.delete(cacheKey);
-        console.log('[jsSymbolParser] 缓存已失效:', cacheKey);
+        if (this.shouldLog()) {
+            console.log('[jsSymbolParser] 缓存已失效:', cacheKey);
+        }
     }
     /**
      * 解析文档并提取所有符号
@@ -51379,14 +51190,20 @@ class JSSymbolParser {
         if (cached) {
             const hash = this.fastHash(content);
             if (cached.hash === hash) {
-                console.log(`[jsSymbolParser] ✅ 缓存命中: ${cacheKey}`);
+                if (this.shouldLog()) {
+                    console.log(`[jsSymbolParser] 缓存命中: ${cacheKey}`);
+                }
                 return cached.result;
             }
             else {
-                console.log(`[jsSymbolParser] ❌ 内容变化，缓存失效: ${cacheKey}`);
+                if (this.shouldLog()) {
+                    console.log(`[jsSymbolParser] 内容变化，缓存失效: ${cacheKey}`);
+                }
             }
         }
-        console.log('[jsSymbolParser] 🔄 开始解析:', cacheKey);
+        if (this.shouldLog()) {
+            console.log('[jsSymbolParser] 开始解析:', cacheKey);
+        }
         // 解析代码
         const result = await this.parseContent(content, docUri, baseLine);
         // ✅ 使用 DocumentParseCacheManager 缓存结果
@@ -51839,6 +51656,14 @@ class JSSymbolParser {
         }
         return hash.toString(36);
     }
+    shouldLog() {
+        try {
+            return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', false) === true;
+        }
+        catch {
+            return false;
+        }
+    }
     /**
      * 清空所有缓存
      */
@@ -51866,14 +51691,14 @@ exports.jsSymbolParser = new JSSymbolParser();
 
 
 /***/ }),
-/* 196 */
+/* 192 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.documentParseCache = exports.astIndexCache = exports.DocumentParseCacheManager = exports.ASTIndexCacheManager = exports.CacheManager = void 0;
-const errorHandler_1 = __webpack_require__(197);
+const errorHandler_1 = __webpack_require__(193);
 // 默认缓存配置
 const DEFAULT_CACHE_CONFIG = {
     maxSize: 1000,
@@ -52178,7 +52003,7 @@ exports.documentParseCache = DocumentParseCacheManager.getInstance();
 
 
 /***/ }),
-/* 197 */
+/* 193 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52430,7 +52255,7 @@ function handleCacheError(error, operation) {
 
 
 /***/ }),
-/* 198 */
+/* 194 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52731,7 +52556,7 @@ function isVueTemplateContext(linePrefix) {
 
 
 /***/ }),
-/* 199 */
+/* 195 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -52775,9 +52600,9 @@ const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
 const templateContext_1 = __webpack_require__(178);
-const jsSymbolParser_1 = __webpack_require__(195);
-const templateLiteralHelper_1 = __webpack_require__(198);
-const codeLensProvider_1 = __webpack_require__(200);
+const jsSymbolParser_1 = __webpack_require__(191);
+const templateLiteralHelper_1 = __webpack_require__(194);
+const codeLensProvider_1 = __webpack_require__(196);
 const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(176));
 class VueHoverProvider {
@@ -52953,7 +52778,7 @@ class VueHoverProvider {
             if (templateInfo) {
                 // 在模板字符串内，使用 Vue 索引提供悬停信息
                 const content = document.getText();
-                const vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+                const vueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
                 if (vueIndex) {
                     const def = (0, parseDocument_1.findDefinitionInIndex)(word, vueIndex);
                     if (def) {
@@ -52968,10 +52793,10 @@ class VueHoverProvider {
             if (localSymbol) {
                 return new vscode.Hover(new vscode.MarkdownString(`**Local Symbol**: ${word}\n\nScope: \`local\`\n\nDefined at ${document.uri.fsPath}:${localSymbol.range.start.line + 1}`), wordRange);
             }
-            // JS 文件：先用 getOrCreateVueIndexFromContent 解析当前文件
+            // JS 文件：只读取当前文件已有 Vue 索引缓存
             let jsVueIndex = null;
             try {
-                jsVueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
+                jsVueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(document.getText(), document.uri, 0);
             }
             catch { /* ignore parse errors */ }
             // 回退：VueIndex 为空时通过关联 HTML 间接获取
@@ -53081,7 +52906,7 @@ exports.VueHoverProvider = VueHoverProvider;
 
 
 /***/ }),
-/* 200 */
+/* 196 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -53136,6 +52961,7 @@ exports.getRefCountAtLine = getRefCountAtLine;
  */
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
+const templateExpressionScanner_1 = __webpack_require__(187);
 const fs = __importStar(__webpack_require__(176));
 const path = __importStar(__webpack_require__(3));
 /** Windows 下路径大小写不敏感的规范化 */
@@ -53151,47 +52977,7 @@ function escapeRegex(s) {
  * 单次扫描，复杂度由 O(n_names × n_patterns × n_chars) 降至 O(n_patterns × n_chars)。
  */
 function batchCountReferencesInHtml(text, names) {
-    const counts = new Map();
-    if (!text || names.size === 0) {
-        return counts;
-    }
-    names.forEach(n => counts.set(n, 0));
-    const bump = (expr) => {
-        const re = /\b([a-zA-Z_$][\w$]*)\b/g;
-        let m;
-        while ((m = re.exec(expr)) !== null) {
-            const c = counts.get(m[1]);
-            if (c !== undefined) {
-                counts.set(m[1], c + 1);
-            }
-        }
-    };
-    let m;
-    const mustacheRe = /\{\{([\s\S]*?)\}\}/g;
-    while ((m = mustacheRe.exec(text)) !== null) {
-        bump(m[1]);
-    }
-    const attrPats = [
-        /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g,
-        /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g,
-        /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g,
-        /v-for\s*=\s*"([^"]+)"/g,
-        /v-model\s*=\s*"([^"]+)"/g,
-        /(?:v-bind:|:)[\w.-]+\s*=\s*'([^']+)'/g,
-        /(?:v-on:|@)[\w.-]+\s*=\s*'([^']+)'/g,
-        /(?:v-if|v-else-if|v-show)\s*=\s*'([^']+)'/g,
-        /v-for\s*=\s*'([^']+)'/g,
-        /v-model\s*=\s*'([^']+)'/g,
-        /\bon\w+\s*=\s*"([^"]+)"/gi,
-        /\bon\w+\s*=\s*'([^']+)'/gi,
-    ];
-    for (const pat of attrPats) {
-        pat.lastIndex = 0;
-        while ((m = pat.exec(text)) !== null) {
-            bump(m[1]);
-        }
-    }
-    return counts;
+    return (0, templateExpressionScanner_1.countVueTemplateIdentifierReferences)(text, names);
 }
 /**
  * 从 JS 文本中提取 Vue 内联 template: `...` 的模板内容。
@@ -53364,24 +53150,20 @@ function computeRefCounts(document) {
     let vueIndex = null;
     let htmlText = '';
     let jsText = '';
-    let hasInlineTemplate = false;
     let htmlFiles = [];
     try {
         if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
-            vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(jsText, document.uri, 0);
-            hasInlineTemplate = /template\s*:\s*`/.test(jsText);
-            // JS/TS 内联模板组件只统计本文件内的模板引用，避免把关联 HTML 页面的同名引用混进来。
-            if (!hasInlineTemplate) {
-                // 找关联 HTML (只查找已知关联的文件，不遍历所有打开的文档)
-                htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
-                for (const hf of htmlFiles) {
-                    try {
-                        const openDoc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed);
-                        htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
-                    }
-                    catch { /* */ }
+            vueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(jsText, document.uri, 0);
+            // 找关联 HTML。即使 JS 文件里存在局部 inline template，也不能跳过页面 HTML；
+            // 大型页面常会同时包含根 Vue 页面和少量 Vue.component 内联模板。
+            htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
+            for (const hf of htmlFiles) {
+                try {
+                    const openDoc = vscode.workspace.textDocuments.find(d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed);
+                    htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
                 }
+                catch { /* */ }
             }
             // 回退：当 JS 文件自身解析的 VueIndex 为空时，通过关联 HTML 间接获取
             if (vueIndex && vueIndex.data.size === 0 && vueIndex.methods.size === 0
@@ -53402,6 +53184,13 @@ function computeRefCounts(document) {
                     }
                     catch { /* ignore */ }
                 }
+            }
+            // 最终兜底：缓存未命中且 HTML 不在编辑器中打开时，
+            // 直接从当前文档内容按需构建索引（CodeLens 在防抖定时器中异步运行，不影响主线程）。
+            if (vueIndex && vueIndex.data.size === 0 && vueIndex.methods.size === 0
+                && vueIndex.computed.size === 0 && vueIndex.mixinData.size === 0
+                && vueIndex.mixinMethods.size === 0 && vueIndex.mixinComputed.size === 0) {
+                vueIndex = (0, parseDocument_1.buildVueIndexForContent)(jsText, document.uri, 0);
             }
         }
         else if (document.languageId === 'html') {
@@ -53689,7 +53478,7 @@ function getRefCountAtLine(document, line) {
 
 
 /***/ }),
-/* 201 */
+/* 197 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -53738,8 +53527,8 @@ exports.VonCompletionProvider = exports.HtmlVueCompletionProvider = exports.Java
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
 const templateContext_1 = __webpack_require__(178);
-const propertyInference_1 = __webpack_require__(202);
-const templateLiteralHelper_1 = __webpack_require__(198);
+const propertyInference_1 = __webpack_require__(198);
+const templateLiteralHelper_1 = __webpack_require__(194);
 const templateIndexer_1 = __webpack_require__(181);
 const fs = __importStar(__webpack_require__(176));
 /**
@@ -53985,7 +53774,7 @@ class JavaScriptCompletionProvider {
     provideEmitEventCompletions(document) {
         const items = [];
         const content = document.getText();
-        const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+        const index = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
         if (index && index.emits.size > 0) {
             index.emits.forEach((_loc, eventName) => {
                 const item = new vscode.CompletionItem(eventName, vscode.CompletionItemKind.Event);
@@ -54034,7 +53823,7 @@ class JavaScriptCompletionProvider {
     provideTemplateLiteralCompletions(document) {
         try {
             const content = document.getText();
-            const index = (0, parseDocument_1.getOrCreateVueIndexFromContent)(content, document.uri, 0);
+            const index = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
             if (!index) {
                 return null;
             }
@@ -54096,7 +53885,7 @@ class JavaScriptCompletionProvider {
         }
         const tagMatch = /<([a-zA-Z0-9-]*)$/.exec(linePrefix);
         const attrMatch = /<[^>]*\s([a-zA-Z0-9-]*)$/.exec(linePrefix);
-        const rootIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
+        const rootIndex = (0, parseDocument_1.getCachedVueIndexForContent)(document.getText(), document.uri, 0);
         if (tagMatch) {
             const prefix = tagMatch[1] || '';
             const candidates = new Set(JavaScriptCompletionProvider.COMMON_HTML_TAGS);
@@ -54810,7 +54599,7 @@ exports.VonCompletionProvider = VonCompletionProvider;
 
 
 /***/ }),
-/* 202 */
+/* 198 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -54840,7 +54629,7 @@ function inferObjectProperties(text, root) {
 
 
 /***/ }),
-/* 203 */
+/* 199 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -54900,7 +54689,7 @@ class VueDocumentSymbolProvider {
             }
             else if (document.languageId === 'javascript' || document.languageId === 'typescript'
                 || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
-                vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
+                vueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(document.getText(), document.uri, 0);
             }
         }
         catch { /* ignore */ }
@@ -54983,7 +54772,7 @@ exports.VueDocumentSymbolProvider = VueDocumentSymbolProvider;
 
 
 /***/ }),
-/* 204 */
+/* 200 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55031,6 +54820,7 @@ exports.VueReferenceProvider = void 0;
  */
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
+const templateExpressionScanner_1 = __webpack_require__(187);
 const fs = __importStar(__webpack_require__(176));
 const path = __importStar(__webpack_require__(3));
 /**
@@ -55081,55 +54871,7 @@ function findAssociatedHtmlFiles(jsFilePath) {
  * 在文本中搜索标识符的所有出现位置
  */
 function findIdentifierOccurrencesInHtml(text, identifier, uri) {
-    const locations = [];
-    const lines = text.split('\n');
-    // 匹配模板中的标识符引用
-    const patterns = [
-        // {{ identifier }} 或 {{ expr.identifier }}
-        new RegExp(`\\{\\{[^}]*\\b${escapeRegex(identifier)}\\b[^}]*\\}\\}`, 'g'),
-        // v-bind:xxx="identifier" / :xxx="identifier" (双引号 + 单引号)
-        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-on:xxx="identifier" / @xxx="identifier" (双引号 + 单引号)
-        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-if/v-show/v-else-if (双引号 + 单引号)
-        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-for (双引号 + 单引号)
-        new RegExp(`v-for\\s*=\\s*"[^"]*\\b(?:in|of)\\s+[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`v-for\\s*=\\s*'[^']*\\b(?:in|of)\\s+[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-model (双引号 + 单引号)
-        new RegExp(`v-model\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`v-model\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // Plain HTML event handlers: onclick="identifier(...)" etc.
-        new RegExp(`\\bon\\w+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'gi'),
-        new RegExp(`\\bon\\w+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'gi'),
-    ];
-    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-        const line = lines[lineNum];
-        // 跳过 <script> 标签内的内容
-        // (简单处理，更复杂场景可能需要完善)
-        for (const pattern of patterns) {
-            pattern.lastIndex = 0;
-            let match;
-            while ((match = pattern.exec(line)) !== null) {
-                // 精确定位标识符在行内的位置
-                const innerRegex = new RegExp(`\\b${escapeRegex(identifier)}\\b`, 'g');
-                const subText = match[0];
-                let innerMatch;
-                while ((innerMatch = innerRegex.exec(subText)) !== null) {
-                    const col = match.index + innerMatch.index;
-                    const range = new vscode.Range(lineNum, col, lineNum, col + identifier.length);
-                    // 去重
-                    if (!locations.some(l => l.range.start.line === lineNum && l.range.start.character === col)) {
-                        locations.push(new vscode.Location(uri, range));
-                    }
-                }
-            }
-        }
-    }
-    return locations;
+    return (0, templateExpressionScanner_1.findVueTemplateIdentifierReferences)(text, identifier, uri);
 }
 /**
  * 在 JS 文件中搜索标识符的引用
@@ -55173,7 +54915,7 @@ class VueReferenceProvider {
             // 检查这个词是否是 Vue 索引中的成员
             let vueIndex = null;
             try {
-                vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(document.getText(), document.uri, 0);
+                vueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(document.getText(), document.uri, 0);
             }
             catch { /* parse error, continue */ }
             let isDefined = false;
@@ -55296,7 +55038,7 @@ exports.VueReferenceProvider = VueReferenceProvider;
 
 
 /***/ }),
-/* 205 */
+/* 201 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55516,7 +55258,7 @@ exports.VueColorProvider = VueColorProvider;
 
 
 /***/ }),
-/* 206 */
+/* 202 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55558,7 +55300,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.clearLaytplBracketHighlights = clearLaytplBracketHighlights;
 exports.updateLaytplBracketHighlights = updateLaytplBracketHighlights;
 const vscode = __importStar(__webpack_require__(2));
-const laytplParser_1 = __webpack_require__(207);
+const laytplParser_1 = __webpack_require__(203);
 const BRACKET_CHARS = new Set(['(', ')', '[', ']', '{', '}']);
 const laytplBracketMatchDecorationType = vscode.window.createTextEditorDecorationType({
     backgroundColor: new vscode.ThemeColor('editorBracketMatch.background'),
@@ -55635,7 +55377,7 @@ function updateLaytplBracketHighlights(editor) {
 
 
 /***/ }),
-/* 207 */
+/* 203 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -55949,7 +55691,7 @@ function findLaytplFoldingRanges(text) {
 
 
 /***/ }),
-/* 208 */
+/* 204 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -55990,8 +55732,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LaytplFoldingRangeProvider = exports.findLaytplFoldingRanges = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const laytplParser_1 = __webpack_require__(207);
-var laytplParser_2 = __webpack_require__(207);
+const laytplParser_1 = __webpack_require__(203);
+var laytplParser_2 = __webpack_require__(203);
 Object.defineProperty(exports, "findLaytplFoldingRanges", ({ enumerable: true, get: function () { return laytplParser_2.findLaytplFoldingRanges; } }));
 class LaytplFoldingRangeProvider {
     provideFoldingRanges(document, _context, _token) {
@@ -56002,7 +55744,7 @@ exports.LaytplFoldingRangeProvider = LaytplFoldingRangeProvider;
 
 
 /***/ }),
-/* 209 */
+/* 205 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56043,8 +55785,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.XTemplateFoldingRangeProvider = exports.findXTemplateFoldingRanges = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const xTemplateParser_1 = __webpack_require__(184);
-var xTemplateParser_2 = __webpack_require__(184);
+const xTemplateParser_1 = __webpack_require__(185);
+var xTemplateParser_2 = __webpack_require__(185);
 Object.defineProperty(exports, "findXTemplateFoldingRanges", ({ enumerable: true, get: function () { return xTemplateParser_2.findXTemplateFoldingRanges; } }));
 class XTemplateFoldingRangeProvider {
     provideFoldingRanges(document, _context, _token) {
@@ -56055,7 +55797,7 @@ exports.XTemplateFoldingRangeProvider = XTemplateFoldingRangeProvider;
 
 
 /***/ }),
-/* 210 */
+/* 206 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -56118,8 +55860,9 @@ function escapeRegex(s) {
 function getSnippetWithLineNumbers(lines, startLine, endLine, highlightLine) {
     const result = [];
     for (let i = startLine; i <= endLine; i++) {
-        if (i < 0 || i >= lines.length)
+        if (i < 0 || i >= lines.length) {
             continue;
+        }
         const marker = (highlightLine !== undefined && i === highlightLine) ? ' >> ' : '    ';
         result.push(`${marker}${i + 1}: ${lines[i]}`);
     }
@@ -56131,8 +55874,9 @@ function getSnippetWithLineNumbers(lines, startLine, endLine, highlightLine) {
 function getCleanCodeBlock(lines, startLine, endLine) {
     const result = [];
     for (let i = startLine; i <= endLine; i++) {
-        if (i < 0 || i >= lines.length)
+        if (i < 0 || i >= lines.length) {
             continue;
+        }
         result.push(lines[i]);
     }
     return result.join('\n');
@@ -56149,7 +55893,7 @@ function collectReferenceContext(identifier, document) {
         if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
             jsFilePath = document.uri.fsPath;
-            vueIndex = (0, parseDocument_1.getOrCreateVueIndexFromContent)(jsText, document.uri, 0);
+            vueIndex = (0, parseDocument_1.buildVueIndexForContent)(jsText, document.uri, 0);
             // 找关联 HTML
             for (const doc of vscode.workspace.textDocuments) {
                 if (doc.languageId === 'html' && !doc.isClosed) {
@@ -56182,7 +55926,7 @@ function collectReferenceContext(identifier, document) {
         }
         else if (document.languageId === 'html') {
             htmlTexts.push({ file: document.uri.fsPath, text: document.getText() });
-            vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
+            vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document, true);
             if (vueIndex) {
                 const def = (0, parseDocument_1.findDefinitionInIndex)(identifier, vueIndex);
                 if (def && def.uri.fsPath !== document.uri.fsPath) {
@@ -57163,7 +56907,7 @@ function registerCopilotAnalyzer(context) {
 
 
 /***/ }),
-/* 211 */
+/* 207 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57210,11 +56954,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VariableIndexWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const jsSymbolParser_1 = __webpack_require__(195);
 const parseDocument_1 = __webpack_require__(7);
 const performanceMonitor_1 = __webpack_require__(179);
 const path = __importStar(__webpack_require__(3));
-const fs = __importStar(__webpack_require__(176));
 /**
  * 变量索引 WebView 提供器
  * 支持虚拟滚动，轻松处理万级变量
@@ -57226,13 +56968,7 @@ class VariableIndexWebviewProvider {
         this._lastParsedUri = '';
         this._lastVariables = [];
         this._extensionUri = extensionUri;
-        // ✅ 只在切换文件时刷新（打开新文件）
-        vscode.window.onDidChangeActiveTextEditor((editor) => {
-            if (editor) {
-                this.refresh();
-            }
-        });
-        // ✅ 保存时只清除缓存，不立即刷新（避免编辑时频繁重建）
+        // 保存时只清空本视图的派生缓存，不触发索引构建。
         vscode.workspace.onDidSaveTextDocument((document) => {
             this.invalidateCacheForDocument(document);
         });
@@ -57250,10 +56986,10 @@ class VariableIndexWebviewProvider {
                 this.jumpToDefinition(message.data.uri, message.data.line);
             }
             else if (message.type === 'refresh') {
-                this.refresh();
+                this.refresh(true);
             }
         });
-        // 初始加载
+        // 初始加载只读取已有缓存，不因打开侧边栏而构建索引。
         this.refresh();
     }
     /**
@@ -57262,13 +56998,11 @@ class VariableIndexWebviewProvider {
     invalidateCacheForDocument(document) {
         this._lastParsedUri = '';
         this._lastVariables = [];
-        // 清除 jsSymbolParser 缓存
-        jsSymbolParser_1.jsSymbolParser.invalidateCache(document.uri);
     }
     /**
      * 刷新变量索引
      */
-    async refresh() {
+    async refresh(manualBuild = false) {
         if (!this._view) {
             return;
         }
@@ -57284,7 +57018,7 @@ class VariableIndexWebviewProvider {
             return;
         }
         const document = editor.document;
-        const variables = await this.collectVariables(document);
+        const variables = await this.collectVariables(document, manualBuild);
         const fileName = path.basename(document.uri.fsPath);
         this.postMessage({
             type: 'update',
@@ -57295,87 +57029,46 @@ class VariableIndexWebviewProvider {
         });
     }
     /**
-     * 收集变量（支持 HTML 内联脚本和外部 JS）
+     * 收集变量。默认只读取缓存；用户点击刷新按钮时才显式构建。
      */
-    async collectVariables(document) {
-        const results = [];
+    async collectVariables(document, manualBuild = false) {
         let cacheKey = document.uri.toString();
         try {
-            // HTML 文件处理
-            if (document.languageId === 'html') {
-                const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(document);
-                if (scriptPaths.length > 0) {
-                    cacheKey = scriptPaths.join('|');
-                    if (this._lastParsedUri === cacheKey) {
-                        console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', cacheKey);
-                        return this._lastVariables;
-                    }
-                    for (const scriptPath of scriptPaths) {
-                        if (!fs.existsSync(scriptPath)) {
-                            continue;
-                        }
-                        const scriptContent = fs.readFileSync(scriptPath, 'utf-8');
-                        const scriptUri = vscode.Uri.file(scriptPath);
-                        const parsed = await jsSymbolParser_1.jsSymbolParser.parse(scriptContent, scriptUri);
-                        results.push({ result: parsed, uri: scriptUri });
-                    }
-                }
-                else {
-                    const inlineScript = this.extractInlineScript(document.getText());
-                    if (inlineScript) {
-                        cacheKey = `${document.uri.toString()}:${inlineScript.startLine}`;
-                        if (this._lastParsedUri === cacheKey) {
-                            console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', cacheKey);
-                            return this._lastVariables;
-                        }
-                        const parsed = await jsSymbolParser_1.jsSymbolParser.parse(inlineScript.content, document.uri, inlineScript.startLine);
-                        results.push({ result: parsed, uri: document.uri });
-                    }
-                }
+            const vueIndex = this.getVueIndexForDocument(document, manualBuild);
+            if (!vueIndex) {
+                return [];
             }
-            // JS/TS 文件
-            else if (document.languageId === 'javascript' || document.languageId === 'typescript') {
-                cacheKey = document.uri.toString();
-                if (this._lastParsedUri === cacheKey) {
-                    console.log('[VariableIndexWebview] 缓存命中，跳过重复解析:', cacheKey);
-                    return this._lastVariables;
-                }
-                const parsed = await jsSymbolParser_1.jsSymbolParser.parse(document, document.uri);
-                results.push({ result: parsed, uri: document.uri });
+            cacheKey = `${document.uri.toString()}:${vueIndex.hash}:${manualBuild ? 'manual' : 'cache'}`;
+            if (!manualBuild && this._lastParsedUri === cacheKey) {
+                return this._lastVariables;
             }
+            const variables = this.buildVariableItems(vueIndex);
+            this._lastParsedUri = cacheKey;
+            this._lastVariables = variables;
+            return variables;
         }
         catch (e) {
-            console.error('[VariableIndexWebview] Parse error:', e);
-        }
-        if (results.length === 0) {
-            console.log('[VariableIndexWebview] ? 解析失败，parseResult 为空');
+            console.error('[VariableIndexWebview] collect error:', e);
             return [];
         }
-        const totals = results.reduce((acc, item) => {
-            acc.symbols += item.result.symbols.length;
-            acc.variables += item.result.variables.size;
-            acc.functions += item.result.functions.size;
-            acc.classes += item.result.classes.size;
-            acc.thisReferences += item.result.thisReferences.size;
-            return acc;
-        }, { symbols: 0, variables: 0, functions: 0, classes: 0, thisReferences: 0 });
-        console.log('[VariableIndexWebview] ?? 解析结果:', totals);
-        const variables = this.buildVariableItems(results);
-        if (variables.length === 0) {
-            console.log('[VariableIndexWebview] ? 完全没有找到变量或函数');
+    }
+    getVueIndexForDocument(document, manualBuild) {
+        if (document.languageId === 'html') {
+            return (0, parseDocument_1.resolveVueIndexForHtml)(document, manualBuild);
         }
-        else {
-            console.log(`[VariableIndexWebview] ? 找到 ${variables.length} 个变量/函数`);
+        if (document.languageId === 'javascript' || document.languageId === 'typescript'
+            || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact'
+            || document.languageId === 'vue') {
+            return manualBuild
+                ? (0, parseDocument_1.buildVueIndexForContent)(document.getText(), document.uri, 0)
+                : (0, parseDocument_1.getCachedVueIndex)(document.uri);
         }
-        this._lastParsedUri = cacheKey;
-        this._lastVariables = variables;
-        return variables;
+        return null;
     }
     /**
      * 生成变量列表
      */
-    buildVariableItems(results) {
-        const hasThisReferences = results.some(item => item.result.thisReferences.size > 0);
+    buildVariableItems(index) {
         const variables = [];
         const seen = new Set();
         const pushItem = (name, type, line, uri) => {
@@ -57391,30 +57084,12 @@ class VariableIndexWebviewProvider {
                 uri: uri.toString()
             });
         };
-        if (hasThisReferences) {
-            results.forEach(item => {
-                item.result.thisReferences.forEach((symbol, name) => {
-                    let type = 'data';
-                    if (symbol.kind === jsSymbolParser_1.SymbolType.Method) {
-                        type = 'method';
-                    }
-                    else if (symbol.kind === jsSymbolParser_1.SymbolType.Property) {
-                        type = 'data';
-                    }
-                    pushItem(name, type, symbol.range.start.line + 1, item.uri);
-                });
-            });
-        }
-        else {
-            results.forEach(item => {
-                item.result.variables.forEach((symbol, name) => {
-                    pushItem(name, 'data', symbol.range.start.line + 1, item.uri);
-                });
-                item.result.functions.forEach((symbol, name) => {
-                    pushItem(name, 'method', symbol.range.start.line + 1, item.uri);
-                });
-            });
-        }
+        index.data.forEach((loc, name) => pushItem(name, 'data', loc.range.start.line + 1, loc.uri));
+        index.mixinData.forEach((loc, name) => pushItem(name, 'data', loc.range.start.line + 1, loc.uri));
+        index.computed.forEach((loc, name) => pushItem(name, 'computed', loc.range.start.line + 1, loc.uri));
+        index.mixinComputed.forEach((loc, name) => pushItem(name, 'computed', loc.range.start.line + 1, loc.uri));
+        index.methods.forEach((loc, name) => pushItem(name, 'method', loc.range.start.line + 1, loc.uri));
+        index.mixinMethods.forEach((loc, name) => pushItem(name, 'method', loc.range.start.line + 1, loc.uri));
         variables.sort((a, b) => {
             const uriCompare = a.uri.localeCompare(b.uri);
             if (uriCompare !== 0) {
@@ -57423,62 +57098,6 @@ class VariableIndexWebviewProvider {
             return a.line - b.line;
         });
         return variables;
-    }
-    /**
-     * 提取内联脚本（支持多个 script 标签，合并所有内容）
-     */
-    extractInlineScript(htmlContent) {
-        const lines = htmlContent.split('\n');
-        const allScripts = [];
-        let scriptStartLine = -1;
-        let inScript = false;
-        let scriptContent = [];
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            // 检测 script 开始标签（排除外部引用）
-            if (/<script[^>]*>/i.test(line) && !line.includes('src=')) {
-                inScript = true;
-                scriptStartLine = i;
-                // 单行 script
-                const singleLineMatch = /<script[^>]*>([\s\S]*?)<\/script>/i.exec(line);
-                if (singleLineMatch) {
-                    allScripts.push({ content: singleLineMatch[1], startLine: i });
-                    inScript = false;
-                    continue;
-                }
-                continue;
-            }
-            // 检测 script 结束标签
-            if (inScript && /<\/script>/i.test(line)) {
-                if (scriptContent.length > 0) {
-                    allScripts.push({
-                        content: scriptContent.join('\n'),
-                        startLine: scriptStartLine + 1
-                    });
-                }
-                inScript = false;
-                scriptContent = [];
-                scriptStartLine = -1;
-                continue;
-            }
-            // 收集 script 内容
-            if (inScript && scriptStartLine !== i) {
-                scriptContent.push(line);
-            }
-        }
-        if (allScripts.length === 0) {
-            return null;
-        }
-        // ✅ 策略1: 找到包含 'new Vue' 的 script
-        for (const script of allScripts) {
-            if (script.content.includes('new Vue')) {
-                console.log('[VariableIndexWebview] ✅ 找到包含 new Vue 的 script 标签');
-                return script;
-            }
-        }
-        // ✅ 策略2: 返回最后一个 script（Vue 实例通常在最后）
-        console.log(`[VariableIndexWebview] ⚠️ 未找到 new Vue，返回最后一个 script（共 ${allScripts.length} 个）`);
-        return allScripts[allScripts.length - 1];
     }
     /**
      * 跳转到定义
@@ -57522,7 +57141,7 @@ class VariableIndexWebviewProvider {
     <div class="header">
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="🔍 搜索变量..." />
-            <button id="refreshBtn" title="刷新">🔄</button>
+            <button id="refreshBtn" title="手动构建/刷新索引">🔄</button>
         </div>
         <div class="stats" id="stats">加载中...</div>
     </div>
@@ -57550,7 +57169,7 @@ class VariableIndexWebviewProvider {
     
     <div class="empty-state" id="emptyState" style="display: none;">
         <p>📂 未找到 Vue 变量定义</p>
-        <p class="hint">打开包含 Vue 实例的文件</p>
+        <p class="hint">点击刷新按钮手动构建当前文件索引</p>
     </div>
     
     <script src="${scriptUri}"></script>
@@ -57565,7 +57184,7 @@ __decorate([
 
 
 /***/ }),
-/* 212 */
+/* 208 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57608,7 +57227,7 @@ exports.DiagnosticsWebviewProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const parseDocument_1 = __webpack_require__(7);
 const templateIndexer_1 = __webpack_require__(181);
-const cacheManager_1 = __webpack_require__(196);
+const cacheManager_1 = __webpack_require__(192);
 class DiagnosticsWebviewProvider {
     static { this.viewType = 'leidong-tools.diagnosticsWebview'; }
     constructor(extensionUri) {
@@ -57708,7 +57327,7 @@ exports.DiagnosticsWebviewProvider = DiagnosticsWebviewProvider;
 
 
 /***/ }),
-/* 213 */
+/* 209 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57823,7 +57442,7 @@ exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
 
 
 /***/ }),
-/* 214 */
+/* 210 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57862,36 +57481,843 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.registerIndexLifecycle = registerIndexLifecycle;
-const templateIndexer_1 = __webpack_require__(181);
-const parseDocument_1 = __webpack_require__(7);
+exports.GamePanel = exports.GameSidebarProvider = void 0;
+/**
+ * 游戏面板 Webview Provider - 轻量级远程加载器
+ *
+ * 设计理念：
+ *   扩展端只是一个「浏览器壳」
+ *   所有游戏页面、逻辑、资源都由服务端提供
+ *   更新游戏只需部署服务器，无需重新发布扩展
+ */
 const vscode = __importStar(__webpack_require__(2));
-/** 管理索引的生命周期：仅在文档打开或可见时构建索引；文档隐藏或关闭时移除索引 */
-function registerIndexLifecycle(context) {
-    const disposables = [];
-    // watch for config change
-    disposables.push(vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('leidong-tools.maxIndexEntries')) {
-            (0, parseDocument_1.recreateVueIndexCache)();
+const gameTypes_1 = __webpack_require__(211);
+const playerIdentity_1 = __webpack_require__(212);
+/**
+ * 游戏侧边栏 - 显示服务器连接和游戏入口
+ */
+class GameSidebarProvider {
+    static { this.viewType = 'leidong-tools.gameSidebar'; }
+    constructor(_extensionUri) {
+        this._extensionUri = _extensionUri;
+        const config = vscode.workspace.getConfiguration('leidong-tools');
+        this._serverUrl = config.get('gameServerUrl', gameTypes_1.DEFAULT_SERVER_CONFIG.httpUrl);
+    }
+    resolveWebviewView(webviewView, _context, _token) {
+        this._view = webviewView;
+        webviewView.webview.options = {
+            enableScripts: true,
+            localResourceRoots: [this._extensionUri],
+        };
+        webviewView.webview.html = this._getHtml();
+        // 处理来自 webview 的消息
+        webviewView.webview.onDidReceiveMessage(async (message) => {
+            switch (message.command) {
+                case 'openGame':
+                    GamePanel.createOrShow(this._extensionUri, message.serverUrl || this._serverUrl);
+                    break;
+                case 'updateServerUrl':
+                    this._serverUrl = message.serverUrl;
+                    break;
+                case 'checkServer': {
+                    const ok = await this._checkServer(message.serverUrl || this._serverUrl);
+                    this._view?.webview.postMessage({ command: 'serverStatus', online: ok });
+                    break;
+                }
+                case 'getPlayerInfo': {
+                    const nickname = (0, playerIdentity_1.getPlayerNickname)() || '未设置';
+                    const uid = (0, playerIdentity_1.getPlayerUid)();
+                    const deviceHash = (0, playerIdentity_1.getDeviceHash)();
+                    this._view?.webview.postMessage({ command: 'playerInfo', nickname, uid, deviceHash });
+                    break;
+                }
+                case 'changeNickname': {
+                    const newName = await (0, playerIdentity_1.changePlayerNickname)();
+                    if (newName) {
+                        this._view?.webview.postMessage({ command: 'playerInfo', nickname: newName, uid: (0, playerIdentity_1.getPlayerUid)() });
+                    }
+                    break;
+                }
+            }
+        });
+    }
+    /** 检查服务器是否在线 */
+    async _checkServer(url) {
+        try {
+            const http = __webpack_require__(215);
+            return new Promise((resolve) => {
+                const req = http.get(`${url}/api/status`, (res) => {
+                    resolve(res.statusCode === 200);
+                });
+                req.on('error', () => resolve(false));
+                req.setTimeout(3000, () => { req.destroy(); resolve(false); });
+            });
         }
-        if (e.affectsConfiguration('leidong-tools.maxTemplateIndexEntries')) {
-            (0, templateIndexer_1.recreateTemplateIndexCache)();
+        catch {
+            return false;
         }
-    }));
-    disposables.push(vscode.workspace.onDidCloseTextDocument((doc) => {
-        // 关闭文件时清理缓存
-        (0, templateIndexer_1.removeTemplateIndex)(doc);
-        (0, parseDocument_1.removeVueIndexForUri)(doc.uri);
-    }));
-    // 定期修剪长时间未访问的缓存（每 5 分钟，最长保留 30 分钟）
-    const pruneInterval = setInterval(() => { (0, templateIndexer_1.pruneTemplateIndex)(); (0, parseDocument_1.pruneVueIndexCache)(1000 * 60 * 30); }, 1000 * 60 * 5);
-    context.subscriptions.push({ dispose: () => clearInterval(pruneInterval) });
-    disposables.forEach(d => context.subscriptions.push(d));
+    }
+    _getHtml() {
+        return /* html */ `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background: var(--vscode-sideBar-background);
+            padding: 10px;
+        }
+        .section { margin-bottom: 14px; }
+        .section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--vscode-sideBarSectionHeader-foreground);
+            margin-bottom: 6px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 12px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            color: var(--vscode-button-foreground);
+            background: var(--vscode-button-background);
+            width: 100%;
+            justify-content: center;
+            margin-bottom: 4px;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: var(--vscode-button-hoverBackground); }
+        .btn.secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+        input {
+            width: 100%;
+            padding: 5px 8px;
+            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border-radius: 3px;
+            margin-bottom: 6px;
+            font-size: 12px;
+            outline: none;
+        }
+        input:focus { border-color: var(--vscode-focusBorder); }
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            transition: background 0.3s;
+        }
+        .status-dot.online { background: #4caf50; }
+        .status-dot.offline { background: #f44336; }
+        .status-dot.checking { background: #ff9800; animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: 0.3; } }
+        .tip {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 8px;
+            padding: 8px;
+            background: var(--vscode-editor-background);
+            border-radius: 4px;
+            border: 1px solid var(--vscode-panel-border);
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <!-- 玩家信息 -->
+    <div class="section">
+        <div class="section-title">👤 玩家信息</div>
+        <div class="status-row" style="justify-content:space-between">
+            <span>昵称：<strong id="nicknameDisplay">加载中...</strong></span>
+            <span style="font-size:11px;cursor:pointer;color:var(--vscode-textLink-foreground)" onclick="changeNickname()">✏️ 修改</span>
+        </div>
+        <div style="font-size:11px;color:var(--vscode-descriptionForeground);margin-top:-4px">UID: <code id="uidDisplay" style="font-size:10px">-</code></div>
+    </div>
+
+    <!-- 服务器配置 -->
+    <div class="section">
+        <div class="section-title">🌐 游戏服务器</div>
+        <div class="status-row">
+            <span class="status-dot offline" id="statusDot"></span>
+            <span id="statusText">未检测</span>
+        </div>
+        <input type="text" id="serverUrl" value="${this._serverUrl}" placeholder="http://gserver.srliforever.ltd" />
+        <button class="btn secondary" onclick="checkServer()">🔍 检测服务器</button>
+        <div id="serverGuide" class="tip" style="display:none;margin-top:4px;border-color:var(--vscode-editorWarning-foreground)">
+            ⚠️ 服务器未启动，请在终端运行：<br>
+            <code style="font-size:11px">cd server && php start.php --dev</code><br>
+            <span style="font-size:10px;opacity:0.7">将在 <span id="retryCountdown">30</span>s 后自动重试</span>
+        </div>
+    </div>
+
+    <!-- 进入游戏 -->
+    <div class="section">
+        <div class="section-title">🎮 小游戏</div>
+        <button class="btn" onclick="openGame()">🚀 打开游戏大厅</button>
+    </div>
+
+    <div class="tip">
+        💡 所有游戏在服务端运行，扩展只是浏览器壳。<br>
+        新游戏上线只需更新服务器，无需更新扩展。
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let retryTimer = null;
+        let retrySeconds = 0;
+
+        function getServerUrl() {
+            return document.getElementById('serverUrl').value.replace(/\\/+$/, '');
+        }
+
+        function checkServer() {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+            dot.className = 'status-dot checking';
+            text.textContent = '检测中...';
+            stopRetry();
+            vscode.postMessage({ command: 'checkServer', serverUrl: getServerUrl() });
+        }
+
+        function openGame() {
+            const url = getServerUrl();
+            vscode.postMessage({ command: 'updateServerUrl', serverUrl: url });
+            vscode.postMessage({ command: 'openGame', serverUrl: url });
+        }
+
+        function changeNickname() {
+            vscode.postMessage({ command: 'changeNickname' });
+        }
+
+        function startRetry() {
+            stopRetry();
+            retrySeconds = 30;
+            const guide = document.getElementById('serverGuide');
+            const countdown = document.getElementById('retryCountdown');
+            if (guide) guide.style.display = 'block';
+            retryTimer = setInterval(() => {
+                retrySeconds--;
+                if (countdown) countdown.textContent = retrySeconds;
+                if (retrySeconds <= 0) {
+                    checkServer();
+                }
+            }, 1000);
+        }
+
+        function stopRetry() {
+            if (retryTimer) clearInterval(retryTimer);
+            retryTimer = null;
+            const guide = document.getElementById('serverGuide');
+            if (guide) guide.style.display = 'none';
+        }
+
+        // 接收消息
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+            if (msg.command === 'serverStatus') {
+                const dot = document.getElementById('statusDot');
+                const text = document.getElementById('statusText');
+                dot.className = 'status-dot ' + (msg.online ? 'online' : 'offline');
+                text.textContent = msg.online ? '✅ 在线' : '❌ 离线';
+                if (msg.online) {
+                    stopRetry();
+                } else {
+                    startRetry();
+                }
+            }
+            if (msg.command === 'playerInfo') {
+                document.getElementById('nicknameDisplay').textContent = msg.nickname || '-';
+                document.getElementById('uidDisplay').textContent = msg.uid || '-';
+            }
+        });
+
+        // 初始化：获取玩家信息 + 检测服务器
+        vscode.postMessage({ command: 'getPlayerInfo' });
+        setTimeout(checkServer, 500);
+    </script>
+</body>
+</html>`;
+    }
+}
+exports.GameSidebarProvider = GameSidebarProvider;
+/**
+ * 全屏游戏面板 - 加载服务端页面
+ *
+ * 这是一个极简的 WebView 容器：
+ *   1. 创建一个允许脚本和外部资源的 WebView
+ *   2. 生成一个 iframe 加载服务器页面
+ *   3. 通过 URL 参数传递 VS Code 主题等信息
+ *   4. 就这么多，所有游戏逻辑都在服务端
+ */
+class GamePanel {
+    static { this.viewType = 'leidong-tools.gamePanel'; }
+    constructor(panel, serverUrl) {
+        this._panel = panel;
+        this._serverUrl = serverUrl;
+        this._panel.webview.html = this._getHtml();
+        this._panel.onDidDispose(() => {
+            GamePanel.currentPanel = undefined;
+        });
+        // 处理来自 webview 的消息
+        this._panel.webview.onDidReceiveMessage(async (msg) => {
+            switch (msg.command) {
+                case 'showInfo':
+                    vscode.window.showInformationMessage(msg.text || '');
+                    break;
+                case 'showError':
+                    vscode.window.showErrorMessage(msg.text || '');
+                    break;
+                case 'copyToClipboard':
+                    vscode.env.clipboard.writeText(msg.text || '');
+                    vscode.window.showInformationMessage('已复制到剪贴板');
+                    break;
+                case 'changeNickname': {
+                    const newName = await (0, playerIdentity_1.changePlayerNickname)();
+                    if (newName) {
+                        // 通知 iframe 刷新昵称
+                        this._panel.webview.postMessage({
+                            command: 'nicknameChanged',
+                            nickname: newName,
+                            uid: (0, playerIdentity_1.getPlayerUid)(),
+                        });
+                    }
+                    break;
+                }
+                case 'uidConflict': {
+                    // 服务端检测到设备码冲突，缓存新uid
+                    if (msg.newUid) {
+                        await (0, playerIdentity_1.handleUidConflict)(msg.newUid);
+                    }
+                    break;
+                }
+            }
+        });
+    }
+    static createOrShow(extensionUri, serverUrl) {
+        const column = vscode.window.activeTextEditor
+            ? vscode.window.activeTextEditor.viewColumn
+            : undefined;
+        if (GamePanel.currentPanel) {
+            GamePanel.currentPanel._panel.reveal(column);
+            return;
+        }
+        const panel = vscode.window.createWebviewPanel(GamePanel.viewType, '🎮 小游戏大厅', column || vscode.ViewColumn.One, {
+            enableScripts: true,
+            retainContextWhenHidden: true,
+        });
+        GamePanel.currentPanel = new GamePanel(panel, serverUrl);
+    }
+    _getHtml() {
+        // 收集 VS Code 主题信息传递给服务端
+        const theme = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark
+            ? 'dark' : vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Light
+            ? 'light' : 'hc';
+        const uid = (0, playerIdentity_1.getPlayerUid)();
+        const deviceHash = (0, playerIdentity_1.getDeviceHash)();
+        const nickname = encodeURIComponent((0, playerIdentity_1.getPlayerNickname)() || '未设置昵称');
+        const iframeSrc = `${this._serverUrl}?theme=${theme}&playerName=${nickname}&uid=${uid}&deviceHash=${deviceHash}&source=vscode`;
+        return /* html */ `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; }
+        body {
+            background: var(--vscode-editor-background, #1e1e1e);
+            display: flex;
+            flex-direction: column;
+        }
+        .toolbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 12px;
+            background: var(--vscode-titleBar-activeBackground, #333);
+            border-bottom: 1px solid var(--vscode-panel-border, #555);
+            height: 32px;
+            flex-shrink: 0;
+        }
+        .toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--vscode-titleBar-activeForeground, #ccc);
+        }
+        .toolbar-right {
+            display: flex;
+            gap: 6px;
+        }
+        .tool-btn {
+            background: none;
+            border: 1px solid var(--vscode-button-secondaryBackground, #555);
+            color: var(--vscode-foreground, #ccc);
+            padding: 2px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .tool-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground, #444);
+        }
+        #gameFrame {
+            flex: 1;
+            width: 100%;
+            border: none;
+            background: var(--vscode-editor-background, #1e1e1e);
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground, #888);
+            flex-direction: column;
+            gap: 12px;
+        }
+        .loading .spinner {
+            width: 32px; height: 32px;
+            border: 3px solid var(--vscode-panel-border, #555);
+            border-top: 3px solid var(--vscode-focusBorder, #007acc);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .error-page {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            gap: 12px;
+            text-align: center;
+            padding: 20px;
+        }
+        .error-page .err-icon { font-size: 48px; }
+        .error-page .err-title { font-size: 18px; font-weight: 600; }
+        .error-page .err-detail {
+            font-size: 13px;
+            color: var(--vscode-descriptionForeground, #888);
+            max-width: 400px;
+        }
+        .error-page .btn {
+            padding: 8px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--vscode-button-foreground, #fff);
+            background: var(--vscode-button-background, #0e639c);
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <span>🎮</span>
+            <span>游戏大厅</span>
+            <span style="opacity:0.5">|</span>
+            <span id="serverAddr" style="opacity:0.6">${this._serverUrl}</span>
+        </div>
+        <div class="toolbar-right">
+            <button class="tool-btn" onclick="reload()">🔄 刷新</button>
+            <button class="tool-btn" onclick="copyLink()">📋 复制链接</button>
+        </div>
+    </div>
+
+    <div id="loadingView" class="loading">
+        <div class="spinner"></div>
+        <span>正在连接游戏服务器...</span>
+    </div>
+
+    <div id="errorView" class="error-page">
+        <div class="err-icon">😵</div>
+        <div class="err-title">无法连接到游戏服务器</div>
+        <div class="err-detail">
+            请确认服务器已启动：<br>
+            <code style="color:var(--vscode-textLink-foreground)">${this._serverUrl}</code>
+        </div>
+        <div style="margin-top:16px;font-size:12px;text-align:left;max-width:380px;line-height:1.8;color:var(--vscode-descriptionForeground,#888)">
+            <div style="font-weight:600;margin-bottom:6px;color:var(--vscode-foreground,#ccc)">📋 启动指南：</div>
+            <div>1. 打开终端，进入服务器目录</div>
+            <div>2. 运行 <code style="background:var(--vscode-textCodeBlock-background,#2d2d2d);padding:2px 6px;border-radius:3px">composer install</code>（首次）</div>
+            <div>3. 运行 <code style="background:var(--vscode-textCodeBlock-background,#2d2d2d);padding:2px 6px;border-radius:3px">php start.php --dev</code></div>
+            <div>4. 看到 "📡 服务器已就绪" 后点击下方重试</div>
+        </div>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <button class="btn" onclick="reload()">🔄 重试连接</button>
+            <span id="reconnectInfo" style="font-size:11px;color:var(--vscode-descriptionForeground,#888)"></span>
+        </div>
+    </div>
+
+    <iframe id="gameFrame" style="display:none"
+        src="${iframeSrc}"
+        sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+        allow="clipboard-write"
+    ></iframe>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        const frame = document.getElementById('gameFrame');
+        const loading = document.getElementById('loadingView');
+        const errorView = document.getElementById('errorView');
+        const reconnectInfo = document.getElementById('reconnectInfo');
+
+        let loadTimeout;
+        let reconnectTimer;
+        let reconnectAttempt = 0;
+        const MAX_RECONNECT = 30; // 最多自动重试30次
+        const RECONNECT_INTERVALS = [5, 10, 15, 30]; // 重试间隔递增（秒）
+
+        function showFrame() {
+            clearTimeout(loadTimeout);
+            stopReconnect();
+            loading.style.display = 'none';
+            errorView.style.display = 'none';
+            frame.style.display = 'block';
+        }
+
+        function showError() {
+            clearTimeout(loadTimeout);
+            loading.style.display = 'none';
+            frame.style.display = 'none';
+            errorView.style.display = 'flex';
+            scheduleReconnect();
+        }
+
+        function stopReconnect() {
+            clearInterval(reconnectTimer);
+            reconnectTimer = null;
+            reconnectAttempt = 0;
+        }
+
+        function scheduleReconnect() {
+            if (reconnectTimer) return;
+            reconnectAttempt++;
+            if (reconnectAttempt > MAX_RECONNECT) {
+                reconnectInfo.textContent = '已停止自动重试，请手动重试';
+                return;
+            }
+            const idx = Math.min(reconnectAttempt - 1, RECONNECT_INTERVALS.length - 1);
+            let countdown = RECONNECT_INTERVALS[idx];
+            reconnectInfo.textContent = countdown + 's 后自动重试 (' + reconnectAttempt + '/' + MAX_RECONNECT + ')';
+            reconnectTimer = setInterval(() => {
+                countdown--;
+                if (countdown <= 0) {
+                    clearInterval(reconnectTimer);
+                    reconnectTimer = null;
+                    reconnectInfo.textContent = '正在重试...';
+                    reload();
+                } else {
+                    reconnectInfo.textContent = countdown + 's 后自动重试 (' + reconnectAttempt + '/' + MAX_RECONNECT + ')';
+                }
+            }, 1000);
+        }
+
+        frame.onload = () => showFrame();
+        frame.onerror = () => showError();
+
+        // 超时检测
+        loadTimeout = setTimeout(() => {
+            if (frame.style.display === 'none') {
+                showError();
+            }
+        }, 8000);
+
+        function reload() {
+            loading.style.display = 'flex';
+            errorView.style.display = 'none';
+            frame.style.display = 'none';
+            frame.src = frame.src;
+            loadTimeout = setTimeout(() => {
+                if (frame.style.display === 'none') showError();
+            }, 8000);
+        }
+
+        function copyLink() {
+            vscode.postMessage({ command: 'copyToClipboard', text: '${iframeSrc}' });
+        }
+
+        // 监听来自 iframe 的消息（服务端可以通过 postMessage 与扩展通信）
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+            if (msg && msg.target === 'vscode') {
+                vscode.postMessage(msg);
+            }
+        });
+    </script>
+</body>
+</html>`;
+    }
+}
+exports.GamePanel = GamePanel;
+
+
+/***/ }),
+/* 211 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+/**
+ * 游戏模块类型定义 - 极简版
+ *
+ * 设计理念：所有游戏逻辑和前端代码都在服务端
+ * 扩展端只是一个「浏览器壳」，通过 WebView 加载服务器页面
+ * 更新游戏只需部署服务器，无需重新发布扩展
+ */
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_SERVER_CONFIG = void 0;
+/** 默认服务器配置 */
+exports.DEFAULT_SERVER_CONFIG = {
+    httpUrl: 'http://gserver.srliforever.ltd',
+    wsUrl: 'ws://gserver.srliforever.ltd/ws',
+};
+
+
+/***/ }),
+/* 212 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.initPlayerIdentity = initPlayerIdentity;
+exports.getDeviceHash = getDeviceHash;
+exports.getPlayerUid = getPlayerUid;
+exports.handleUidConflict = handleUidConflict;
+exports.getPlayerNickname = getPlayerNickname;
+exports.setPlayerNickname = setPlayerNickname;
+exports.ensurePlayerNickname = ensurePlayerNickname;
+exports.changePlayerNickname = changePlayerNickname;
+/**
+ * 玩家身份管理
+ *
+ * - uid: 基于系统关键信息（machineId + username + homedir）加密生成，
+ *        确保同一台机器上始终是同一个玩家，即使修改昵称也不变
+ * - 如果服务端检测到设备码冲突（两台机器生成了相同哈希），
+ *   服务端会分配一个新 uid，客户端缓存该新 uid 以保持后续一致
+ * - nickname: 用户自定义昵称，首次使用时弹窗输入，缓存在 globalState 中
+ */
+const vscode = __importStar(__webpack_require__(2));
+const os = __importStar(__webpack_require__(213));
+const crypto = __importStar(__webpack_require__(214));
+const NICKNAME_KEY = 'leidong-games.playerNickname';
+const UID_OVERRIDE_KEY = 'leidong-games.uidOverride';
+/** 全局 context 引用，由 activate 时注入 */
+let _context;
+/**
+ * 初始化（必须在 activate 时调用一次）
+ */
+function initPlayerIdentity(context) {
+    _context = context;
+}
+/**
+ * 生成原始设备哈希（同一台机器始终相同）
+ *
+ * 取以下系统信息拼接后做 SHA-256：
+ *   - vscode.env.machineId（VS Code 为每台机器分配的唯一ID）
+ *   - os.hostname()
+ *   - os.userInfo().username
+ *   - os.homedir()
+ */
+function getDeviceHash() {
+    const raw = [
+        vscode.env.machineId,
+        os.hostname(),
+        os.userInfo().username,
+        os.homedir(),
+    ].join('|');
+    return crypto
+        .createHash('sha256')
+        .update(raw)
+        .digest('hex')
+        .substring(0, 16);
+}
+/**
+ * 获取玩家 UID
+ *
+ * 优先返回服务端分配的 uid（冲突后的新uid），
+ * 否则返回本地计算的设备哈希
+ */
+function getPlayerUid() {
+    const override = _context?.globalState.get(UID_OVERRIDE_KEY);
+    if (override) {
+        return override;
+    }
+    return getDeviceHash();
+}
+/**
+ * 处理服务端返回的 uid 冲突
+ *
+ * 当服务端检测到两台机器生成了相同的设备码时，
+ * 会为后注册的机器分配一个新 uid。
+ * 客户端缓存这个新 uid，后续始终使用它。
+ */
+async function handleUidConflict(newUid) {
+    if (_context) {
+        await _context.globalState.update(UID_OVERRIDE_KEY, newUid);
+        vscode.window.showWarningMessage(`设备码冲突已自动处理，你的新设备ID: ${newUid.substring(0, 8)}...`);
+    }
+}
+/**
+ * 获取缓存的昵称（无则返回 undefined）
+ */
+function getPlayerNickname() {
+    return _context?.globalState.get(NICKNAME_KEY);
+}
+/**
+ * 保存昵称到缓存
+ */
+async function setPlayerNickname(nickname) {
+    if (_context) {
+        await _context.globalState.update(NICKNAME_KEY, nickname);
+    }
+}
+/**
+ * 确保玩家有昵称
+ *
+ * 如果缓存中没有昵称，弹出输入框让用户填写
+ * 返回最终昵称；用户取消则返回 undefined
+ */
+async function ensurePlayerNickname() {
+    let nickname = getPlayerNickname();
+    if (nickname) {
+        return nickname;
+    }
+    // 首次使用，弹窗输入
+    nickname = await vscode.window.showInputBox({
+        title: '🎮 设置游戏昵称',
+        prompt: '给自己取一个响亮的名字吧！（之后可以在大厅右上角修改）',
+        placeHolder: '例如：超级玩家、剑圣归来...',
+        validateInput: (value) => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return '昵称不能为空';
+            }
+            if (trimmed.length > 20) {
+                return '昵称最多 20 个字符';
+            }
+            return null;
+        },
+    });
+    if (nickname) {
+        nickname = nickname.trim();
+        await setPlayerNickname(nickname);
+        return nickname;
+    }
+    return undefined;
+}
+/**
+ * 弹窗修改昵称
+ */
+async function changePlayerNickname() {
+    const current = getPlayerNickname() || '';
+    const nickname = await vscode.window.showInputBox({
+        title: '🎮 修改游戏昵称',
+        prompt: '输入新昵称',
+        value: current,
+        placeHolder: '新昵称...',
+        validateInput: (value) => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+                return '昵称不能为空';
+            }
+            if (trimmed.length > 20) {
+                return '昵称最多 20 个字符';
+            }
+            return null;
+        },
+    });
+    if (nickname) {
+        const trimmed = nickname.trim();
+        await setPlayerNickname(trimmed);
+        return trimmed;
+    }
+    return undefined;
 }
 
+
+/***/ }),
+/* 213 */
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("os");
+
+/***/ }),
+/* 214 */
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("crypto");
 
 /***/ }),
 /* 215 */
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("http");
+
+/***/ }),
+/* 216 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57930,380 +58356,108 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.initVueDiagnostics = initVueDiagnostics;
+exports.GameManager = void 0;
 /**
- * Vue 诊断提供器
- * 功能：
- * 1. 未使用变量检测：data/methods/computed 中定义但模板未引用的变量
- * 2. 模板表达式诊断：{{ expr }} 和 :prop="expr" 中引用了不存在的变量
+ * 游戏管理器 - 极简版
  *
- * 可通过设置 leidong-tools.enableVueDiagnostics 关闭
+ * 设计理念：
+ *   所有游戏逻辑、WebSocket 通信、前端页面都在服务端
+ *   扩展端 GameManager 只负责：
+ *   1. 管理服务器地址配置
+ *   2. 检测服务器状态
+ *   3. 打开/关闭游戏面板
+ *
+ *   NO WebSocket, NO 房间管理, NO 游戏状态 —— 全在服务端
  */
 const vscode = __importStar(__webpack_require__(2));
-const fs = __importStar(__webpack_require__(176));
-const parseDocument_1 = __webpack_require__(7);
-const DIAGNOSTICS_SOURCE = '雷动三千';
-let diagnosticCollection;
-let debounceTimer = null;
-function isEnabled() {
-    try {
-        return vscode.workspace.getConfiguration('leidong-tools').get('enableVueDiagnostics', true) === true;
+const gameTypes_1 = __webpack_require__(211);
+class GameManager {
+    constructor() {
+        const vsConfig = vscode.workspace.getConfiguration('leidong-tools');
+        this._config = {
+            httpUrl: vsConfig.get('gameServerUrl', gameTypes_1.DEFAULT_SERVER_CONFIG.httpUrl),
+            wsUrl: vsConfig.get('gameServerWsUrl', gameTypes_1.DEFAULT_SERVER_CONFIG.wsUrl),
+        };
     }
-    catch {
-        return true;
-    }
-}
-function shouldLog() {
-    try {
-        return vscode.workspace.getConfiguration('leidong-tools').get('indexLogging', true) === true;
-    }
-    catch {
-        return true;
-    }
-}
-/**
- * 从 HTML 模板中提取所有被引用的标识符
- */
-function extractTemplateIdentifiers(htmlText) {
-    const identifiers = new Set();
-    // 1. {{ expr }} 中的标识符
-    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
-    let match;
-    while ((match = mustacheRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
-    }
-    // 通用属性值提取正则（同时支持双引号和单引号）
-    const attrVal = `(?:"([^"]+)"|'([^']+)')`;
-    // 2. v-bind:xxx="expr" / :xxx="expr"
-    const bindRegex = new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*${attrVal}`, 'g');
-    while ((match = bindRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-    // 3. v-on:xxx="expr" / @xxx="expr"
-    const onRegex = new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*${attrVal}`, 'g');
-    while ((match = onRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-    // 4. v-if/v-else-if/v-show="expr"
-    const condRegex = new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*${attrVal}`, 'g');
-    while ((match = condRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-    // 5. v-for="item in list" — 提取 list
-    const forRegex = new RegExp(`v-for\\s*=\\s*(?:"[^"]*(?:in|of)\\s+([^"]+)"|'[^']*(?:in|of)\\s+([^']+)')`, 'g');
-    while ((match = forRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-    // 6. v-model="xxx"
-    const modelRegex = new RegExp(`v-model\\s*=\\s*${attrVal}`, 'g');
-    while ((match = modelRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-    // 7. onclick="xxx" 等原生事件
-    const nativeEventRegex = new RegExp(`\\bon\\w+\\s*=\\s*${attrVal}`, 'gi');
-    while ((match = nativeEventRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-    // 8. | filter 管道
-    const filterRegex = /\|\s*([a-zA-Z_$][\w$]*)/g;
-    while ((match = filterRegex.exec(htmlText)) !== null) {
-        identifiers.add(match[1]);
-    }
-    return identifiers;
-}
-/**
- * 从 JS 表达式中提取标识符（简单版本）
- */
-function extractIdentifiersFromExpr(expr, identifiers) {
-    // 去掉字符串字面量
-    let cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
-    // 去掉箭头函数参数：(a, b) => 或 a =>
-    cleaned = cleaned.replace(/\(([^)]*)\)\s*=>/g, '=>');
-    cleaned = cleaned.replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, '=>');
-    // 提取标识符 (排除关键字)
-    const idRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
-    const keywords = new Set(['true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
-        'new', 'in', 'of', 'if', 'else', 'return', 'var', 'let', 'const', 'function',
-        'this', 'that', 'self', 'vm', 'console', 'window', 'document', 'Math', 'JSON',
-        'Object', 'Array', 'String', 'Number', 'Boolean', 'Date', 'RegExp', 'Error',
-        'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'NaN', 'Infinity',
-        'item', 'index', 'key', 'value', 'event', '$event', 'arguments',
-        'alert', 'confirm', 'prompt', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval']);
-    let m;
-    while ((m = idRegex.exec(cleaned)) !== null) {
-        if (!keywords.has(m[1])) {
-            identifiers.add(m[1]);
+    static getInstance() {
+        if (!GameManager._instance) {
+            GameManager._instance = new GameManager();
         }
+        return GameManager._instance;
     }
-}
-/**
- * 从整个 HTML 文档中一次性收集所有 v-for / slot-scope / v-slot / #xxx 局部变量
- * 返回全局集合（不做作用域精确追踪，避免复杂 DOM 树分析导致误报）
- */
-function collectAllLocalVars(text) {
-    const localVars = new Set();
-    const attrVal = `(?:"([^"]*)"|'([^']*)')`; // 同时支持双引号和单引号
-    // v-for="(item, index) in list" or v-for="item in list"
-    const vForRe = new RegExp(`v-for\\s*=\\s*${attrVal}`, 'g');
-    let m;
-    while ((m = vForRe.exec(text)) !== null) {
-        const val = m[1] || m[2];
-        if (!val) {
-            continue;
-        }
-        const inner = /(?:\(\s*)?([a-zA-Z_$][\w$]*)\s*(?:,\s*([a-zA-Z_$][\w$]*)\s*(?:,\s*([a-zA-Z_$][\w$]*)\s*)?)?\)?\s+(?:in|of)\s/.exec(val);
-        if (inner) {
-            localVars.add(inner[1]);
-            if (inner[2]) {
-                localVars.add(inner[2]);
-            }
-            if (inner[3]) {
-                localVars.add(inner[3]);
-            }
-        }
+    get config() {
+        return this._config;
     }
-    // slot-scope="scope" or slot-scope="{ row, $index }"
-    const slotScopeRe = new RegExp(`slot-scope\\s*=\\s*${attrVal}`, 'g');
-    while ((m = slotScopeRe.exec(text)) !== null) {
-        const val = m[1] || m[2];
-        if (!val) {
-            continue;
-        }
-        const stripped = val.replace(/[{}]/g, '');
-        stripped.split(',').forEach(v => {
-            const name = v.trim().replace(/\s*=.*/, '');
-            if (/^[a-zA-Z_$][\w$]*$/.test(name)) {
-                localVars.add(name);
-            }
-        });
+    get httpUrl() {
+        return this._config.httpUrl;
     }
-    // v-slot:name="slotProps" / v-slot="data" / #default="{ row }"
-    const vSlotRe = new RegExp(`(?:v-slot(?::[\\w-]*)?|#[\\w-]+)\\s*=\\s*${attrVal}`, 'g');
-    while ((m = vSlotRe.exec(text)) !== null) {
-        const val = m[1] || m[2];
-        if (!val) {
-            continue;
-        }
-        const stripped = val.replace(/[{}]/g, '');
-        stripped.split(',').forEach(v => {
-            const name = v.trim().replace(/\s*=.*/, '');
-            if (/^[a-zA-Z_$][\w$]*$/.test(name)) {
-                localVars.add(name);
-            }
-        });
+    /** 更新服务器地址 */
+    setServerUrl(httpUrl) {
+        this._config.httpUrl = httpUrl.replace(/\/+$/, '');
     }
-    return localVars;
-}
-/**
- * 从 JS 内容中提取全局函数声明名（Vue 实例外部的 function xxx() {}）
- */
-function collectGlobalFunctionNames(jsContent) {
-    const names = new Set();
-    // 匹配顶层 function 声明
-    const re = /^function\s+([a-zA-Z_$][\w$]*)\s*\(/gm;
-    let m;
-    while ((m = re.exec(jsContent)) !== null) {
-        names.add(m[1]);
-    }
-    return names;
-}
-/**
- * 获取与 HTML 关联的 JS 内容
- */
-function getAssociatedJsContent(document) {
-    try {
-        const scriptPaths = (0, parseDocument_1.getExternalDevScriptPathsForHtml)(document);
-        if (scriptPaths.length > 0 && fs.existsSync(scriptPaths[0])) {
-            return fs.readFileSync(scriptPaths[0], 'utf8');
-        }
-    }
-    catch { /* ignore */ }
-    return null;
-}
-/**
- * 检测 HTML 文件中的 Vue 诊断问题
- */
-function diagnoseHtmlDocument(document) {
-    const diagnostics = [];
-    const text = document.getText();
-    const vueIndex = (0, parseDocument_1.resolveVueIndexForHtml)(document);
-    if (!vueIndex) {
-        return diagnostics;
-    }
-    const templateIdentifiers = extractTemplateIdentifiers(text);
-    // -- 未使用变量检测 --
-    const checkUnused = (map, category) => {
-        map.forEach((loc, name) => {
-            if (!templateIdentifiers.has(name)) {
-                if (name.startsWith('_') || name.startsWith('$')) {
-                    return;
-                }
-                const range = new vscode.Range(loc.range.start.line, loc.range.start.character, loc.range.start.line, loc.range.start.character + name.length);
-                const diag = new vscode.Diagnostic(range, `"${name}" 在 ${category} 中定义但未在模板中使用`, vscode.DiagnosticSeverity.Hint);
-                diag.source = DIAGNOSTICS_SOURCE;
-                diag.tags = [vscode.DiagnosticTag.Unnecessary];
-                diagnostics.push(diag);
-            }
-        });
-    };
-    checkUnused(vueIndex.data, 'data');
-    checkUnused(vueIndex.methods, 'methods');
-    checkUnused(vueIndex.computed, 'computed');
-    // -- 模板表达式诊断 --
-    // 构建已知标识符集合
-    const knownIdentifiers = new Set();
-    [vueIndex.data, vueIndex.methods, vueIndex.computed, vueIndex.props,
-        vueIndex.filters, vueIndex.mixinData, vueIndex.mixinMethods, vueIndex.mixinComputed]
-        .forEach(m => m.forEach((_loc, name) => knownIdentifiers.add(name)));
-    // 收集全局函数名（Vue 实例外部的 function 声明）
-    const jsContent = getAssociatedJsContent(document);
-    if (jsContent) {
-        collectGlobalFunctionNames(jsContent).forEach(fn => knownIdentifiers.add(fn));
-    }
-    // 一次性收集整个文档的 v-for / slot-scope / v-slot 局部变量
-    const allLocalVars = collectAllLocalVars(text);
-    // 扫描 {{ }} 中的标识符
-    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
-    let match;
-    while ((match = mustacheRegex.exec(text)) !== null) {
-        const exprStart = match.index + 2; // skip {{
-        const expr = match[1];
-        // 去掉字符串字面量
-        let cleaned = expr.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, '');
-        // 去掉箭头函数参数
-        cleaned = cleaned.replace(/\(([^)]*)\)\s*=>/g, '=>');
-        cleaned = cleaned.replace(/\b[a-zA-Z_$][\w$]*\s*=>/g, '=>');
-        const idRegex = /\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b/g;
-        const keywords = new Set(['true', 'false', 'null', 'undefined', 'typeof', 'instanceof',
-            'new', 'in', 'of', 'if', 'else', 'return', 'this', 'that', 'self', 'vm',
-            'console', 'window', 'document', 'Math', 'JSON', 'Object', 'Array', 'String',
-            'Number', 'Boolean', 'Date', 'parseInt', 'parseFloat', 'isNaN', 'NaN', 'Infinity',
-            'item', 'index', 'key', 'value', 'event', '$event', 'arguments',
-            'alert', 'confirm', 'prompt', 'setTimeout', 'setInterval']);
-        let idMatch;
-        while ((idMatch = idRegex.exec(cleaned)) !== null) {
-            const id = idMatch[1];
-            if (keywords.has(id)) {
-                continue;
-            }
-            // 跳过属性访问链中的标识符：.xxx 不应告警
-            const charBefore = idMatch.index > 0 ? cleaned[idMatch.index - 1] : '';
-            if (charBefore === '.') {
-                continue;
-            }
-            // 跳过 v-for / slot-scope 局部变量
-            if (allLocalVars.has(id)) {
-                continue;
-            }
-            if (!knownIdentifiers.has(id)) {
-                const pos = document.positionAt(exprStart + idMatch.index);
-                const range = new vscode.Range(pos.line, pos.character, pos.line, pos.character + id.length);
-                const diag = new vscode.Diagnostic(range, `"${id}" 未在 Vue 实例中定义 (data/props/computed/methods/filters)`, vscode.DiagnosticSeverity.Warning);
-                diag.source = DIAGNOSTICS_SOURCE;
-                diagnostics.push(diag);
-            }
-        }
-    }
-    return diagnostics;
-}
-/**
- * 运行诊断（带 debounce）
- */
-function runDiagnostics(document) {
-    if (!isEnabled()) {
-        diagnosticCollection.delete(document.uri);
-        return;
-    }
-    if (document.languageId !== 'html') {
-        return;
-    }
-    if (debounceTimer) {
-        clearTimeout(debounceTimer);
-    }
-    debounceTimer = setTimeout(() => {
+    /** 检测服务器是否在线 */
+    async checkServer(url) {
+        const target = url || this._config.httpUrl;
         try {
-            const diagnostics = diagnoseHtmlDocument(document);
-            diagnosticCollection.set(document.uri, diagnostics);
-            if (shouldLog()) {
-                console.log(`[vue-diagnostics] ${document.uri.fsPath}: ${diagnostics.length} issues`);
-            }
+            const http = __webpack_require__(215);
+            return new Promise((resolve) => {
+                const req = http.get(`${target}/api/status`, (res) => {
+                    resolve(res.statusCode === 200);
+                });
+                req.on('error', () => resolve(false));
+                req.setTimeout(3000, () => { req.destroy(); resolve(false); });
+            });
         }
-        catch (e) {
-            console.error('[vue-diagnostics] error:', e);
+        catch {
+            return false;
         }
-    }, 2500);
-}
-/**
- * 初始化诊断功能
- */
-function initVueDiagnostics(context) {
-    diagnosticCollection = vscode.languages.createDiagnosticCollection('leidong-vue');
-    context.subscriptions.push(diagnosticCollection);
-    // 文件关闭时清除诊断
-    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument((document) => {
-        diagnosticCollection.delete(document.uri);
-    }));
-    // 配置变更时清除或重新运行
-    context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('leidong-tools.enableVueDiagnostics')) {
-            if (!isEnabled()) {
-                diagnosticCollection.clear();
-            }
-            else {
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    runDiagnostics(editor.document);
-                }
-            }
-        }
-    }));
-    // 初始运行
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-        runDiagnostics(editor.document);
+    }
+    dispose() {
+        // 极简版无需清理资源
     }
 }
+exports.GameManager = GameManager;
 
 
 /***/ }),
-/* 216 */,
-/* 217 */
+/* 217 */,
+/* 218 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("module");
 
 /***/ }),
-/* 218 */
+/* 219 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("url");
 
 /***/ }),
-/* 219 */
+/* 220 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("fs/promises");
 
 /***/ }),
-/* 220 */
+/* 221 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("process");
 
 /***/ }),
-/* 221 */,
-/* 222 */
+/* 222 */,
+/* 223 */
 /***/ ((module) => {
 
 "use strict";
 module.exports = require("assert");
 
 /***/ }),
-/* 223 */
+/* 224 */
 /***/ ((module) => {
 
 "use strict";
@@ -58459,9 +58613,9 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 // Import modular components
 const commands_1 = __webpack_require__(1);
-const providers_1 = __webpack_require__(192);
-const indexManager_1 = __webpack_require__(214);
-const vueDiagnosticsProvider_1 = __webpack_require__(215);
+const providers_1 = __webpack_require__(188);
+const indexManager_1 = __webpack_require__(183);
+const vueDiagnosticsProvider_1 = __webpack_require__(186);
 /**
  * Extension activation function
  */

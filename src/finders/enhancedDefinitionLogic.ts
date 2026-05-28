@@ -8,7 +8,7 @@ import { monitor } from '../monitoring/performanceMonitor';
 import { jsSymbolParser, SymbolInfo, SymbolType } from '../parsers/jsSymbolParser';
 import { 
     resolveVueIndexForHtml, 
-    getOrCreateVueIndexFromContent, 
+    getCachedVueIndexForContent, 
     findDefinitionInIndex, 
     findChainedRootDefinition 
 } from '../parsers/parseDocument';
@@ -149,7 +149,7 @@ export class EnhancedDefinitionLogic {
             }
             
             const content = document.getText();
-            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+            const index = getCachedVueIndexForContent(content, document.uri, 0);
             let target = findDefinitionInIndex(word, index);
             
             if (!target && fullChain) {
@@ -171,7 +171,7 @@ export class EnhancedDefinitionLogic {
             console.error('[enhanced-jump][js][error]', e);
             // 发生错误时降级
             const content = document.getText();
-            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+            const index = getCachedVueIndexForContent(content, document.uri, 0);
             return findDefinitionInIndex(word, index);
         }
 
@@ -251,7 +251,7 @@ export class EnhancedDefinitionLogic {
         try {
             // 解析整个 JS 文件构建 Vue 索引
             const content = document.getText();
-            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+            const index = getCachedVueIndexForContent(content, document.uri, 0);
 
             // 在 Vue 索引中查找定义
             let target = findDefinitionInIndex(word, index);
@@ -423,9 +423,9 @@ export class EnhancedDefinitionLogic {
     private shouldLog(): boolean {
         try {
             return vscode.workspace.getConfiguration('leidong-tools')
-                .get<boolean>('indexLogging', true) === true;
+                .get<boolean>('indexLogging', false) === true;
         } catch {
-            return true;
+            return false;
         }
     }
 }

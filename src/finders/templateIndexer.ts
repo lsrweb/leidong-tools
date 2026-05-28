@@ -28,8 +28,8 @@ function fastHash(str: string): string {
 
 function loggingEnabled(): boolean {
     try {
-        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', true) === true;
-    } catch { return true; }
+        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', false) === true;
+    } catch { return false; }
 }
 
 /**
@@ -167,7 +167,7 @@ export function findTemplateVar(document: vscode.TextDocument, position: vscode.
 
 /** 获取模板中所有 ref="xxx" 的名称列表 */
 export function getTemplateRefs(document: vscode.TextDocument): Map<string, vscode.Location> {
-    const idx = getTemplateIndex(document) || buildAndCacheTemplateIndex(document);
+    const idx = getTemplateIndex(document);
     return idx ? idx.refs : new Map();
 }
 

@@ -7,7 +7,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { CacheItem } from '../types';
-import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathsForHtml, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
+import { parseDocument, resolveVueIndexForHtml, getExternalDevScriptPathsForHtml, getCachedVueIndexForContent } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { inferObjectProperties } from '../helpers/propertyInference';
@@ -303,7 +303,7 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
     private provideEmitEventCompletions(document: vscode.TextDocument): vscode.CompletionList {
         const items: vscode.CompletionItem[] = [];
         const content = document.getText();
-        const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+        const index = getCachedVueIndexForContent(content, document.uri, 0);
         if (index && index.emits.size > 0) {
             index.emits.forEach((_loc, eventName) => {
                 const item = new vscode.CompletionItem(eventName, vscode.CompletionItemKind.Event);
@@ -356,7 +356,7 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
     private provideTemplateLiteralCompletions(document: vscode.TextDocument): vscode.CompletionList | null {
         try {
             const content = document.getText();
-            const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+            const index = getCachedVueIndexForContent(content, document.uri, 0);
             if (!index) { return null; }
 
             const completionItems: vscode.CompletionItem[] = [];
@@ -419,7 +419,7 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
 
         const tagMatch = /<([a-zA-Z0-9-]*)$/.exec(linePrefix);
         const attrMatch = /<[^>]*\s([a-zA-Z0-9-]*)$/.exec(linePrefix);
-        const rootIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+        const rootIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
 
         if (tagMatch) {
             const prefix = tagMatch[1] || '';

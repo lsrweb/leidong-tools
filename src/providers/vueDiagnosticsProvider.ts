@@ -9,8 +9,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
+import { extractIdentifiersFromVueTemplateExpressions } from '../helpers/templateExpressionScanner';
 
 const DIAGNOSTICS_SOURCE = '雷动三千';
 let diagnosticCollection: vscode.DiagnosticCollection;
@@ -24,64 +25,19 @@ function isEnabled(): boolean {
 
 function shouldLog(): boolean {
     try {
-        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', true) === true;
-    } catch { return true; }
+        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', false) === true;
+    } catch { return false; }
 }
 
 /**
  * 从 HTML 模板中提取所有被引用的标识符
  */
 function extractTemplateIdentifiers(htmlText: string): Set<string> {
-    const identifiers = new Set<string>();
+    const identifiers = extractIdentifiersFromVueTemplateExpressions(htmlText);
 
-    // 1. {{ expr }} 中的标识符
-    const mustacheRegex = /\{\{([\s\S]*?)\}\}/g;
-    let match: RegExpExecArray | null;
-    while ((match = mustacheRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1], identifiers);
-    }
-
-    // 通用属性值提取正则（同时支持双引号和单引号）
-    const attrVal = `(?:"([^"]+)"|'([^']+)')`;
-
-    // 2. v-bind:xxx="expr" / :xxx="expr"
-    const bindRegex = new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*${attrVal}`, 'g');
-    while ((match = bindRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-
-    // 3. v-on:xxx="expr" / @xxx="expr"
-    const onRegex = new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*${attrVal}`, 'g');
-    while ((match = onRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-
-    // 4. v-if/v-else-if/v-show="expr"
-    const condRegex = new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*${attrVal}`, 'g');
-    while ((match = condRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-
-    // 5. v-for="item in list" — 提取 list
-    const forRegex = new RegExp(`v-for\\s*=\\s*(?:"[^"]*(?:in|of)\\s+([^"]+)"|'[^']*(?:in|of)\\s+([^']+)')`, 'g');
-    while ((match = forRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-
-    // 6. v-model="xxx"
-    const modelRegex = new RegExp(`v-model\\s*=\\s*${attrVal}`, 'g');
-    while ((match = modelRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-
-    // 7. onclick="xxx" 等原生事件
-    const nativeEventRegex = new RegExp(`\\bon\\w+\\s*=\\s*${attrVal}`, 'gi');
-    while ((match = nativeEventRegex.exec(htmlText)) !== null) {
-        extractIdentifiersFromExpr(match[1] || match[2], identifiers);
-    }
-
-    // 8. | filter 管道
+    // 额外兼容 Vue2 过滤器写法：{{ value | filterName }}
     const filterRegex = /\|\s*([a-zA-Z_$][\w$]*)/g;
+    let match: RegExpExecArray | null;
     while ((match = filterRegex.exec(htmlText)) !== null) {
         identifiers.add(match[1]);
     }
@@ -324,6 +280,18 @@ function runDiagnostics(document: vscode.TextDocument) {
     }, 2500);
 }
 
+export function refreshVueDiagnostics(document: vscode.TextDocument): void {
+    runDiagnostics(document);
+}
+
+export function refreshAllOpenVueDiagnostics(): void {
+    for (const document of vscode.workspace.textDocuments) {
+        if (!document.isClosed && document.languageId === 'html') {
+            runDiagnostics(document);
+        }
+    }
+}
+
 /**
  * 初始化诊断功能
  */
@@ -335,6 +303,12 @@ export function initVueDiagnostics(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.workspace.onDidCloseTextDocument((document) => {
             diagnosticCollection.delete(document.uri);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            runDiagnostics(document);
         })
     );
 

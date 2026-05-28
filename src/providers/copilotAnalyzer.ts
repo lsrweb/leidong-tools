@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
     resolveVueIndexForHtml,
-    getOrCreateVueIndexFromContent,  
+    buildVueIndexForContent,
     getExternalDevScriptPathsForHtml,
     findDefinitionInIndex
 } from '../parsers/parseDocument';
@@ -43,7 +43,7 @@ function escapeRegex(s: string): string {
 function getSnippetWithLineNumbers(lines: string[], startLine: number, endLine: number, highlightLine?: number): string {
     const result: string[] = [];
     for (let i = startLine; i <= endLine; i++) {
-        if (i < 0 || i >= lines.length) continue;
+        if (i < 0 || i >= lines.length) { continue; }
         const marker = (highlightLine !== undefined && i === highlightLine) ? ' >> ' : '    ';
         result.push(`${marker}${i + 1}: ${lines[i]}`);
     }
@@ -56,7 +56,7 @@ function getSnippetWithLineNumbers(lines: string[], startLine: number, endLine: 
 function getCleanCodeBlock(lines: string[], startLine: number, endLine: number): string {
     const result: string[] = [];
     for (let i = startLine; i <= endLine; i++) {
-        if (i < 0 || i >= lines.length) continue;
+        if (i < 0 || i >= lines.length) { continue; }
         result.push(lines[i]);
     }
     return result.join('\n');
@@ -78,7 +78,7 @@ export function collectReferenceContext(
         if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
             jsFilePath = document.uri.fsPath;
-            vueIndex = getOrCreateVueIndexFromContent(jsText, document.uri, 0);
+            vueIndex = buildVueIndexForContent(jsText, document.uri, 0);
 
             // 找关联 HTML
             for (const doc of vscode.workspace.textDocuments) {
@@ -107,7 +107,7 @@ export function collectReferenceContext(
             }
         } else if (document.languageId === 'html') {
             htmlTexts.push({ file: document.uri.fsPath, text: document.getText() });
-            vueIndex = resolveVueIndexForHtml(document);
+            vueIndex = resolveVueIndexForHtml(document, true);
             if (vueIndex) {
                 const def = findDefinitionInIndex(identifier, vueIndex);
                 if (def && def.uri.fsPath !== document.uri.fsPath) {

@@ -26,7 +26,7 @@ interface DefinitionInfo {
  */
 function loggingEnabled(): boolean {
     try {
-        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', true) === true;
+        return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', false) === true;
     } catch { 
         return true; 
     }

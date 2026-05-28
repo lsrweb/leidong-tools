@@ -8,8 +8,9 @@
  * 可通过 enableCodeLens + codeLensPosition 配置
  */
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, getCachedVueIndexForContent, buildVueIndexForContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
+import { countVueTemplateIdentifierReferences } from '../helpers/templateExpressionScanner';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -29,42 +30,7 @@ function escapeRegex(s: string): string {
  * 单次扫描，复杂度由 O(n_names × n_patterns × n_chars) 降至 O(n_patterns × n_chars)。
  */
 function batchCountReferencesInHtml(text: string, names: ReadonlySet<string>): Map<string, number> {
-    const counts = new Map<string, number>();
-    if (!text || names.size === 0) { return counts; }
-    names.forEach(n => counts.set(n, 0));
-
-    const bump = (expr: string) => {
-        const re = /\b([a-zA-Z_$][\w$]*)\b/g;
-        let m: RegExpExecArray | null;
-        while ((m = re.exec(expr)) !== null) {
-            const c = counts.get(m[1]);
-            if (c !== undefined) { counts.set(m[1], c + 1); }
-        }
-    };
-
-    let m: RegExpExecArray | null;
-    const mustacheRe = /\{\{([\s\S]*?)\}\}/g;
-    while ((m = mustacheRe.exec(text)) !== null) { bump(m[1]); }
-
-    const attrPats: RegExp[] = [
-        /(?:v-bind:|:)[\w.-]+\s*=\s*"([^"]+)"/g,
-        /(?:v-on:|@)[\w.-]+\s*=\s*"([^"]+)"/g,
-        /(?:v-if|v-else-if|v-show)\s*=\s*"([^"]+)"/g,
-        /v-for\s*=\s*"([^"]+)"/g,
-        /v-model\s*=\s*"([^"]+)"/g,
-        /(?:v-bind:|:)[\w.-]+\s*=\s*'([^']+)'/g,
-        /(?:v-on:|@)[\w.-]+\s*=\s*'([^']+)'/g,
-        /(?:v-if|v-else-if|v-show)\s*=\s*'([^']+)'/g,
-        /v-for\s*=\s*'([^']+)'/g,
-        /v-model\s*=\s*'([^']+)'/g,
-        /\bon\w+\s*=\s*"([^"]+)"/gi,
-        /\bon\w+\s*=\s*'([^']+)'/gi,
-    ];
-    for (const pat of attrPats) {
-        pat.lastIndex = 0;
-        while ((m = pat.exec(text)) !== null) { bump(m[1]); }
-    }
-    return counts;
+    return countVueTemplateIdentifierReferences(text, names);
 }
 
 /**
@@ -249,27 +215,23 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
     let vueIndex: VueIndex | null = null;
     let htmlText = '';
     let jsText = '';
-    let hasInlineTemplate = false;
     let htmlFiles: string[] = [];
 
     try {
         if (document.languageId === 'javascript' || document.languageId === 'typescript' || document.languageId === 'vue') {
             jsText = document.getText();
-            vueIndex = getOrCreateVueIndexFromContent(jsText, document.uri, 0);
-            hasInlineTemplate = /template\s*:\s*`/.test(jsText);
+            vueIndex = getCachedVueIndexForContent(jsText, document.uri, 0);
 
-            // JS/TS 内联模板组件只统计本文件内的模板引用，避免把关联 HTML 页面的同名引用混进来。
-            if (!hasInlineTemplate) {
-                // 找关联 HTML (只查找已知关联的文件，不遍历所有打开的文档)
-                htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
-                for (const hf of htmlFiles) {
-                    try {
-                        const openDoc = vscode.workspace.textDocuments.find(
-                            d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed
-                        );
-                        htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
-                    } catch { /* */ }
-                }
+            // 找关联 HTML。即使 JS 文件里存在局部 inline template，也不能跳过页面 HTML；
+            // 大型页面常会同时包含根 Vue 页面和少量 Vue.component 内联模板。
+            htmlFiles = findAssociatedHtmlForJs(document.uri.fsPath);
+            for (const hf of htmlFiles) {
+                try {
+                    const openDoc = vscode.workspace.textDocuments.find(
+                        d => normalizePath(d.uri.fsPath) === normalizePath(hf) && !d.isClosed
+                    );
+                    htmlText += (openDoc ? openDoc.getText() : fs.readFileSync(hf, 'utf8')) + '\n';
+                } catch { /* */ }
             }
 
             // 回退：当 JS 文件自身解析的 VueIndex 为空时，通过关联 HTML 间接获取
@@ -292,6 +254,14 @@ export function computeRefCounts(document: vscode.TextDocument): RefCountInfo[] 
                         }
                     } catch { /* ignore */ }
                 }
+            }
+
+            // 最终兜底：缓存未命中且 HTML 不在编辑器中打开时，
+            // 直接从当前文档内容按需构建索引（CodeLens 在防抖定时器中异步运行，不影响主线程）。
+            if (vueIndex && vueIndex.data.size === 0 && vueIndex.methods.size === 0
+                && vueIndex.computed.size === 0 && vueIndex.mixinData.size === 0
+                && vueIndex.mixinMethods.size === 0 && vueIndex.mixinComputed.size === 0) {
+                vueIndex = buildVueIndexForContent(jsText, document.uri, 0);
             }
         } else if (document.languageId === 'html') {
             htmlText = document.getText();

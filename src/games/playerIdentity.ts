@@ -113,8 +113,8 @@ export async function ensurePlayerNickname(): Promise<string | undefined> {
         placeHolder: '例如：超级玩家、剑圣归来...',
         validateInput: (value) => {
             const trimmed = value.trim();
-            if (!trimmed) return '昵称不能为空';
-            if (trimmed.length > 20) return '昵称最多 20 个字符';
+            if (!trimmed) { return '昵称不能为空'; }
+            if (trimmed.length > 20) { return '昵称最多 20 个字符'; }
             return null;
         },
     });
@@ -140,8 +140,8 @@ export async function changePlayerNickname(): Promise<string | undefined> {
         placeHolder: '新昵称...',
         validateInput: (value) => {
             const trimmed = value.trim();
-            if (!trimmed) return '昵称不能为空';
-            if (trimmed.length > 20) return '昵称最多 20 个字符';
+            if (!trimmed) { return '昵称不能为空'; }
+            if (trimmed.length > 20) { return '昵称最多 20 个字符'; }
             return null;
         },
     });

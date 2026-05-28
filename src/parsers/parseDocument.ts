@@ -41,6 +41,7 @@ export interface VueIndex {
 interface CacheEntry { index: VueIndex; baseLine?: number; }
 let lastVueIndexBuiltAt = 0;
 let lastExternalIndexBuiltAt = 0;
+let blockedAutoBuildWarned = false;
 
 // 使用 LRU 缓存
 function getMaxIndexEntries(): number {
@@ -51,8 +52,14 @@ let indexCache = new LRUCache<string, CacheEntry>(getMaxIndexEntries());
 function loggingEnabled(): boolean {
     try {
         const cfg = vscode.workspace.getConfiguration('leidong-tools');
-        return cfg.get<boolean>('indexLogging', true) === true;
-    } catch { return true; }
+        return cfg.get<boolean>('indexLogging', false) === true;
+    } catch { return false; }
+}
+
+function logBlockedAutoBuild(uri: vscode.Uri): void {
+    if (!loggingEnabled() || blockedAutoBuildWarned) { return; }
+    blockedAutoBuildWarned = true;
+    console.log(`[vue-index][skip-build] ${uri.fsPath} provider requested an index but automatic provider builds are disabled. Run "Leidong Tools: Build Vue Index for Current File".`);
 }
 
 // 快速 hash（非安全）
@@ -208,7 +215,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     });
 
     const mergeAllMaps = (index: VueIndex) => {
-        for (const m of [index.props, index.data, index.computed, index.methods, index.filters, index.mixinData, index.mixinComputed, index.mixinMethods]) {
+        for (const m of [index.props, index.data, index.computed, index.methods, index.watch, index.filters, index.lifecycle, index.refs, index.emits, index.mixinData, index.mixinComputed, index.mixinMethods]) {
             m.forEach((loc, k) => { if (!index.all.has(k)) { index.all.set(k, loc); } });
         }
     };
@@ -631,17 +638,24 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     recordFunctionMeta(prop.key.name, val.params, getDocFromProp(prop), metaTarget);
                 } else if (t.isObjectExpression(val)) {
                     // 形如 someProp: { get(){}, set(){} }
-                    const hasGetter = val.properties.some(p => t.isObjectMethod(p) && (p.kind === 'get'));
-                    if (hasGetter) {
+                    const getter = val.properties.find(p => {
+                        if (!t.isObjectMethod(p) && !t.isObjectProperty(p)) { return false; }
+                        const name = getPropertyName((p as any).key);
+                        if (name !== 'get') { return false; }
+                        if (t.isObjectMethod(p)) { return true; }
+                        return t.isFunctionExpression(p.value) || t.isArrowFunctionExpression(p.value);
+                    }) as t.ObjectMethod | t.ObjectProperty | undefined;
+                    if (getter) {
                         const loc = new vscode.Location(uri, new vscode.Range(
                             new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
                             new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
                         ));
                         target.set(prop.key.name, loc);
-                        const getter = val.properties.find(p => t.isObjectMethod(p) && (p as t.ObjectMethod).kind === 'get') as t.ObjectMethod | undefined;
-                        if (getter) {
-                            const doc = getDocFromProp(getter) || getDocFromProp(prop);
+                        const doc = getDocFromProp(getter as any) || getDocFromProp(prop);
+                        if (t.isObjectMethod(getter)) {
                             recordFunctionMeta(prop.key.name, getter.params, doc, metaTarget);
+                        } else if (t.isObjectProperty(getter) && (t.isFunctionExpression(getter.value) || t.isArrowFunctionExpression(getter.value))) {
+                            recordFunctionMeta(prop.key.name, getter.value.params, doc, metaTarget);
                         }
                     }
                 }
@@ -653,7 +667,10 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const LIFECYCLE_HOOKS = new Set([
         'beforeCreate', 'created', 'beforeMount', 'mounted',
         'beforeUpdate', 'updated', 'beforeDestroy', 'destroyed',
-        'activated', 'deactivated', 'errorCaptured'
+        'beforeUnmount', 'unmounted',
+        'activated', 'deactivated', 'errorCaptured',
+        'renderTracked', 'renderTriggered', 'serverPrefetch',
+        'beforeRouteEnter', 'beforeRouteUpdate', 'beforeRouteLeave'
     ]);
 
     /**
@@ -1137,7 +1154,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     }
 
     const all = new Map<string, vscode.Location>();
-    for (const m of [props, data, computed, methods, filters, mixinData, mixinComputed, mixinMethods]) {
+    for (const m of [props, data, computed, methods, watch, filters, lifecycle, refs, emits, mixinData, mixinComputed, mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
     }
 
@@ -1157,27 +1174,35 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     };
 }
 
-/**
- * 获取（或构建）某个 JS 源的 VueIndex，带缓存
- */
-/**
- * 获取或创建 VueIndex。默认只在没有缓存时构建。
- * 如果需要强制重建（例如文件首次打开或显示时），传入 force=true。
- */
-export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri, baseLine = 0, force = false): VueIndex {
+/** 只读取指定内容对应的 VueIndex 缓存；未命中时返回空索引，不触发解析。 */
+export function getCachedVueIndexForContent(content: string, uri: vscode.Uri, baseLine = 0): VueIndex {
     const key = uri.toString();
     const hash = fastHash(content);
     const cached = indexCache.get(key);
-    if (!force && cached && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
+    if (cached && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
         if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} baseLine=${baseLine} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
         return cached.index;
     }
+    logBlockedAutoBuild(uri);
+    return createEmptyVueIndex();
+}
+
+/** 显式构建并缓存指定内容的 VueIndex。只能由手动/保存/定时等明确入口调用。 */
+export function buildVueIndexForContent(content: string, uri: vscode.Uri, baseLine = 0): VueIndex {
+    const key = uri.toString();
     // 构建新索引并缓存（baseLine 变化也需重建，确保行号正确）
     const index = buildVueIndex(content, uri, baseLine);
     lastVueIndexBuiltAt = Math.max(lastVueIndexBuiltAt, index.builtAt);
     indexCache.set(key, { index, baseLine });
     if (loggingEnabled()) { console.log(`[vue-index][build] ${uri.fsPath} hash=${index.hash} baseLine=${baseLine} data=${index.data.size} computed=${index.computed.size} methods=${index.methods.size} mixinData=${index.mixinData.size} mixinComputed=${index.mixinComputed.size} mixinMethods=${index.mixinMethods.size}`); }
     return index;
+}
+
+/** @deprecated 使用 getCachedVueIndexForContent 或 buildVueIndexForContent 明确表达意图。 */
+export function getOrCreateVueIndexFromContent(content: string, uri: vscode.Uri, baseLine = 0, force = false): VueIndex {
+    return force
+        ? buildVueIndexForContent(content, uri, baseLine)
+        : getCachedVueIndexForContent(content, uri, baseLine);
 }
 
 /** 返回当前缓存（不触发解析） */
@@ -1187,7 +1212,10 @@ export function getCachedVueIndex(uri: vscode.Uri): VueIndex | null {
 }
 
 /** 删除指定 uri 的缓存 */
-export function removeVueIndexForUri(uri: vscode.Uri) { indexCache.delete(uri.toString()); }
+export function removeVueIndexForUri(uri: vscode.Uri) {
+    indexCache.delete(uri.toString());
+    externalFileCache.delete(uri.fsPath);
+}
 
 /**
  * 针对当前激活文档（JS/TS）生成补全所需的 ParseResult
@@ -1198,7 +1226,7 @@ export async function parseDocument(document: vscode.TextDocument): Promise<Pars
             return null;
         }
         const text = document.getText();
-        const index = getOrCreateVueIndexFromContent(text, document.uri, 0);
+        const index = getCachedVueIndexForContent(text, document.uri, 0);
 
         const variables: vscode.CompletionItem[] = [];
         const methods: vscode.CompletionItem[] = [];
@@ -1365,7 +1393,7 @@ function findExternalDevScriptPaths(htmlPath: string): string[] {
     return [];
 }
 
-function getExternalFileIndex(fullPath: string): VueIndex | null {
+function getExternalFileIndex(fullPath: string, force = false): VueIndex | null {
     try {
         const stat = fs.statSync(fullPath);
         const cached = externalFileCache.get(fullPath);
@@ -1373,11 +1401,24 @@ function getExternalFileIndex(fullPath: string): VueIndex | null {
             if (loggingEnabled()) { console.log(`[vue-index][external-hit] ${fullPath} mtime=${stat.mtimeMs}`); }
             return cached.index;
         }
-        const content = fs.readFileSync(fullPath, 'utf8');
-        const index = getOrCreateVueIndexFromContent(content, vscode.Uri.file(fullPath), 0);
+        const uri = vscode.Uri.file(fullPath);
+        const cachedVueIndex = getCachedVueIndex(uri);
+        if (!force && cachedVueIndex) {
+            externalFileCache.set(fullPath, { mtimeMs: stat.mtimeMs, hash: cachedVueIndex.hash, index: cachedVueIndex });
+            if (loggingEnabled()) { console.log(`[vue-index][external-bridge-hit] ${fullPath} mtime=${stat.mtimeMs} hash=${cachedVueIndex.hash}`); }
+            return cachedVueIndex;
+        }
+        // 缓存未命中时：不论 force 与否都从磁盘读取并构建。
+        // CRLF 规范化：fs.readFileSync 在 Windows 返回原始 CRLF，而
+        // document.getText() 被 VS Code 规范化为 LF，两者哈希不同会导致
+        // getCachedVueIndexForContent 缓存未命中（CodeLens 全部显示"未引用"）。
+        const content = fs.readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n');
+        const index = buildVueIndexForContent(content, uri, 0);
         externalFileCache.set(fullPath, { mtimeMs: stat.mtimeMs, hash: index.hash, index });
         lastExternalIndexBuiltAt = Math.max(lastExternalIndexBuiltAt, index.builtAt);
-        if (loggingEnabled()) { console.log(`[vue-index][external-build] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`); }
+        if (loggingEnabled()) {
+            console.log(`[vue-index][external-${force ? 'build' : 'auto-build'}] ${fullPath} mtime=${stat.mtimeMs} hash=${index.hash}`);
+        }
         return index;
     } catch { return null; }
 }
@@ -1454,7 +1495,7 @@ function mergeVueIndexInto(target: VueIndex, source: VueIndex) {
 
 function finalizeMergedIndex(target: VueIndex, hashes: string[]) {
     const all = new Map<string, vscode.Location>();
-    for (const m of [target.data, target.computed, target.methods, target.filters, target.mixinData, target.mixinComputed, target.mixinMethods]) {
+    for (const m of [target.props, target.data, target.computed, target.methods, target.watch, target.filters, target.lifecycle, target.refs, target.emits, target.mixinData, target.mixinComputed, target.mixinMethods]) {
         m.forEach((loc, k) => { if (!all.has(k)) { all.set(k, loc); } });
     }
     target.all = all;
@@ -1465,14 +1506,14 @@ export function getExternalDevScriptPathsForHtml(document: vscode.TextDocument):
     return findExternalDevScriptPaths(document.uri.fsPath);
 }
 
-export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex | null {
+export function resolveVueIndexForHtml(document: vscode.TextDocument, force = false): VueIndex | null {
     const htmlPath = document.uri.fsPath;
     const externalPaths = findExternalDevScriptPaths(htmlPath);
     if (externalPaths.length > 0) {
         const merged = createEmptyVueIndex();
         const hashes: string[] = [];
         for (const externalPath of externalPaths) {
-            const extIdx = getExternalFileIndex(externalPath);
+            const extIdx = getExternalFileIndex(externalPath, force);
             if (extIdx) {
                 mergeVueIndexInto(merged, extIdx);
                 hashes.push(extIdx.hash);
@@ -1496,7 +1537,9 @@ export function resolveVueIndexForHtml(document: vscode.TextDocument): VueIndex 
             continue;
         }
         const startPos = document.positionAt(match.index + match[0].indexOf('>') + 1);
-        const idx = getOrCreateVueIndexFromContent(content, document.uri, startPos.line);
+        const idx = force
+            ? buildVueIndexForContent(content, document.uri, startPos.line)
+            : getCachedVueIndexForContent(content, document.uri, startPos.line);
         mergeVueIndexInto(merged, idx);
         foundAny = true;
     }
@@ -1520,6 +1563,8 @@ export function findDefinitionInIndex(name: string, index: VueIndex): vscode.Loc
     if (index.filters.has(name)) { return index.filters.get(name)!; }
     if (index.watch.has(name)) { return index.watch.get(name)!; }
     if (index.lifecycle.has(name)) { return index.lifecycle.get(name)!; }
+    if (index.refs.has(name)) { return index.refs.get(name)!; }
+    if (index.emits.has(name)) { return index.emits.get(name)!; }
     return index.all.get(name) || null;
 }
 

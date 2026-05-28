@@ -111,7 +111,7 @@ export async function addVariableComment(): Promise<void> {
     let targetLine = sourceRange.start.line;
 
     if (document.languageId === 'html') {
-        let vueIndex = resolveVueIndexForHtml(document);
+        let vueIndex = resolveVueIndexForHtml(document, true);
         const templateId = getXTemplateIdAtPosition(document, selection.active);
         if (templateId && vueIndex?.componentsByTemplateId?.has(templateId)) {
             vueIndex = vueIndex.componentsByTemplateId.get(templateId) || null;

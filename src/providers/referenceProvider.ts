@@ -5,8 +5,9 @@
  * 也支持从 HTML 模板中反向查找同一模板内所有引用。
  */
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, findDefinitionInIndex, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, getCachedVueIndexForContent, findDefinitionInIndex, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
+import { findVueTemplateIdentifierReferences } from '../helpers/templateExpressionScanner';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -64,59 +65,7 @@ function findAssociatedHtmlFiles(jsFilePath: string): string[] {
  * 在文本中搜索标识符的所有出现位置
  */
 function findIdentifierOccurrencesInHtml(text: string, identifier: string, uri: vscode.Uri): vscode.Location[] {
-    const locations: vscode.Location[] = [];
-    const lines = text.split('\n');
-    
-    // 匹配模板中的标识符引用
-    const patterns = [
-        // {{ identifier }} 或 {{ expr.identifier }}
-        new RegExp(`\\{\\{[^}]*\\b${escapeRegex(identifier)}\\b[^}]*\\}\\}`, 'g'),
-        // v-bind:xxx="identifier" / :xxx="identifier" (双引号 + 单引号)
-        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`(?:v-bind:|:)[\\w.-]+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-on:xxx="identifier" / @xxx="identifier" (双引号 + 单引号)
-        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`(?:v-on:|@)[\\w.-]+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-if/v-show/v-else-if (双引号 + 单引号)
-        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`(?:v-if|v-else-if|v-show)\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-for (双引号 + 单引号)
-        new RegExp(`v-for\\s*=\\s*"[^"]*\\b(?:in|of)\\s+[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`v-for\\s*=\\s*'[^']*\\b(?:in|of)\\s+[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // v-model (双引号 + 单引号)
-        new RegExp(`v-model\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'g'),
-        new RegExp(`v-model\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'g'),
-        // Plain HTML event handlers: onclick="identifier(...)" etc.
-        new RegExp(`\\bon\\w+\\s*=\\s*"[^"]*\\b${escapeRegex(identifier)}\\b[^"]*"`, 'gi'),
-        new RegExp(`\\bon\\w+\\s*=\\s*'[^']*\\b${escapeRegex(identifier)}\\b[^']*'`, 'gi'),
-    ];
-
-    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-        const line = lines[lineNum];
-        // 跳过 <script> 标签内的内容
-        // (简单处理，更复杂场景可能需要完善)
-
-        for (const pattern of patterns) {
-            pattern.lastIndex = 0;
-            let match: RegExpExecArray | null;
-            while ((match = pattern.exec(line)) !== null) {
-                // 精确定位标识符在行内的位置
-                const innerRegex = new RegExp(`\\b${escapeRegex(identifier)}\\b`, 'g');
-                const subText = match[0];
-                let innerMatch: RegExpExecArray | null;
-                while ((innerMatch = innerRegex.exec(subText)) !== null) {
-                    const col = match.index + innerMatch.index;
-                    const range = new vscode.Range(lineNum, col, lineNum, col + identifier.length);
-                    // 去重
-                    if (!locations.some(l => l.range.start.line === lineNum && l.range.start.character === col)) {
-                        locations.push(new vscode.Location(uri, range));
-                    }
-                }
-            }
-        }
-    }
-
-    return locations;
+    return findVueTemplateIdentifierReferences(text, identifier, uri);
 }
 
 /**
@@ -171,7 +120,7 @@ export class VueReferenceProvider implements vscode.ReferenceProvider {
             // 检查这个词是否是 Vue 索引中的成员
             let vueIndex: VueIndex | null = null;
             try {
-                vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+                vueIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
             } catch { /* parse error, continue */ }
 
             let isDefined = false;

@@ -224,8 +224,10 @@ my-project/
 | 配置项 | 默认值 | 说明 |
 |:-------|:-------|:-----|
 | `enableDefinitionJump` | `true` | 启用 / 禁用定义跳转 |
-| `indexLogging` | `true` | 索引调试日志 |
-| `rebuildOnSave` | `true` | 保存时重建索引 |
+| `indexLogging` | `false` | 索引调试日志，默认关闭以降低 Extension Host 开销 |
+| `indexBuildMode` | `"manual"` | Vue 索引构建时机：手动 / 保存 / 定时 |
+| `indexBuildIntervalMinutes` | `10` | 定时构建模式下的间隔分钟数 |
+| `rebuildOnSave` | `false` | 旧配置，建议改用 `indexBuildMode` |
 | `maxIndexEntries` | `200` | Vue 索引 LRU 缓存上限 |
 | `maxTemplateIndexEntries` | `300` | 模板索引 LRU 缓存上限 |
 | `devScriptPatterns` | `[]` | 自定义 dev.js 路径模式，支持 `${dir}` `${base}` |

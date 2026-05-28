@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, findDefinitionInIndex, getOrCreateVueIndexFromContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, findDefinitionInIndex, getCachedVueIndexForContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
@@ -165,7 +165,7 @@ export class VueHoverProvider implements vscode.HoverProvider {
             if (templateInfo) {
                 // 在模板字符串内，使用 Vue 索引提供悬停信息
                 const content = document.getText();
-                const vueIndex = getOrCreateVueIndexFromContent(content, document.uri, 0);
+                const vueIndex = getCachedVueIndexForContent(content, document.uri, 0);
                 if (vueIndex) {
                     const def = findDefinitionInIndex(word, vueIndex);
                     if (def) {
@@ -183,10 +183,10 @@ export class VueHoverProvider implements vscode.HoverProvider {
                 );
             }
 
-            // JS 文件：先用 getOrCreateVueIndexFromContent 解析当前文件
+            // JS 文件：只读取当前文件已有 Vue 索引缓存
             let jsVueIndex: VueIndex | null = null;
             try {
-                jsVueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+                jsVueIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
             } catch { /* ignore parse errors */ }
 
             // 回退：VueIndex 为空时通过关联 HTML 间接获取

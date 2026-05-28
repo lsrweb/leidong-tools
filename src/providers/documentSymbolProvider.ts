@@ -4,7 +4,7 @@
  * Vue 2 CDN 文件的结构层级: data > props > methods > computed > watch > lifecycle > filters
  */
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, getCachedVueIndexForContent } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 
 export class VueDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
@@ -24,7 +24,7 @@ export class VueDocumentSymbolProvider implements vscode.DocumentSymbolProvider 
                 vueIndex = resolveVueIndexForHtml(document);
             } else if (document.languageId === 'javascript' || document.languageId === 'typescript'
                 || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
-                vueIndex = getOrCreateVueIndexFromContent(document.getText(), document.uri, 0);
+                vueIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
             }
         } catch { /* ignore */ }
 

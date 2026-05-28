@@ -9,7 +9,7 @@
  */
 import * as vscode from 'vscode';
 import { monitor } from '../monitoring/performanceMonitor';
-import { resolveVueIndexForHtml, getOrCreateVueIndexFromContent, findDefinitionInIndex, findChainedRootDefinition } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, getCachedVueIndexForContent, findDefinitionInIndex, findChainedRootDefinition } from '../parsers/parseDocument';
 import { findTemplateVar, getTemplateIndex } from './templateIndexer';
 import * as path from 'path';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
@@ -39,7 +39,7 @@ export class DefinitionLogic {
             if (document.languageId === 'javascript' || document.languageId === 'typescript'
                 || document.languageId === 'javascriptreact' || document.languageId === 'typescriptreact') {
                 const content = document.getText();
-                const index = getOrCreateVueIndexFromContent(content, document.uri, 0);
+                const index = getCachedVueIndexForContent(content, document.uri, 0);
                 if (this.shouldLog()) { console.log(`[jump][js] word=${word} chain=${fullChain || ''}`); }
                 let target = findDefinitionInIndex(word, index);
                 if (!target && fullChain) { target = findChainedRootDefinition(fullChain, index); }
@@ -148,6 +148,6 @@ export class DefinitionLogic {
     }
 
     private shouldLog(): boolean {
-        try { return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', true) === true; } catch { return true; }
+        try { return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', false) === true; } catch { return false; }
     }
 }

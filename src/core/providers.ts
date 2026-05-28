@@ -26,22 +26,34 @@ import { GameSidebarProvider } from '../games/gameWebviewProvider';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
 
+let refreshProviderConfigurationImpl: (() => void) | undefined;
+
+export function refreshProviderConfiguration(): void {
+    refreshProviderConfigurationImpl?.();
+}
+
 /**
  * 注册所有 Language Providers
  */
 export function registerProviders(context: vscode.ExtensionContext, fileWatchManager: FileWatchManager) {
+    const vueLanguageSelector = [
+        { scheme: 'file', language: 'html' },
+        { scheme: 'file', language: 'javascript' },
+        { scheme: 'file', language: 'typescript' },
+        { scheme: 'file', language: 'javascriptreact' },
+        { scheme: 'file', language: 'typescriptreact' }
+    ];
+    const vueLanguageWithVueSelector = [
+        ...vueLanguageSelector,
+        { scheme: 'file', language: 'vue' }
+    ];
+
     // 注册 HTML/JS Vue 定义提供器 
     // 确保只注册一次
     if (!context.subscriptions.some(sub => sub.constructor.name === 'DefinitionProviderRegistration')) {
         context.subscriptions.push(
             vscode.languages.registerDefinitionProvider(
-                [
-                    { scheme: 'file', language: 'html' },
-                    { scheme: 'file', language: 'javascript' },
-                    { scheme: 'file', language: 'typescript' },
-                    { scheme: 'file', language: 'javascriptreact' },
-                    { scheme: 'file', language: 'typescriptreact' }
-                ],
+                vueLanguageSelector,
                 new VueHtmlDefinitionProvider()
             )
         );
@@ -50,13 +62,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     // 注册悬停提供器
     context.subscriptions.push(
         vscode.languages.registerHoverProvider(
-            [
-                { scheme: 'file', language: 'html' },
-                { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' },
-                { scheme: 'file', language: 'javascriptreact' },
-                { scheme: 'file', language: 'typescriptreact' }
-            ],
+            vueLanguageSelector,
             new VueHoverProvider()
         )
     );
@@ -66,7 +72,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.languages.registerCompletionItemProvider(
             FILE_SELECTORS.JAVASCRIPT_ONLY,
             new JavaScriptCompletionProvider(),
-            '.', '<', ':', '@', '{', ';', '#', '-', '"', '\'' // 触发补全的字符
+            '.', '"', '\'' // 仅在 Vue 成员和事件名场景主动触发，降低对原生 JS/TS/Emmet 的干扰
         )
     );
 
@@ -96,7 +102,6 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
                 { scheme: 'file', language: 'javascript' },
                 { scheme: 'file', language: 'typescript' },
                 { scheme: 'file', language: 'html' },
-                { scheme: 'file', language: 'css' },
                 { scheme: 'file', language: 'json' },
             ],
             new VonCompletionProvider()
@@ -104,51 +109,82 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         )
     );
 
-    // 注册文档符号提供器（面包屑 / Outline 增强）
-    context.subscriptions.push(
-        vscode.languages.registerDocumentSymbolProvider(
-            [
-                { scheme: 'file', language: 'html' },
-                { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' },
-                { scheme: 'file', language: 'javascriptreact' },
-                { scheme: 'file', language: 'typescriptreact' }
-            ],
-            new VueDocumentSymbolProvider()
-        )
-    );
+    let outlineRegistration: vscode.Disposable | undefined;
+    let referenceRegistration: vscode.Disposable | undefined;
+    let codeLensRegistration: vscode.Disposable | undefined;
+    let colorRegistration: vscode.Disposable | undefined;
+    let codeLensProvider: VueCodeLensProvider | undefined;
 
-    // 注册引用查找提供器 (Go to References)
-    context.subscriptions.push(
-        vscode.languages.registerReferenceProvider(
-            [
-                { scheme: 'file', language: 'html' },
-                { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' },
-                { scheme: 'file', language: 'javascriptreact' },
-                { scheme: 'file', language: 'typescriptreact' }
-            ],
-            new VueReferenceProvider()
-        )
-    );
+    const registerOptionalProviders = () => {
+        const cfg = vscode.workspace.getConfiguration('leidong-tools');
 
-    // 注册 CodeLens 引用计数提供器 (支持 JS/TS 以及 HTML 模板中的变量定义)
-    const codeLensProvider = new VueCodeLensProvider();
-    context.subscriptions.push(
-        vscode.languages.registerCodeLensProvider(
-            [
-                { scheme: 'file', language: 'javascript' },
-                { scheme: 'file', language: 'typescript' },
-                { scheme: 'file', language: 'javascriptreact' },
-                { scheme: 'file', language: 'typescriptreact' },
-                { scheme: 'file', language: 'html' },
-                { scheme: 'file', language: 'vue' }
-            ],
-            codeLensProvider
-        )
-    );
+        outlineRegistration?.dispose();
+        outlineRegistration = undefined;
+        if (cfg.get<boolean>('enableOutlineSymbols', false)) {
+            outlineRegistration = vscode.languages.registerDocumentSymbolProvider(
+                vueLanguageSelector,
+                new VueDocumentSymbolProvider()
+            );
+        }
 
-    // CodeLens right 模式：行末装饰更新钩子
+        referenceRegistration?.dispose();
+        referenceRegistration = undefined;
+        if (cfg.get<boolean>('enableReferences', false)) {
+            referenceRegistration = vscode.languages.registerReferenceProvider(
+                vueLanguageSelector,
+                new VueReferenceProvider()
+            );
+        }
+
+        codeLensRegistration?.dispose();
+        codeLensRegistration = undefined;
+        codeLensProvider = undefined;
+        if (cfg.get<boolean>('enableCodeLens', false) || cfg.get<boolean>('enableAIAnalysis', false)) {
+            codeLensProvider = new VueCodeLensProvider();
+            codeLensRegistration = vscode.languages.registerCodeLensProvider(
+                vueLanguageWithVueSelector,
+                codeLensProvider
+            );
+            codeLensProvider.refresh();
+        }
+
+        colorRegistration?.dispose();
+        colorRegistration = undefined;
+        if (cfg.get<boolean>('enableColorPicker', false)) {
+            colorRegistration = vscode.languages.registerColorProvider(
+                [
+                    { scheme: 'file', language: 'html' },
+                    { scheme: 'file', language: 'css' }
+                ],
+                new VueColorProvider()
+            );
+        }
+    };
+
+    const refreshConfiguration = () => {
+        registerOptionalProviders();
+        codeLensProvider?.refresh();
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            clearInlineRefDecorations(editor);
+            updateInlineRefDecorations(editor);
+        }
+    };
+
+    refreshProviderConfigurationImpl = refreshConfiguration;
+    refreshConfiguration();
+    context.subscriptions.push({
+        dispose: () => {
+            outlineRegistration?.dispose();
+            referenceRegistration?.dispose();
+            codeLensRegistration?.dispose();
+            colorRegistration?.dispose();
+            if (refreshProviderConfigurationImpl === refreshConfiguration) {
+                refreshProviderConfigurationImpl = undefined;
+            }
+        }
+    });
+
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             updateInlineRefDecorations(editor);
@@ -158,35 +194,20 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             updateLaytplBracketHighlights(event.textEditor);
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
-            if (e.affectsConfiguration('leidong-tools.enableCodeLens') || 
+            if (e.affectsConfiguration('leidong-tools.enableOutlineSymbols') ||
+                e.affectsConfiguration('leidong-tools.enableReferences') ||
+                e.affectsConfiguration('leidong-tools.enableCodeLens') ||
+                e.affectsConfiguration('leidong-tools.enableAIAnalysis') ||
+                e.affectsConfiguration('leidong-tools.enableColorPicker') ||
                 e.affectsConfiguration('leidong-tools.codeLensPosition') ||
                 e.affectsConfiguration('leidong-tools.enableAIAnalysis')) {
-                const editor = vscode.window.activeTextEditor;
-
-                // 刷新 CodeLens 缓存
-                codeLensProvider.refresh();
-
-                if (editor) {
-                    clearInlineRefDecorations(editor);
-                    updateInlineRefDecorations(editor);
-                }
+                refreshConfiguration();
             }
         })
     );
     // 初始化当前编辑器的装饰
     updateInlineRefDecorations(vscode.window.activeTextEditor);
     updateLaytplBracketHighlights(vscode.window.activeTextEditor);
-
-    // 注册颜色选择器提供器
-    context.subscriptions.push(
-        vscode.languages.registerColorProvider(
-            [
-                { scheme: 'file', language: 'html' },
-                { scheme: 'file', language: 'css' }
-            ],
-            new VueColorProvider()
-        )
-    );
 
     // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
     context.subscriptions.push(

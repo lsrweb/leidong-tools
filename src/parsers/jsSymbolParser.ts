@@ -64,7 +64,7 @@ export class JSSymbolParser {
     public invalidateCache(uri: vscode.Uri, baseLine: number = 0): void {
         const cacheKey = `${uri.toString()}:${baseLine}`;
         this.cacheManager.delete(cacheKey);
-        console.log('[jsSymbolParser] 缓存已失效:', cacheKey);
+        if (this.shouldLog()) { console.log('[jsSymbolParser] 缓存已失效:', cacheKey); }
     }
 
     /**
@@ -85,14 +85,14 @@ export class JSSymbolParser {
         if (cached) {
             const hash = this.fastHash(content);
             if (cached.hash === hash) {
-                console.log(`[jsSymbolParser] ✅ 缓存命中: ${cacheKey}`);
+                if (this.shouldLog()) { console.log(`[jsSymbolParser] 缓存命中: ${cacheKey}`); }
                 return cached.result;
             } else {
-                console.log(`[jsSymbolParser] ❌ 内容变化，缓存失效: ${cacheKey}`);
+                if (this.shouldLog()) { console.log(`[jsSymbolParser] 内容变化，缓存失效: ${cacheKey}`); }
             }
         }
         
-        console.log('[jsSymbolParser] 🔄 开始解析:', cacheKey);
+        if (this.shouldLog()) { console.log('[jsSymbolParser] 开始解析:', cacheKey); }
 
         // 解析代码
         const result = await this.parseContent(content, docUri, baseLine);
@@ -665,6 +665,14 @@ export class JSSymbolParser {
             hash = hash & hash;
         }
         return hash.toString(36);
+    }
+
+    private shouldLog(): boolean {
+        try {
+            return vscode.workspace.getConfiguration('leidong-tools').get<boolean>('indexLogging', false) === true;
+        } catch {
+            return false;
+        }
     }
 
     /**

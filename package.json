@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -48,8 +48,6 @@
     "onLanguage:typescript",
     "onLanguage:javascriptreact",
     "onLanguage:typescriptreact",
-    "onLanguage:json",
-    "onLanguage:css",
     "onLanguage:vue"
   ],
   "main": "./dist/extension.js",
@@ -133,6 +131,11 @@
       {
         "command": "leidong-tools.clearIndexCache",
         "title": "Clear Vue Index Cache",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.buildCurrentVueIndex",
+        "title": "Build Vue Index for Current File",
         "category": "雷动三千工具集"
       },
       {
@@ -231,8 +234,8 @@
         },
         "leidong-tools.indexLogging": {
           "type": "boolean",
-          "default": true,
-          "description": "启用/关闭索引与跳转调试日志输出（不影响跳转功能本身）"
+          "default": false,
+          "description": "启用/关闭索引与跳转调试日志输出（默认关闭，避免大量日志影响 Extension Host 性能）"
         },
         "leidong-tools.enableVueDiagnostics": {
           "type": "boolean",
@@ -241,8 +244,29 @@
         },
         "leidong-tools.rebuildOnSave": {
           "type": "boolean",
-          "default": true,
-          "description": "仅在文件保存时重建索引（默认：开启）。当关闭时，索引仍会在打开或可见时构建。"
+          "default": false,
+          "description": "旧配置：是否允许保存时重建索引。建议改用 leidong-tools.indexBuildMode。默认关闭，避免频繁重建。"
+        },
+        "leidong-tools.indexBuildMode": {
+          "type": "string",
+          "default": "manual",
+          "enum": [
+            "manual",
+            "onSave",
+            "interval"
+          ],
+          "enumDescriptions": [
+            "只在用户执行 Build Vue Index for Current File 或点击变量索引刷新按钮时构建。",
+            "文件保存后构建当前文件索引，不在编辑中构建。",
+            "按固定间隔构建可见且未修改的文件索引。"
+          ],
+          "description": "Vue 索引构建时机。默认 manual，所有语言功能只读取已有缓存，不会因为打开、切换、补全、Hover、诊断而自动构建。"
+        },
+        "leidong-tools.indexBuildIntervalMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "description": "当 indexBuildMode 为 interval 时，构建可见未修改文件索引的间隔分钟数。"
         },
         "leidong-tools.maxIndexEntries": {
           "type": "number",
@@ -391,6 +415,12 @@
         "when": "editorTextFocus"
       },
       {
+        "command": "leidong-tools.buildCurrentVueIndex",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i",
+        "when": "editorTextFocus && (editorLangId == html || editorLangId == javascript || editorLangId == typescript || editorLangId == javascriptreact || editorLangId == typescriptreact || editorLangId == vue)"
+      },
+      {
         "command": "leidong-tools.formatXTemplateSelection",
         "key": "ctrl+k ctrl+f",
         "mac": "cmd+k cmd+f",
@@ -440,12 +470,22 @@
     "menus": {
       "explorer/context": [
         {
+          "command": "leidong-tools.buildCurrentVueIndex",
+          "when": "resourceExtname == .html || resourceExtname == .js || resourceExtname == .ts || resourceExtname == .jsx || resourceExtname == .tsx || resourceExtname == .vue",
+          "group": "navigation@9"
+        },
+        {
           "command": "leidong-tools.startWatch",
           "when": "explorerResourceIsFolder",
           "group": "2_workspace@1"
         }
       ],
       "editor/context": [
+        {
+          "command": "leidong-tools.buildCurrentVueIndex",
+          "when": "editorLangId == html || editorLangId == javascript || editorLangId == typescript || editorLangId == javascriptreact || editorLangId == typescriptreact || editorLangId == vue",
+          "group": "navigation@9"
+        },
         {
           "command": "leidong-tools.formatXTemplateSelection",
           "when": "editorLangId == html && editorHasSelection",
@@ -555,14 +595,7 @@
         "id": "readonly",
         "description": "Placeholder modifier."
       }
-    ],
-    "configurationDefaults": {
-      "emmet.includeLanguages": {
-        "javascript": "html",
-        "typescript": "html"
-      },
-      "emmet.triggerExpansionOnTab": true
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
@@ -595,7 +628,7 @@
     "@babel/types": "^7.27.0",
     "@types/babel__traverse": "^7.20.7",
     "@types/mocha": "^10.0.10",
-    "@types/node": "20.x",
+    "@types/node": "^20.19.41",
     "@types/vscode": "^1.99.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",
