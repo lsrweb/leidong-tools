@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.5.5",
+  "version": "2.5.6",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -535,7 +535,7 @@
         {
           "id": "leidong-sidebar",
           "title": "雷动三千工具",
-          "icon": "$(tools)"
+          "icon": "logo.png"
         }
       ]
     },
