@@ -37,3 +37,4 @@ package-lock.json
 **/*.map
 **/*.ts
 !src/webview/**/*.js
+.codex-pet-runs

@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.5.1",
+  "version": "2.5.5",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -48,7 +48,8 @@
     "onLanguage:typescript",
     "onLanguage:javascriptreact",
     "onLanguage:typescriptreact",
-    "onLanguage:vue"
+    "onLanguage:vue",
+    "onView:leidong-tools.sftpView"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -222,6 +223,72 @@
         "title": "切换 AI 分析模型",
         "category": "雷动三千工具集",
         "icon": "$(symbol-misc)"
+      },
+      {
+        "command": "leidong-tools.sftp.refresh",
+        "title": "刷新远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "leidong-tools.sftp.openConfig",
+        "title": "打开远程连接配置",
+        "category": "雷动三千工具集",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "leidong-tools.sftp.preview",
+        "title": "预览远程文件",
+        "category": "雷动三千工具集",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "leidong-tools.sftp.download",
+        "title": "下载远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "leidong-tools.sftp.upload",
+        "title": "上传到远程目录",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadCurrentFile",
+        "title": "上传当前文件到远程",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.selectAutoUploadProfile",
+        "title": "选择保存自动上传目标",
+        "category": "雷动三千工具集",
+        "icon": "$(target)"
+      },
+      {
+        "command": "leidong-tools.sftp.showLogs",
+        "title": "显示远程资源日志",
+        "category": "雷动三千工具集",
+        "icon": "$(output)"
+      },
+      {
+        "command": "leidong-tools.sftp.createDirectory",
+        "title": "新建远程目录",
+        "category": "雷动三千工具集",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "leidong-tools.sftp.rename",
+        "title": "重命名远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "leidong-tools.sftp.delete",
+        "title": "删除远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(trash)"
       }
     ],
     "configuration": {
@@ -374,6 +441,42 @@
               "description": "Prettier useTabs。未设置时使用当前编辑器 insertSpaces 推导。"
             }
           }
+        },
+        "leidong-tools.sftpConfigFiles": {
+          "type": "array",
+          "default": [
+            ".vscode/sftp.json"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "旧配置：远程连接配置文件列表。建议改用 leidong-tools.remoteConfigFiles。"
+        },
+        "leidong-tools.remoteConfigFiles": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "远程连接配置文件列表，支持 SFTP、SSH、FTP、FTPS。留空时读取 .vscode/sftp.json。"
+        },
+        "leidong-tools.remoteConnectionIdleTimeout": {
+          "type": "number",
+          "default": 60,
+          "minimum": 10,
+          "description": "远程连接空闲多少秒后自动关闭。保存和连续操作会复用同一连接。"
+        },
+        "leidong-tools.remoteVerboseProtocolLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "输出 SSH/SFTP/FTP 底层协议通信日志。仅建议排查连接问题时启用。"
+        },
+        "leidong-tools.remoteDirectoryPageSize": {
+          "type": "number",
+          "default": 200,
+          "minimum": 50,
+          "maximum": 1000,
+          "description": "远程目录每次渲染的文件数量。大目录可通过“加载更多”继续显示，减少树视图滚动卡顿。"
         }
       }
     },
@@ -464,11 +567,22 @@
           "type": "webview",
           "icon": "$(game)",
           "contextualTitle": "小游戏大厅"
+        },
+        {
+          "id": "leidong-tools.sftpView",
+          "name": "远程资源",
+          "icon": "$(remote-explorer)",
+          "contextualTitle": "远程资源管理器"
         }
       ]
     },
     "menus": {
       "explorer/context": [
+        {
+          "command": "leidong-tools.sftp.upload",
+          "when": "resourceScheme == file",
+          "group": "2_workspace@2"
+        },
         {
           "command": "leidong-tools.buildCurrentVueIndex",
           "when": "resourceExtname == .html || resourceExtname == .js || resourceExtname == .ts || resourceExtname == .jsx || resourceExtname == .tsx || resourceExtname == .vue",
@@ -481,6 +595,11 @@
         }
       ],
       "editor/context": [
+        {
+          "command": "leidong-tools.sftp.uploadCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "1_modification@3"
+        },
         {
           "command": "leidong-tools.buildCurrentVueIndex",
           "when": "editorLangId == html || editorLangId == javascript || editorLangId == typescript || editorLangId == javascriptreact || editorLangId == typescriptreact || editorLangId == vue",
@@ -499,6 +618,41 @@
       ],
       "view/item/context": [
         {
+          "command": "leidong-tools.sftp.preview",
+          "when": "view == leidong-tools.sftpView && viewItem == remote-file",
+          "group": "inline@1"
+        },
+        {
+          "command": "leidong-tools.sftp.download",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-profile)",
+          "group": "inline@2"
+        },
+        {
+          "command": "leidong-tools.sftp.upload",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-directory || viewItem == remote-profile)",
+          "group": "inline@3"
+        },
+        {
+          "command": "leidong-tools.sftp.selectAutoUploadProfile",
+          "when": "view == leidong-tools.sftpView && viewItem == remote-profile",
+          "group": "2_workspace@1"
+        },
+        {
+          "command": "leidong-tools.sftp.createDirectory",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-directory || viewItem == remote-profile)",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "leidong-tools.sftp.rename",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory)",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "leidong-tools.sftp.delete",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory)",
+          "group": "1_modification@3"
+        },
+        {
           "command": "leidong-tools.pauseWatch",
           "when": "viewItem == watch-running",
           "group": "inline@1"
@@ -517,6 +671,23 @@
           "command": "leidong-tools.resumeWatch",
           "when": "viewItem == watch-paused",
           "group": "1_modification@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "leidong-tools.sftp.refresh",
+          "when": "view == leidong-tools.sftpView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "leidong-tools.sftp.openConfig",
+          "when": "view == leidong-tools.sftpView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "leidong-tools.sftp.showLogs",
+          "when": "view == leidong-tools.sftpView",
+          "group": "navigation@3"
         }
       ]
     },
@@ -618,8 +789,10 @@
     "acorn": "^8.11.2",
     "acorn-walk": "^8.3.0",
     "axios": "^1.6.0",
+    "basic-ftp": "^6.0.1",
     "cheerio": "^1.0.0-rc.12",
     "prettier": "^3.8.3",
+    "ssh2-sftp-client": "^12.1.1",
     "vue-template-compiler": "^2.7.15"
   },
   "devDependencies": {
@@ -629,6 +802,7 @@
     "@types/babel__traverse": "^7.20.7",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.19.41",
+    "@types/ssh2-sftp-client": "^9.0.6",
     "@types/vscode": "^1.99.0",
     "@typescript-eslint/eslint-plugin": "^8.28.0",
     "@typescript-eslint/parser": "^8.28.0",

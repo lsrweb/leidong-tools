@@ -3,7 +3,7 @@ exports.id = 1;
 exports.ids = [1];
 exports.modules = {
 
-/***/ 217:
+/***/ 289:
 /***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -23,16 +23,16 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   util: () => (/* binding */ public_exports),
 /* harmony export */   version: () => (/* binding */ version_evaluate_default)
 /* harmony export */ });
-/* harmony import */ var module__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(218);
-/* harmony import */ var url__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(219);
+/* harmony import */ var module__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(290);
+/* harmony import */ var url__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(291);
 /* harmony import */ var path__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(3);
-/* harmony import */ var fs_promises__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(220);
-/* harmony import */ var process__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(221);
-/* harmony import */ var assert__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(223);
+/* harmony import */ var fs_promises__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(292);
+/* harmony import */ var process__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(293);
+/* harmony import */ var assert__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(230);
 /* harmony import */ var fs__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(176);
-/* harmony import */ var v8__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(224);
+/* harmony import */ var v8__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(295);
 /* harmony import */ var util__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(22);
-/* harmony import */ var _doc_mjs__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(226);
+/* harmony import */ var _doc_mjs__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(297);
 
 
 
@@ -12600,7 +12600,7 @@ ${error.message}`;
   }
 }
 async function importModuleDefault(file) {
-  const module = await __webpack_require__(222)((0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(file).href);
+  const module = await __webpack_require__(294)((0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(file).href);
   return module.default;
 }
 async function readBunPackageJson(file) {
@@ -12629,7 +12629,7 @@ var parseYaml;
 async function loadYaml(file) {
   const content = await read_file_default(file);
   if (!parseYaml) {
-    ({ __parsePrettierYamlConfig: parseYaml } = await __webpack_require__.e(/* import() */ 3).then(__webpack_require__.bind(__webpack_require__, 227)));
+    ({ __parsePrettierYamlConfig: parseYaml } = await __webpack_require__.e(/* import() */ 3).then(__webpack_require__.bind(__webpack_require__, 298)));
   }
   try {
     return parseYaml(content);
@@ -14106,7 +14106,7 @@ function resolve2(specifier, parent) {
 // src/utilities/import-from-file.js
 function importFromFile(specifier, parent) {
   const url3 = resolve2(specifier, (0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(parent).href);
-  return __webpack_require__(225)(url3);
+  return __webpack_require__(296)(url3);
 }
 var import_from_file_default = importFromFile;
 
@@ -18227,7 +18227,7 @@ function createParsersAndPrinters(modules) {
 }
 var estreePlugin = createParsersAndPrinters([
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 4).then(__webpack_require__.bind(__webpack_require__, 228)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 4).then(__webpack_require__.bind(__webpack_require__, 299)),
     printers: ["estree", "estree-json"]
   }
 ]);
@@ -18251,11 +18251,11 @@ var languages = [
 ];
 var { parsers, printers } = createParsersAndPrinters([
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 5).then(__webpack_require__.bind(__webpack_require__, 229)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 5).then(__webpack_require__.bind(__webpack_require__, 300)),
     parsers: ["acorn", "espree"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 6).then(__webpack_require__.bind(__webpack_require__, 230)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 6).then(__webpack_require__.bind(__webpack_require__, 301)),
     parsers: [
       "__ng_action",
       "__ng_binding",
@@ -18264,7 +18264,7 @@ var { parsers, printers } = createParsersAndPrinters([
     ]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 7).then(__webpack_require__.bind(__webpack_require__, 231)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 7).then(__webpack_require__.bind(__webpack_require__, 302)),
     parsers: [
       "babel",
       "babel-flow",
@@ -18283,44 +18283,44 @@ var { parsers, printers } = createParsersAndPrinters([
     ]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 8).then(__webpack_require__.bind(__webpack_require__, 232)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 8).then(__webpack_require__.bind(__webpack_require__, 303)),
     parsers: ["flow"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 9).then(__webpack_require__.bind(__webpack_require__, 233)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 9).then(__webpack_require__.bind(__webpack_require__, 304)),
     parsers: ["glimmer"],
     printers: ["glimmer"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 10).then(__webpack_require__.bind(__webpack_require__, 234)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 10).then(__webpack_require__.bind(__webpack_require__, 305)),
     parsers: ["graphql"],
     printers: ["graphql"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 11).then(__webpack_require__.bind(__webpack_require__, 235)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 11).then(__webpack_require__.bind(__webpack_require__, 306)),
     parsers: ["html", "angular", "vue", "lwc", "mjml"],
     printers: ["html"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 12).then(__webpack_require__.bind(__webpack_require__, 236)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 12).then(__webpack_require__.bind(__webpack_require__, 307)),
     parsers: ["markdown", "mdx", "remark"],
     printers: ["mdast"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 13).then(__webpack_require__.bind(__webpack_require__, 237)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 13).then(__webpack_require__.bind(__webpack_require__, 308)),
     parsers: ["meriyah"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 14).then(__webpack_require__.bind(__webpack_require__, 238)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 14).then(__webpack_require__.bind(__webpack_require__, 309)),
     parsers: ["css", "less", "scss"],
     printers: ["postcss"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 15).then(__webpack_require__.bind(__webpack_require__, 239)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 15).then(__webpack_require__.bind(__webpack_require__, 310)),
     parsers: ["typescript"]
   },
   {
-    importPlugin: () => __webpack_require__.e(/* import() */ 3).then(__webpack_require__.bind(__webpack_require__, 227)),
+    importPlugin: () => __webpack_require__.e(/* import() */ 3).then(__webpack_require__.bind(__webpack_require__, 298)),
     parsers: ["yaml"],
     printers: ["yaml"]
   }
@@ -18347,13 +18347,13 @@ var import_from_directory_default = importFromDirectory;
 // src/main/plugins/load-plugin.js
 async function importPlugin(name, cwd) {
   if (isUrl(name)) {
-    return __webpack_require__(225)(name);
+    return __webpack_require__(296)(name);
   }
   if (path__WEBPACK_IMPORTED_MODULE_2__.isAbsolute(name)) {
-    return __webpack_require__(225)((0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(name).href);
+    return __webpack_require__(296)((0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(name).href);
   }
   try {
-    return await __webpack_require__(225)((0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(path__WEBPACK_IMPORTED_MODULE_2__.resolve(name)).href);
+    return await __webpack_require__(296)((0,url__WEBPACK_IMPORTED_MODULE_1__.pathToFileURL)(path__WEBPACK_IMPORTED_MODULE_2__.resolve(name)).href);
   } catch {
     return import_from_directory_default(name, cwd);
   }
@@ -18809,7 +18809,7 @@ var debugApis = {
 
 /***/ }),
 
-/***/ 226:
+/***/ 297:
 /***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);

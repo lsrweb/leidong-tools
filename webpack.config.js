@@ -3,6 +3,7 @@
 'use strict';
 
 const path = require('path');
+const webpack = require('webpack');
 
 //@ts-check
 /** @typedef {import('webpack').Configuration} WebpackConfig **/
@@ -40,6 +41,12 @@ const extensionConfig = {
       }
     ]
   },
+  plugins: [
+    // ssh2 treats these native accelerators as optional and falls back to Node crypto.
+    // Excluding them keeps the VSIX portable across Windows, macOS and Linux.
+    new webpack.IgnorePlugin({ resourceRegExp: /^cpu-features$/ }),
+    new webpack.IgnorePlugin({ resourceRegExp: /sshcrypto\.node$/ }),
+  ],
   devtool: 'nosources-source-map',
   infrastructureLogging: {
     level: "log", // enables logging required for problem matchers

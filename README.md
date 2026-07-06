@@ -4,6 +4,52 @@
 
 <h1 align="center">雷动三千 VSCode 工具集</h1>
 
+## 远程资源管理器（SFTP / FTP / FTPS）
+
+扩展侧边栏提供 **远程资源** 视图，支持远程目录浏览、文件预览、上传、下载、新建目录、重命名和删除。默认读取当前工作区的 `.vscode/sftp.json`，配置既可以是单个对象，也可以是多个配置组成的数组：
+
+```json
+[
+    {
+        "name": "ku",
+        "host": "192.168.31.211",
+        "protocol": "sftp",
+        "port": 22,
+        "username": "root",
+        "password": "111111",
+        "remotePath": "/Data/code2/bbtyun/ku.bbtyun.com",
+        "uploadOnSave": true
+    },
+    {
+        "name": "ftp-site",
+        "host": "192.168.31.212",
+        "protocol": "ftp",
+        "port": 21,
+        "username": "deploy",
+        "password": "password",
+        "remotePath": "/public_html",
+        "uploadOnSave": false
+    }
+]
+```
+
+需要读取多个 JSON 文件时，在工作区设置中配置 `leidong-tools.remoteConfigFiles`。保存文件时，本地相对工作区的路径会映射到 `remotePath`；多个配置启用 `uploadOnSave` 时，可在连接节点上选择“选择保存自动上传目标”。
+
+底部状态栏会显示连接、上传和下载进度；点击状态项可打开“远程资源”输出面板，查看连接、上传下载及错误日志。默认不输出 SSH 数据包等底层噪声；排查协议问题时可临时启用 `leidong-tools.remoteVerboseProtocolLogging`。FTP 的 `PASS` 密码会在详细日志中自动隐藏。
+
+同一配置会复用已建立的连接，操作按顺序排队，不会每次保存都重新握手。连接默认空闲 60 秒后关闭，可通过 `leidong-tools.remoteConnectionIdleTimeout` 调整；连接异常时会释放，并在下次操作自动重连。
+
+状态栏按“空闲 → Loading → 成功 → 1 秒后空闲”切换。连续保存会进行 300ms 防抖；上传期间再次保存时，只追加最后一次变更，不堆积重复版本。
+
+远程目录按需展开并分页渲染，默认每批 200 项，目录结果短期缓存 30 秒；文件较多时使用“加载更多”继续显示。可通过 `leidong-tools.remoteDirectoryPageSize` 调整每批数量。
+
+存在多个 `uploadOnSave: true` 配置时，执行“选择保存自动上传目标”可多选一个或多个服务器；全选即可保存后同时上传到全部配置，清空选择则关闭该工作区的自动上传。
+
+- `protocol`: 支持 `sftp`、`ssh`、`ftp`、`ftps`。
+- SFTP/SSH 支持 `privateKey`（相对工作区或绝对路径）和可选的 `passphrase`。
+- FTPS 默认使用显式 TLS；设置 `secure: "implicit"` 使用隐式 TLS（默认端口 990）。自签名证书可设置 `rejectUnauthorized: false`。
+- FTP/FTPS 使用被动模式，普通 FTP 不加密用户名、密码和文件内容，公网连接建议使用 SFTP 或 FTPS。
+
 <p align="center">
   <strong>专为 Vue 2 CDN / 非工程化项目打造的智能开发体验</strong>
 </p>

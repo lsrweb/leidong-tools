@@ -170,7 +170,15 @@ export function scanLaytplTags(text: string): LaytplTag[] {
         const isIgnoreTag = marker === '!';
         const contentStart = startIndex + openTag.length + (isIgnoreTag ? 1 : 0);
         const closeTag = isIgnoreTag ? '!}}' : '}}';
-        const closeIndex = text.indexOf(closeTag, contentStart);
+
+        // 找到关闭标签，处理 `}}}` 歧义：若 `}}` 紧跟着另一个 `}`（即 `}}}`），
+        // 则第一个 `}` 属于脚本代码，应将 `}}` 向后推一位直至不再紧跟 `}`。
+        let closeIndex = text.indexOf(closeTag, contentStart);
+        if (!isIgnoreTag) {
+            while (closeIndex >= 0 && closeIndex + closeTag.length < text.length && text[closeIndex + closeTag.length] === '}') {
+                closeIndex = text.indexOf(closeTag, closeIndex + 1);
+            }
+        }
 
         if (closeIndex < 0) {
             break;
