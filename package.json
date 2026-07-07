@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.5.8",
+  "version": "2.5.9",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -255,6 +255,18 @@
         "icon": "$(cloud-upload)"
       },
       {
+        "command": "leidong-tools.sftp.uploadFile",
+        "title": "上传文件到远程",
+        "category": "雷动三千工具集",
+        "icon": "$(file)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadFolder",
+        "title": "上传文件夹到远程",
+        "category": "雷动三千工具集",
+        "icon": "$(folder)"
+      },
+      {
         "command": "leidong-tools.sftp.uploadCurrentFile",
         "title": "上传当前文件到远程",
         "category": "雷动三千工具集",
@@ -477,6 +489,18 @@
           "minimum": 50,
           "maximum": 1000,
           "description": "远程目录每次渲染的文件数量。大目录可通过“加载更多”继续显示，减少树视图滚动卡顿。"
+        },
+        "leidong-tools.remoteUploadExcludedExtensions": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "上传时排除的文件扩展名，不区分大小写，例如 node_modules 构建产物可填写 map、log、tmp。"
+        },
+        "leidong-tools.remoteUploadExcludeRegex": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "高级上传排除正则列表，匹配工作区相对路径（统一使用 / 分隔符），例如 (^|/)node_modules/、\\.min\\.js$。"
         }
       }
     },
@@ -580,8 +604,13 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "leidong-tools.sftp.upload",
-          "when": "resourceScheme == file",
+          "command": "leidong-tools.sftp.uploadFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "2_workspace@2"
+        },
+        {
+          "command": "leidong-tools.sftp.uploadFolder",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
           "group": "2_workspace@2"
         },
         {

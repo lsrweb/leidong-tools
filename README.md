@@ -50,6 +50,13 @@
 - FTPS 默认使用显式 TLS；设置 `secure: "implicit"` 使用隐式 TLS（默认端口 990）。自签名证书可设置 `rejectUnauthorized: false`。
 - FTP/FTPS 使用被动模式，普通 FTP 不加密用户名、密码和文件内容，公网连接建议使用 SFTP 或 FTPS。
 
+远程资源目录支持右键分别选择“上传文件”或“上传文件夹”；VS Code 本地资源管理器也会根据右键目标显示对应上传命令。
+
+上传过滤设置：
+
+- `leidong-tools.remoteUploadExcludedExtensions`：按扩展名排除，例如 `map`、`log`、`tmp`。
+- `leidong-tools.remoteUploadExcludeRegex`：使用正则匹配工作区相对路径，例如 `(^|/)node_modules/`、`\\.min\\.js$`。规则同时作用于手动上传、文件夹递归上传和保存自动上传。
+
 <p align="center">
   <strong>专为 Vue 2 CDN / 非工程化项目打造的智能开发体验</strong>
 </p>

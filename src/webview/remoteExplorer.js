@@ -4,6 +4,19 @@
     const empty = document.getElementById('remote-empty');
     const pending = new Map();
     let sequence = 0;
+    const contextMenu = document.createElement('div');
+    contextMenu.className = 'context-menu'; contextMenu.hidden = true; document.body.append(contextMenu);
+
+    function showUploadMenu(event, node) {
+        if (node.kind === 'file') { return; }
+        event.preventDefault(); event.stopPropagation(); contextMenu.textContent = '';
+        for (const [label, action] of [['上传文件', 'uploadFile'], ['上传文件夹', 'uploadFolder']]) {
+            const item = document.createElement('button'); item.textContent = label;
+            item.onclick = () => { contextMenu.hidden = true; vscode.postMessage({ type: 'action', action, node }); };
+            contextMenu.append(item);
+        }
+        contextMenu.style.left = `${event.clientX}px`; contextMenu.style.top = `${event.clientY}px`; contextMenu.hidden = false;
+    }
 
     function request(type, data) {
         const requestId = String(++sequence);
@@ -29,8 +42,9 @@
         row.querySelector('.meta').textContent = node.meta || '';
         const actions = document.createElement('span'); actions.className = 'actions';
         if (node.kind === 'file') { actions.append(button('↓', '下载', () => vscode.postMessage({ type: 'action', action: 'download', node }))); }
-        if (node.kind !== 'file') { actions.append(button('↑', '上传到此处', () => vscode.postMessage({ type: 'action', action: 'upload', node }))); }
+        if (node.kind !== 'file') { actions.append(button('↑', '上传文件', () => vscode.postMessage({ type: 'action', action: 'uploadFile', node }))); }
         row.append(actions);
+        row.oncontextmenu = event => showUploadMenu(event, node);
         let loaded = false;
         row.onclick = async () => {
             if (node.kind === 'file') { vscode.postMessage({ type: 'action', action: 'preview', node }); return; }
@@ -61,5 +75,7 @@
     document.getElementById('refresh').onclick = () => vscode.postMessage({ type: 'refresh' });
     document.getElementById('config').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.openConfig' });
     document.getElementById('logs').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.showLogs' });
+    window.addEventListener('click', () => { contextMenu.hidden = true; });
+    window.addEventListener('blur', () => { contextMenu.hidden = true; });
     vscode.postMessage({ type: 'ready' });
 })();
