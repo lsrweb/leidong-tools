@@ -9,7 +9,6 @@ import { registerCommands } from './core/commands';
 import { registerProviders } from './core/providers';
 import { registerIndexLifecycle } from './managers/indexManager';
 import { initVueDiagnostics } from './providers/vueDiagnosticsProvider';
-import { registerSftpManager } from './sftp/sftpManager';
 
 /**
  * Extension activation function
@@ -29,8 +28,6 @@ export function activate(context: vscode.ExtensionContext) {
     // Register Vue diagnostics (unused variables, template expression checks)
     initVueDiagnostics(context);
 
-    // Register the SFTP/FTP remote explorer and transfer lifecycle.
-    registerSftpManager(context);
 
     console.log('✅ All commands and providers registered successfully!');
 }

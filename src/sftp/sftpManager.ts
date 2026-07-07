@@ -703,14 +703,70 @@ class SftpPreviewProvider implements vscode.FileSystemProvider {
     rename(): never { throw vscode.FileSystemError.NoPermissions('远程预览为只读'); }
 }
 
+class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
+    static readonly viewType = 'leidong-tools.sftpView';
+    private view?: vscode.WebviewView;
+
+    constructor(
+        private readonly extensionUri: vscode.Uri,
+        private readonly configs: SftpConfigStore,
+        private readonly service: SftpService,
+    ) {}
+
+    resolveWebviewView(view: vscode.WebviewView): void {
+        this.view = view;
+        view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'src', 'webview')] };
+        const script = view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'src', 'webview', 'remoteExplorer.js'));
+        const style = view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'src', 'webview', 'remoteExplorer.css'));
+        const nonce = Date.now().toString(36);
+        view.webview.html = `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><div class="remote-toolbar"><button id="refresh">刷新</button><button id="config">配置</button><button id="logs">日志</button></div><div id="remote-root"></div><div id="remote-empty" class="remote-empty">未找到远程配置</div><script nonce="${nonce}" src="${script}"></script></body></html>`;
+        view.webview.onDidReceiveMessage(message => { void this.handleMessage(message); });
+    }
+
+    refresh(): void { void this.postProfiles(); }
+
+    private async handleMessage(message: any): Promise<void> {
+        if (message.type === 'ready' || message.type === 'refresh') { await this.postProfiles(); return; }
+        if (message.type === 'command') { await vscode.commands.executeCommand(message.command); return; }
+        const profiles = await this.configs.loadProfiles(true);
+        const profile = profiles.find(item => item.id === message.profileId || item.id === message.node?.profileId);
+        if (!profile) { return; }
+        if (message.type === 'list') {
+            try {
+                const entries = await this.service.list(profile, message.remotePath);
+                const items = entries.filter(entry => entry.name !== '.' && entry.name !== '..')
+                    .sort((a, b) => (a.type === 'd' ? 0 : 1) - (b.type === 'd' ? 0 : 1) || a.name.localeCompare(b.name))
+                    .map(entry => ({ profileId: profile.id, remotePath: joinRemote(message.remotePath, entry.name), kind: entry.type === 'd' ? 'directory' : 'file', label: entry.name, meta: entry.type === 'd' ? '' : formatSize(entry.size) }));
+                await this.view?.webview.postMessage({ type: 'response', requestId: message.requestId, items });
+            } catch (error) {
+                void vscode.window.showErrorMessage(`${profile.protocol.toUpperCase()} 目录读取失败: ${messageOf(error)}`);
+                await this.view?.webview.postMessage({ type: 'response', requestId: message.requestId, items: [] });
+            }
+            return;
+        }
+        if (message.type === 'action') {
+            const node = message.node;
+            const kind = node.kind as 'profile' | 'directory' | 'file';
+            const item = new SftpTreeItem(profile, node.remotePath, kind, node.label, vscode.TreeItemCollapsibleState.None);
+            const command = message.action === 'preview' ? 'leidong-tools.sftp.preview' : message.action === 'download' ? 'leidong-tools.sftp.download' : 'leidong-tools.sftp.upload';
+            await vscode.commands.executeCommand(command, item);
+        }
+    }
+
+    private async postProfiles(): Promise<void> {
+        const profiles = await this.configs.loadProfiles(true);
+        await this.view?.webview.postMessage({ type: 'profiles', items: profiles.map(profile => ({ profileId: profile.id, remotePath: profile.remotePath, kind: 'profile', label: profile.name, meta: profile.protocol.toUpperCase() })) });
+    }
+}
+
 export function registerSftpManager(context: vscode.ExtensionContext): void {
     const configs = new SftpConfigStore();
     const logger = new RemoteLogger();
     const activity = new RemoteActivity();
     const service = new SftpService(logger);
-    const tree = new SftpTreeProvider(configs, service);
+    const remoteProvider = new RemoteExplorerWebviewProvider(context.extensionUri, configs, service);
     const preview = new SftpPreviewProvider(service);
-    const view = vscode.window.createTreeView('leidong-tools.sftpView', { treeDataProvider: tree, showCollapseAll: true });
+    const viewRegistration = vscode.window.registerWebviewViewProvider(RemoteExplorerWebviewProvider.viewType, remoteProvider);
 
     const run = async (label: string, action: () => Promise<void>) => {
         const finish = activity.begin(label);
@@ -789,7 +845,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     };
 
     context.subscriptions.push(
-        view,
+        viewRegistration,
         logger,
         activity,
         service,
@@ -801,8 +857,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         }),
         vscode.workspace.registerFileSystemProvider('leidong-sftp', preview, { isReadonly: true, isCaseSensitive: true }),
         vscode.commands.registerCommand('leidong-tools.sftp.showLogs', () => logger.show()),
-        vscode.commands.registerCommand('leidong-tools.sftp.refresh', () => tree.refresh()),
-        vscode.commands.registerCommand('leidong-tools.sftp.loadMore', (item: SftpTreeItem) => tree.loadMore(item)),
+        vscode.commands.registerCommand('leidong-tools.sftp.refresh', () => remoteProvider.refresh()),
         vscode.commands.registerCommand('leidong-tools.sftp.openConfig', async () => {
             const folder = await chooseWorkspaceFolder();
             if (!folder) { return; }
@@ -858,7 +913,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                         await service.upload(profile, source, remote);
                     }
                 }
-                tree.refresh();
+                remoteProvider.refresh();
                 void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${targetDirectory}`);
             });
         }),
@@ -872,7 +927,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (!profile) { return; }
             await run(`正在上传到 ${profile.name}`, async () => {
                 await uploadMappedFile(service, profile, localUri, true);
-                tree.refresh();
+                remoteProvider.refresh();
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.selectAutoUploadProfile', async (item?: SftpTreeItem) => {
@@ -906,7 +961,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (!name) { return; }
             await run('新建远程目录', async () => {
                 await service.createDirectory(item.profile, joinRemote(item.remotePath, name));
-                tree.refresh();
+                remoteProvider.refresh();
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.rename', async (item?: SftpTreeItem) => {
@@ -916,7 +971,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (!name || name === currentName) { return; }
             await run('远程重命名', async () => {
                 await service.rename(item.profile, item.remotePath, joinRemote(posixDirname(item.remotePath), name));
-                tree.refresh();
+                remoteProvider.refresh();
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.delete', async (item?: SftpTreeItem) => {
@@ -929,7 +984,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (answer !== '删除') { return; }
             await run('远程删除', async () => {
                 await service.delete(item.profile, item.remotePath, item.kind === 'directory');
-                tree.refresh();
+                remoteProvider.refresh();
             });
         }),
         vscode.workspace.onDidSaveTextDocument(document => {
@@ -937,8 +992,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             scheduleAutoUpload(document);
         }),
         vscode.workspace.onDidChangeConfiguration(event => {
-            if (event.affectsConfiguration('leidong-tools.sftpConfigFiles') || event.affectsConfiguration('leidong-tools.remoteConfigFiles')) { tree.refresh(); }
-            if (event.affectsConfiguration('leidong-tools.remoteDirectoryPageSize')) { tree.refresh(); }
+            if (event.affectsConfiguration('leidong-tools.sftpConfigFiles') || event.affectsConfiguration('leidong-tools.remoteConfigFiles')) { remoteProvider.refresh(); }
             if (event.affectsConfiguration('leidong-tools.remoteVerboseProtocolLogging') || event.affectsConfiguration('leidong-tools.remoteConnectionIdleTimeout')) {
                 service.resetConnections();
             }
@@ -948,9 +1002,9 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     const configWatcher = vscode.workspace.createFileSystemWatcher('**/.vscode/sftp.json');
     context.subscriptions.push(
         configWatcher,
-        configWatcher.onDidCreate(() => tree.refresh()),
-        configWatcher.onDidChange(() => tree.refresh()),
-        configWatcher.onDidDelete(() => tree.refresh()),
+        configWatcher.onDidCreate(() => remoteProvider.refresh()),
+        configWatcher.onDidChange(() => remoteProvider.refresh()),
+        configWatcher.onDidDelete(() => remoteProvider.refresh()),
     );
 }
 

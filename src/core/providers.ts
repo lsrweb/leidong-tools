@@ -20,6 +20,7 @@ import { XTemplateFoldingRangeProvider } from '../providers/xTemplateFoldingProv
 import { XTemplateRangeFormattingProvider } from '../providers/xTemplateFormattingProvider';
 import { registerCopilotAnalyzer } from '../providers/copilotAnalyzer';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
+import { registerSftpManager } from '../sftp/sftpManager';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
 import { GameSidebarProvider } from '../games/gameWebviewProvider';
@@ -245,6 +246,9 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             variableIndexProvider
         )
     );
+
+    // 远程资源 WebView（与变量索引使用相同的注册链路）
+    registerSftpManager(context);
 
     const diagnosticsProvider = new DiagnosticsWebviewProvider(context.extensionUri);
     context.subscriptions.push(

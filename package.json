@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.5.6",
+  "version": "2.5.8",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -535,7 +535,7 @@
         {
           "id": "leidong-sidebar",
           "title": "雷动三千工具",
-          "icon": "logo.png"
+          "icon": "resources/remote-explorer.svg"
         }
       ]
     },
@@ -571,6 +571,7 @@
         {
           "id": "leidong-tools.sftpView",
           "name": "远程资源",
+          "type": "webview",
           "icon": "$(remote-explorer)",
           "contextualTitle": "远程资源管理器"
         }
