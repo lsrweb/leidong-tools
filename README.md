@@ -4,79 +4,6 @@
 
 <h1 align="center">雷动三千 VSCode 工具集</h1>
 
-## 远程资源管理器（SFTP / FTP / FTPS）
-
-扩展侧边栏提供 **远程资源** 视图，支持远程目录浏览、文件预览、上传、下载、新建目录、重命名和删除。默认读取当前工作区的 `.vscode/sftp.json`，配置既可以是单个对象，也可以是多个配置组成的数组：
-
-```json
-[
-    {
-        "name": "ku",
-        "host": "192.168.31.211",
-        "protocol": "sftp",
-        "port": 22,
-        "username": "root",
-        "password": "111111",
-        "remotePath": "/Data/code2/bbtyun/ku.bbtyun.com",
-        "uploadOnSave": true
-    },
-    {
-        "name": "ftp-site",
-        "host": "192.168.31.212",
-        "protocol": "ftp",
-        "port": 21,
-        "username": "deploy",
-        "password": "password",
-        "remotePath": "/public_html",
-        "uploadOnSave": false
-    }
-]
-```
-
-需要读取多个 JSON 文件时，在工作区设置中配置 `leidong-tools.remoteConfigFiles`。保存文件时，本地相对工作区的路径会映射到 `remotePath`；多个配置启用 `uploadOnSave` 时，可在连接节点上选择“选择保存自动上传目标”。
-
-底部状态栏会显示连接、上传和下载进度；点击状态项可打开“远程资源”输出面板，查看连接、上传下载及错误日志。默认不输出 SSH 数据包等底层噪声；排查协议问题时可临时启用 `leidong-tools.remoteVerboseProtocolLogging`。FTP 的 `PASS` 密码会在详细日志中自动隐藏。
-
-同一配置会复用已建立的连接，操作按顺序排队，不会每次保存都重新握手。连接默认空闲 60 秒后关闭，可通过 `leidong-tools.remoteConnectionIdleTimeout` 调整；连接异常时会释放，并在下次操作自动重连。
-
-状态栏按“空闲 → Loading → 成功 → 1 秒后空闲”切换。连续保存会进行 300ms 防抖；上传期间再次保存时，只追加最后一次变更，不堆积重复版本。
-
-远程目录按需展开并分页渲染，默认每批 200 项，目录结果短期缓存 30 秒；文件较多时使用“加载更多”继续显示。可通过 `leidong-tools.remoteDirectoryPageSize` 调整每批数量。
-
-存在多个 `uploadOnSave: true` 配置时，执行“选择保存自动上传目标”可多选一个或多个服务器；全选即可保存后同时上传到全部配置，清空选择则关闭该工作区的自动上传。
-
-- `protocol`: 支持 `sftp`、`ssh`、`ftp`、`ftps`。
-- SFTP/SSH 支持 `privateKey`（相对工作区或绝对路径）和可选的 `passphrase`。
-- FTPS 默认使用显式 TLS；设置 `secure: "implicit"` 使用隐式 TLS（默认端口 990）。自签名证书可设置 `rejectUnauthorized: false`。
-- FTP/FTPS 使用被动模式，普通 FTP 不加密用户名、密码和文件内容，公网连接建议使用 SFTP 或 FTPS。
-
-远程资源目录支持右键分别选择“上传文件”或“上传文件夹”；VS Code 本地资源管理器也会根据右键目标显示对应上传命令。
-
-上传过滤设置：
-
-- `leidong-tools.remoteUploadExcludedExtensions`：按扩展名排除，例如 `map`、`log`、`tmp`。
-- `leidong-tools.remoteUploadExcludeRegex`：使用正则匹配工作区相对路径，例如 `(^|/)node_modules/`、`\\.min\\.js$`。规则同时作用于手动上传、文件夹递归上传和保存自动上传。
-
-<p align="center">
-  <strong>专为 Vue 2 CDN / 非工程化项目打造的智能开发体验</strong>
-</p>
-
-<p align="center">
-  <a href="https://marketplace.visualstudio.com/items?itemName=KuCai.leidong-sanqian-vscode-tools"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visual-studio-code&logoColor=white" alt="Marketplace"></a>
-  <img src="https://img.shields.io/badge/version-2.1.10-5c63d8.svg?style=flat" alt="Version">
-  <img src="https://img.shields.io/badge/vue-2.x%20CDN-42b883.svg?logo=vue.js&logoColor=white" alt="Vue 2">
-  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
-</p>
-
-<p align="center">
-  <a href="#-核心亮点">核心亮点</a> ·
-  <a href="#-功能速览">功能速览</a> ·
-  <a href="#️-配置项">配置项</a> ·
-  <a href="#-快捷键">快捷键</a> ·
-  <a href="CHANGELOG.md">更新日志</a>
-</p>
-
----
 
 ## 💡 解决什么问题？
 
@@ -257,6 +184,77 @@ my-project/
 
 ---
 
+
+
+## 远程资源管理器（SFTP / FTP / FTPS）
+
+扩展侧边栏提供 **远程资源** 视图，支持远程目录浏览、文件预览、上传、下载、新建目录、重命名和删除。默认读取当前工作区的 `.vscode/sftp.json`，配置既可以是单个对象，也可以是多个配置组成的数组：
+
+远程资源按“工作区 → 连接 → 目录/文件”分组。文本文件可直接在编辑器中修改并保存回原服务器；图片和二进制文件使用 VS Code 原生预览。右键菜单提供连接测试、断开、刷新、上传、下载、新建目录、重命名、删除和复制远程路径等完整操作。
+
+```json
+[
+    {
+        "name": "ku",
+        "host": "xxxx",
+        "protocol": "sftp",
+        "port": 22,
+        "username": "xxxxx",
+        "password": "xxxxx",
+        "remotePath": "/Data",
+        "uploadOnSave": true
+    }
+]
+```
+
+需要读取多个 JSON 文件时，在工作区设置中配置 `leidong-tools.remoteConfigFiles`。保存文件时，本地相对工作区的路径会映射到 `remotePath`；多个配置启用 `uploadOnSave` 时，可在连接节点上选择“选择保存自动上传目标”。
+
+底部状态栏会显示连接、上传和下载进度；点击状态项可打开“远程资源”输出面板，查看连接、上传下载及错误日志。默认不输出 SSH 数据包等底层噪声；排查协议问题时可临时启用 `leidong-tools.remoteVerboseProtocolLogging`。FTP 的 `PASS` 密码会在详细日志中自动隐藏。
+
+同一配置会复用已建立的连接，操作按顺序排队，不会每次保存都重新握手。连接默认空闲 60 秒后关闭，可通过 `leidong-tools.remoteConnectionIdleTimeout` 调整；连接异常时会释放，并在下次操作自动重连。
+
+状态栏按“空闲 → Loading → 成功 → 1 秒后空闲”切换。连续保存会进行 300ms 防抖；上传期间再次保存时，只追加最后一次变更，不堆积重复版本。
+
+远程目录按需读取并使用固定行高虚拟滚动，只渲染可视区域；目录结果进入容量受限的 LRU 缓存，折叠后再次展开无需重复请求。
+
+存在多个 `uploadOnSave: true` 配置时，执行“选择保存自动上传目标”可多选一个或多个服务器；全选即可保存后同时上传到全部配置，清空选择则关闭该工作区的自动上传。
+
+- `protocol`: 支持 `sftp`、`ssh`、`ftp`、`ftps`。
+- SFTP/SSH 支持 `privateKey`（相对工作区或绝对路径）和可选的 `passphrase`。
+- FTPS 默认使用显式 TLS；设置 `secure: "implicit"` 使用隐式 TLS（默认端口 990）。自签名证书可设置 `rejectUnauthorized: false`。
+- FTP/FTPS 使用被动模式，普通 FTP 不加密用户名、密码和文件内容，公网连接建议使用 SFTP 或 FTPS。
+
+远程资源目录支持右键分别选择“上传文件”或“上传文件夹”；VS Code 本地资源管理器也会根据右键目标显示对应上传命令。
+
+本地编辑器和资源管理器中的文件右键菜单同时提供“下载文件”“上传文件”“备份并上传文件”。备份并上传会先把远端目标文件改名为 `xxx.dis`，再上传当前本地文件到原路径；如果 `.dis` 已存在，会自动使用带时间戳的 `.dis` 备份名，避免覆盖旧备份。
+
+上传过滤设置：
+
+- `leidong-tools.remoteUploadExcludedExtensions`：按扩展名排除，例如 `map`、`log`、`tmp`。
+- `leidong-tools.remoteUploadExcludeRegex`：使用正则匹配工作区相对路径，例如 `(^|/)node_modules/`、`\\.min\\.js$`。规则同时作用于手动上传、文件夹递归上传和保存自动上传。
+- `leidong-tools.remoteUploadOnSaveEnabled`：保存自动上传总开关。也可在远程资源面板顶部直接切换。
+
+<p align="center">
+  <strong>专为 Vue 2 CDN / 非工程化项目打造的智能开发体验</strong>
+</p>
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=KuCai.leidong-sanqian-vscode-tools"><img src="https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visual-studio-code&logoColor=white" alt="Marketplace"></a>
+  <img src="https://img.shields.io/badge/version-2.6.4-5c63d8.svg?style=flat" alt="Version">
+  <img src="https://img.shields.io/badge/vue-2.x%20CDN-42b883.svg?logo=vue.js&logoColor=white" alt="Vue 2">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+</p>
+
+<p align="center">
+  <a href="#-核心亮点">核心亮点</a> ·
+  <a href="#-功能速览">功能速览</a> ·
+  <a href="#️-配置项">配置项</a> ·
+  <a href="#-快捷键">快捷键</a> ·
+  <a href="CHANGELOG.md">更新日志</a>
+</p>
+
+---
+
 ## ⌨️ 快捷键
 
 | 快捷键 | 功能 |
@@ -283,6 +281,9 @@ my-project/
 | `rebuildOnSave` | `false` | 旧配置，建议改用 `indexBuildMode` |
 | `maxIndexEntries` | `200` | Vue 索引 LRU 缓存上限 |
 | `maxTemplateIndexEntries` | `300` | 模板索引 LRU 缓存上限 |
+| `cssIndexLinkCssEnabled` | `false` | CSS 快速索引是否读取当前 HTML 中 link 引入的本地 CSS；默认只索引当前 HTML 的 style 标签 |
+| `cssIndexExtraPaths` | `[]` | 额外参与 CSS 索引的文件、目录或 glob，支持绝对路径、工作区相对路径、`${workspaceFolder}`、`${fileDir}` |
+| `cssIndexExcludePatterns` | `[]` | CSS 索引排除规则，支持路径/文件名片段或正则，例如 `layui\\.css$` |
 | `devScriptPatterns` | `[]` | 自定义 dev.js 路径模式，支持 `${dir}` `${base}` |
 | `watchHtmlVariableName` | `"html"` | 文件监听替换的变量名 |
 | `watchHtmlVariablePattern` | `""` | 自定义替换正则（高级） |
@@ -300,6 +301,16 @@ my-project/
   ],
   // 关闭调试日志（生产环境推荐）
   "leidong-tools.indexLogging": false,
+  // CSS 快速索引：默认无需配置即可读取当前 HTML 的 <style>
+  "leidong-tools.cssIndexLinkCssEnabled": false,
+  "leidong-tools.cssIndexExtraPaths": [
+    "${workspaceFolder}/common/css",
+    "theme/**/*.css"
+  ],
+  "leidong-tools.cssIndexExcludePatterns": [
+    "layui\\.css$",
+    "(^|/)vendor/"
+  ],
   // 文件监听使用 dom 变量名
   "leidong-tools.watchHtmlVariableName": "dom"
 }

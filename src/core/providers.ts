@@ -26,6 +26,7 @@ import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView'
 import { GameSidebarProvider } from '../games/gameWebviewProvider';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
+import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache } from '../providers/cssIndexProvider';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -83,6 +84,15 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             FILE_SELECTORS.HTML,
             new HtmlVueCompletionProvider(),
             '.', ':', '@', '{'
+        )
+    );
+
+    // 注册 CSS 快速索引补全：class 属性补 CSS 类，style 属性补 CSS 变量。
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(
+            FILE_SELECTORS.HTML,
+            new CssQuickIndexCompletionProvider(),
+            '"', '\'', ' ', '-', '('
         )
     );
 
@@ -200,8 +210,12 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
                 e.affectsConfiguration('leidong-tools.enableCodeLens') ||
                 e.affectsConfiguration('leidong-tools.enableAIAnalysis') ||
                 e.affectsConfiguration('leidong-tools.enableColorPicker') ||
+                e.affectsConfiguration('leidong-tools.cssIndexLinkCssEnabled') ||
+                e.affectsConfiguration('leidong-tools.cssIndexExtraPaths') ||
+                e.affectsConfiguration('leidong-tools.cssIndexExcludePatterns') ||
                 e.affectsConfiguration('leidong-tools.codeLensPosition') ||
                 e.affectsConfiguration('leidong-tools.enableAIAnalysis')) {
+                clearCssQuickIndexCache();
                 refreshConfiguration();
             }
         })

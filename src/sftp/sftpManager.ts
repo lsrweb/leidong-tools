@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { Writable } from 'stream';
+import { Readable, Writable } from 'stream';
 import { Client as FtpClient, FileType as FtpFileType } from 'basic-ftp';
 
 // ssh2-sftp-client does not ship first-party TypeScript declarations.
@@ -44,6 +44,12 @@ interface RemoteEntry {
     type: 'd' | '-' | 'l';
     size?: number;
     modifyTime?: number;
+}
+
+interface RemoteStat {
+    size: number;
+    mtime: number;
+    directory: boolean;
 }
 
 class RemoteLogger implements vscode.Disposable {
@@ -109,6 +115,12 @@ class RemoteActivity implements vscode.Disposable {
         };
     }
 
+    report(transferred: number, total?: number): void {
+        if (this.active === 0) { return; }
+        const percent = total && total > 0 ? Math.min(100, Math.round(transferred / total * 100)) : undefined;
+        this.item.text = percent === undefined ? `$(sync~spin) 远程同步：${formatSize(transferred)}` : `$(sync~spin) 远程同步：${percent}%`;
+    }
+
     dispose(): void {
         if (this.transitionTimer) { clearTimeout(this.transitionTimer); }
         this.item.dispose();
@@ -128,24 +140,21 @@ export class SftpTreeItem extends vscode.TreeItem {
     constructor(
         public readonly profile: SftpProfile,
         public readonly remotePath: string,
-        public readonly kind: 'profile' | 'directory' | 'file' | 'loadMore',
+        public readonly kind: 'profile' | 'directory' | 'file',
         label: string,
         collapsibleState: vscode.TreeItemCollapsibleState,
         description?: string,
-        public readonly parent?: SftpTreeItem,
     ) {
         super(label, collapsibleState);
         this.description = description;
         this.contextValue = `remote-${kind}`;
-        this.iconPath = new vscode.ThemeIcon(kind === 'profile' ? 'remote' : kind === 'directory' ? 'folder' : kind === 'loadMore' ? 'more' : 'file');
+        this.iconPath = new vscode.ThemeIcon(kind === 'profile' ? 'remote' : kind === 'directory' ? 'folder' : 'file');
         if (kind === 'file') {
             this.command = {
                 command: 'leidong-tools.sftp.preview',
                 title: '预览远程文件',
                 arguments: [this],
             };
-        } else if (kind === 'loadMore') {
-            this.command = { command: 'leidong-tools.sftp.loadMore', title: '加载更多远程文件', arguments: [this] };
         }
         this.tooltip = kind === 'profile'
             ? `${profile.protocol.toUpperCase()} · ${profile.username}@${profile.host}:${profile.port}${profile.remotePath}`
@@ -248,7 +257,7 @@ class SftpService implements vscode.Disposable {
     private readonly ftpConnections = new Map<string, FtpConnectionEntry>();
     private readonly uploadFilterCache = new Map<string, { signature: string; extensions: Set<string>; regexes: RegExp[] }>();
 
-    constructor(private readonly logger: RemoteLogger) {}
+    constructor(private readonly logger: RemoteLogger, private readonly progress?: (transferred: number, total?: number) => void) {}
 
     dispose(): void {
         void this.closeAll();
@@ -267,6 +276,12 @@ class SftpService implements vscode.Disposable {
                 this.ftpConnections.delete(id);
             });
         }
+    }
+
+    cancelActiveTransfers(): void { void this.closeAll(); }
+
+    isConnected(profile: SftpProfile): boolean {
+        return isFtp(profile) ? this.ftpConnections.get(profile.id)?.client.closed === false : this.sftpConnections.get(profile.id)?.connected === true;
     }
 
     async list(profile: SftpProfile, remotePath: string): Promise<RemoteEntry[]> {
@@ -303,6 +318,48 @@ class SftpService implements vscode.Disposable {
         });
     }
 
+    async stat(profile: SftpProfile, remotePath: string): Promise<RemoteStat> {
+        if (isFtp(profile)) {
+            return this.withFtpClient(profile, async client => {
+                const size = await client.size(remotePath);
+                let mtime = 0;
+                try { mtime = (await client.lastMod(remotePath)).getTime(); } catch { /* Optional FTP capability. */ }
+                return { size, mtime, directory: false };
+            });
+        }
+        return this.withSftpClient(profile, async client => {
+            const value = await client.stat(remotePath);
+            return { size: value.size ?? 0, mtime: value.modifyTime ?? 0, directory: value.isDirectory === true };
+        });
+    }
+
+    async write(profile: SftpProfile, remotePath: string, content: Uint8Array): Promise<void> {
+        this.logger.info(profile, `保存远程文件 ${remotePath}`);
+        if (isFtp(profile)) {
+            await this.withFtpClient(profile, async client => {
+                await client.ensureDir(posixDirname(remotePath));
+                await client.uploadFrom(Readable.from(Buffer.from(content)), remotePath);
+            });
+            return;
+        }
+        await this.withSftpClient(profile, async client => {
+            await client.mkdir(posixDirname(remotePath), true);
+            await client.put(Buffer.from(content), remotePath);
+        });
+    }
+
+    async testConnection(profile: SftpProfile): Promise<void> {
+        await this.list(profile, profile.remotePath);
+        this.logger.info(profile, '连接测试成功');
+    }
+
+    async disconnect(profile: SftpProfile): Promise<void> {
+        const sftp = this.sftpConnections.get(profile.id);
+        if (sftp) { await this.enqueue(sftp, () => this.closeSftp(profile, sftp, '已手动断开连接')); this.sftpConnections.delete(profile.id); }
+        const ftp = this.ftpConnections.get(profile.id);
+        if (ftp) { await this.enqueue(ftp, async () => this.closeFtp(profile, ftp, '已手动断开连接')); this.ftpConnections.delete(profile.id); }
+    }
+
     async upload(profile: SftpProfile, localUri: vscode.Uri, remotePath: string): Promise<void> {
         if (!this.isUploadAllowed(profile, localUri)) {
             this.logger.info(profile, `已按过滤规则跳过 ${localUri.fsPath}`);
@@ -312,14 +369,17 @@ class SftpService implements vscode.Disposable {
         if (isFtp(profile)) {
             await this.withFtpClient(profile, async client => {
                 await client.ensureDir(posixDirname(remotePath));
-                await client.uploadFrom(localUri.fsPath, remotePath);
+                const total = (await vscode.workspace.fs.stat(localUri)).size;
+                client.trackProgress((info: any) => this.progress?.(info.bytesOverall ?? info.bytes ?? 0, total));
+                try { await client.uploadFrom(localUri.fsPath, remotePath); } finally { client.trackProgress(); }
             });
             return;
         }
         await this.withSftpClient(profile, async client => {
             const parent = posixDirname(remotePath);
             await client.mkdir(parent, true);
-            await client.fastPut(localUri.fsPath, remotePath);
+            const total = (await vscode.workspace.fs.stat(localUri)).size;
+            await client.fastPut(localUri.fsPath, remotePath, { step: (transferred: number, _chunk: number, remoteTotal: number) => this.progress?.(transferred, remoteTotal || total) });
         });
     }
 
@@ -375,7 +435,9 @@ class SftpService implements vscode.Disposable {
                     await client.downloadToDir(localUri.fsPath, remotePath);
                 } else {
                     await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(localUri.fsPath)));
-                    await client.downloadTo(localUri.fsPath, remotePath);
+                    const total = await client.size(remotePath).catch(() => 0);
+                    client.trackProgress((info: any) => this.progress?.(info.bytesOverall ?? info.bytes ?? 0, total));
+                    try { await client.downloadTo(localUri.fsPath, remotePath); } finally { client.trackProgress(); }
                 }
             });
             return;
@@ -386,7 +448,8 @@ class SftpService implements vscode.Disposable {
                 await client.downloadDir(remotePath, localUri.fsPath);
             } else {
                 await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(localUri.fsPath)));
-                await client.fastGet(remotePath, localUri.fsPath);
+                const stat = await client.stat(remotePath).catch(() => ({ size: 0 }));
+                await client.fastGet(remotePath, localUri.fsPath, { step: (transferred: number, _chunk: number, total: number) => this.progress?.(transferred, total || stat.size) });
             }
         });
     }
@@ -607,106 +670,17 @@ class SftpService implements vscode.Disposable {
     }
 }
 
-class SftpTreeProvider implements vscode.TreeDataProvider<SftpTreeItem> {
-    private readonly changed = new vscode.EventEmitter<SftpTreeItem | undefined>();
-    readonly onDidChangeTreeData = this.changed.event;
-    private profiles: SftpProfile[] = [];
-    private readonly directoryCache = new Map<string, { entries: RemoteEntry[]; visible: number; loadedAt: number }>();
-
-    constructor(private readonly configs: SftpConfigStore, private readonly service: SftpService) {}
-
-    refresh(): void {
-        this.profiles = [];
-        this.directoryCache.clear();
-        this.changed.fire(undefined);
-    }
-
-    loadMore(item: SftpTreeItem): void {
-        const parent = item.parent;
-        if (!parent) { return; }
-        const cached = this.directoryCache.get(this.cacheKey(parent));
-        if (!cached) { return; }
-        cached.visible = Math.min(cached.entries.length, cached.visible + this.pageSize(parent.profile));
-        this.changed.fire(parent);
-    }
-
-    getTreeItem(element: SftpTreeItem): vscode.TreeItem {
-        return element;
-    }
-
-    async getChildren(element?: SftpTreeItem): Promise<SftpTreeItem[]> {
-        if (!element) {
-            this.profiles = await this.configs.loadProfiles(true);
-            return this.profiles.map(profile => new SftpTreeItem(
-                profile,
-                profile.remotePath,
-                'profile',
-                profile.name,
-                vscode.TreeItemCollapsibleState.Collapsed,
-                `${profile.protocol.toUpperCase()} · ${profile.host} · ${path.basename(profile.configUri.fsPath)}`,
-            ));
-        }
-        if (element.kind === 'file' || element.kind === 'loadMore') {
-            return [];
-        }
-        try {
-            const key = this.cacheKey(element);
-            let cached = this.directoryCache.get(key);
-            if (!cached || Date.now() - cached.loadedAt > 30000) {
-                const entries = (await this.service.list(element.profile, element.remotePath))
-                    .filter(entry => entry.name !== '.' && entry.name !== '..')
-                    .sort((a, b) => (a.type === 'd' ? 0 : 1) - (b.type === 'd' ? 0 : 1) || a.name.localeCompare(b.name));
-                cached = { entries, visible: Math.min(entries.length, this.pageSize(element.profile)), loadedAt: Date.now() };
-                this.directoryCache.set(key, cached);
-            }
-            const items = cached.entries
-                .slice(0, cached.visible)
-                .map(entry => {
-                    const directory = entry.type === 'd';
-                    return new SftpTreeItem(
-                        element.profile,
-                        joinRemote(element.remotePath, entry.name),
-                        directory ? 'directory' : 'file',
-                        entry.name,
-                        directory ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None,
-                        directory ? undefined : formatSize(entry.size),
-                    );
-                });
-            if (cached.visible < cached.entries.length) {
-                items.push(new SftpTreeItem(
-                    element.profile,
-                    element.remotePath,
-                    'loadMore',
-                    `加载更多（${cached.visible}/${cached.entries.length}）`,
-                    vscode.TreeItemCollapsibleState.None,
-                    undefined,
-                    element,
-                ));
-            }
-            return items;
-        } catch (error) {
-            void vscode.window.showErrorMessage(`${element.profile.protocol.toUpperCase()} 目录读取失败: ${messageOf(error)}`);
-            return [];
-        }
-    }
-
-    private cacheKey(item: SftpTreeItem): string {
-        return `${item.profile.id}|${item.remotePath}`;
-    }
-
-    private pageSize(profile: SftpProfile): number {
-        const value = vscode.workspace.getConfiguration('leidong-tools', profile.workspaceFolder.uri)
-            .get<number>('remoteDirectoryPageSize', 200);
-        return Math.max(50, Math.min(1000, value));
-    }
-}
-
 class SftpPreviewProvider implements vscode.FileSystemProvider {
     private readonly changed = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
     readonly onDidChangeFile = this.changed.event;
     private readonly targets = new Map<string, { profile: SftpProfile; remotePath: string }>();
 
-    constructor(private readonly service: SftpService) {}
+    constructor(
+        private readonly service: SftpService,
+        private readonly configs: SftpConfigStore,
+        private readonly activity: RemoteActivity,
+        private readonly onSaved: (profile: SftpProfile, remotePath: string, size: number) => void,
+    ) {}
 
     createUri(item: SftpTreeItem): vscode.Uri {
         const key = Buffer.from(item.profile.id).toString('base64url');
@@ -720,59 +694,115 @@ class SftpPreviewProvider implements vscode.FileSystemProvider {
     }
 
     async stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-        const content = await this.readFile(uri);
-        return { type: vscode.FileType.File, ctime: 0, mtime: 0, size: content.byteLength };
+        const target = await this.resolveTarget(uri);
+        const stat = await this.service.stat(target.profile, target.remotePath);
+        return { type: stat.directory ? vscode.FileType.Directory : vscode.FileType.File, ctime: 0, mtime: stat.mtime, size: stat.size };
     }
 
     async readFile(uri: vscode.Uri): Promise<Uint8Array> {
-        const target = this.targets.get(uri.toString());
-        if (!target) {
-            throw vscode.FileSystemError.FileNotFound('远程预览信息已失效，请重新打开文件');
-        }
+        const target = await this.resolveTarget(uri);
         return this.service.read(target.profile, target.remotePath);
     }
 
     readDirectory(): never { throw vscode.FileSystemError.NoPermissions('远程预览为只读'); }
     createDirectory(): never { throw vscode.FileSystemError.NoPermissions('远程预览为只读'); }
-    writeFile(): never { throw vscode.FileSystemError.NoPermissions('远程预览为只读'); }
+    async writeFile(uri: vscode.Uri, content: Uint8Array): Promise<void> {
+        const target = await this.resolveTarget(uri);
+        const finish = this.activity.begin(`保存远程文件 ${path.posix.basename(target.remotePath)}`);
+        try {
+            await this.service.write(target.profile, target.remotePath, content);
+            this.onSaved(target.profile, target.remotePath, content.byteLength);
+            this.changed.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+            finish(true);
+        } catch (error) {
+            finish(false);
+            throw error;
+        }
+    }
     delete(): never { throw vscode.FileSystemError.NoPermissions('远程预览为只读'); }
     rename(): never { throw vscode.FileSystemError.NoPermissions('远程预览为只读'); }
+
+    private async resolveTarget(uri: vscode.Uri): Promise<{ profile: SftpProfile; remotePath: string }> {
+        const existing = this.targets.get(uri.toString());
+        if (existing) { return existing; }
+        const profiles = await this.configs.loadProfiles();
+        const profile = profiles.find(item => Buffer.from(item.id).toString('base64url') === uri.authority);
+        if (!profile) { throw vscode.FileSystemError.FileNotFound('远程连接配置已失效'); }
+        const target = { profile, remotePath: uri.path };
+        this.targets.set(uri.toString(), target);
+        return target;
+    }
 }
 
 class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
     static readonly viewType = 'leidong-tools.sftpView';
     private view?: vscode.WebviewView;
+    private readonly cache = new Map<string, any[]>();
+    private readonly inFlight = new Map<string, Promise<any[]>>();
 
     constructor(
+        private readonly context: vscode.ExtensionContext,
         private readonly extensionUri: vscode.Uri,
         private readonly configs: SftpConfigStore,
         private readonly service: SftpService,
     ) {}
 
-    resolveWebviewView(view: vscode.WebviewView): void {
+    async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
         this.view = view;
         view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'src', 'webview')] };
         const script = view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'src', 'webview', 'remoteExplorer.js'));
+        const popoverScript = view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'src', 'webview', 'popover.js'));
         const style = view.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'src', 'webview', 'remoteExplorer.css'));
         const nonce = Date.now().toString(36);
-        view.webview.html = `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><div class="remote-toolbar"><button id="refresh">刷新</button><button id="config">配置</button><button id="logs">日志</button></div><div id="remote-root"></div><div id="remote-empty" class="remote-empty">未找到远程配置</div><script nonce="${nonce}" src="${script}"></script></body></html>`;
-        view.webview.onDidReceiveMessage(message => { void this.handleMessage(message); });
+        const templateUri = vscode.Uri.joinPath(this.extensionUri, 'src', 'webview', 'remoteExplorer.html');
+        const template = Buffer.from(await vscode.workspace.fs.readFile(templateUri)).toString('utf8');
+        view.webview.html = template
+            .replaceAll('{{cspSource}}', view.webview.cspSource)
+            .replaceAll('{{nonce}}', nonce)
+            .replaceAll('{{styleUri}}', style.toString())
+            .replaceAll('{{popoverScriptUri}}', popoverScript.toString())
+            .replaceAll('{{scriptUri}}', script.toString());
+        view.webview.onDidReceiveMessage(message => {
+            void this.handleMessage(message).catch(error => {
+                void vscode.window.showErrorMessage(`远程操作失败：${messageOf(error)}`);
+            });
+        });
     }
 
-    refresh(): void { void this.postProfiles(); }
+    refresh(): void { this.cache.clear(); void this.postProfiles(true); }
+
+    refreshProfiles(): void { void this.postProfiles(false); }
+
+    invalidateDirectory(profile: SftpProfile, remotePath: string, change?: { removedPath?: string; oldPath?: string; newPath?: string }): void {
+        this.cache.delete(this.cacheKey(profile.id, remotePath));
+        void this.view?.webview.postMessage({ type: 'directoryChanged', profileId: profile.id, remotePath, ...change });
+    }
+
+    updateFile(profile: SftpProfile, remotePath: string, size: number): void {
+        this.cache.delete(this.cacheKey(profile.id, posixDirname(remotePath)));
+        void this.view?.webview.postMessage({ type: 'fileChanged', profileId: profile.id, remotePath, meta: formatSize(size) });
+    }
 
     private async handleMessage(message: any): Promise<void> {
-        if (message.type === 'ready' || message.type === 'refresh') { await this.postProfiles(); return; }
+        if (message.type === 'ready') { await this.postProfiles(false); return; }
+        if (message.type === 'refresh') { this.cache.clear(); await this.postProfiles(true); return; }
         if (message.type === 'command') { await vscode.commands.executeCommand(message.command); return; }
+        if (message.type === 'openConfig') { await vscode.commands.executeCommand('leidong-tools.sftp.openConfig', message.workspaceUri); return; }
+        if (message.type === 'clientError') { void vscode.window.showWarningMessage(message.message); return; }
+        if (message.type === 'toggleWorkspaceUpload') {
+            const folder = vscode.workspace.workspaceFolders?.find(item => item.uri.toString() === message.workspaceUri);
+            if (!folder) { return; }
+            const configuration = vscode.workspace.getConfiguration('leidong-tools', folder.uri);
+            await configuration.update('remoteUploadOnSaveEnabled', !configuration.get<boolean>('remoteUploadOnSaveEnabled', true), vscode.ConfigurationTarget.WorkspaceFolder);
+            await this.postProfiles(false);
+            return;
+        }
         const profiles = await this.configs.loadProfiles(true);
         const profile = profiles.find(item => item.id === message.profileId || item.id === message.node?.profileId);
         if (!profile) { return; }
         if (message.type === 'list') {
             try {
-                const entries = await this.service.list(profile, message.remotePath);
-                const items = entries.filter(entry => entry.name !== '.' && entry.name !== '..')
-                    .sort((a, b) => (a.type === 'd' ? 0 : 1) - (b.type === 'd' ? 0 : 1) || a.name.localeCompare(b.name))
-                    .map(entry => ({ profileId: profile.id, remotePath: joinRemote(message.remotePath, entry.name), kind: entry.type === 'd' ? 'directory' : 'file', label: entry.name, meta: entry.type === 'd' ? '' : formatSize(entry.size) }));
+                const items = await this.listCached(profile, message.remotePath, message.force === true);
                 await this.view?.webview.postMessage({ type: 'response', requestId: message.requestId, items });
             } catch (error) {
                 void vscode.window.showErrorMessage(`${profile.protocol.toUpperCase()} 目录读取失败: ${messageOf(error)}`);
@@ -784,17 +814,69 @@ class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
             const node = message.node;
             const kind = node.kind as 'profile' | 'directory' | 'file';
             const item = new SftpTreeItem(profile, node.remotePath, kind, node.label, vscode.TreeItemCollapsibleState.None);
-            const command = message.action === 'preview' ? 'leidong-tools.sftp.preview'
-                : message.action === 'download' ? 'leidong-tools.sftp.download'
-                    : message.action === 'uploadFolder' ? 'leidong-tools.sftp.uploadFolder'
-                        : 'leidong-tools.sftp.uploadFile';
-            await vscode.commands.executeCommand(command, item);
+            const commands: Record<string, string> = {
+                open: 'leidong-tools.sftp.open', preview: 'leidong-tools.sftp.preview', download: 'leidong-tools.sftp.download',
+                uploadFile: 'leidong-tools.sftp.uploadFile', uploadFolder: 'leidong-tools.sftp.uploadFolder', uploadOverwrite: 'leidong-tools.sftp.uploadOverwrite', backupUpload: 'leidong-tools.sftp.backupUpload',
+                createDirectory: 'leidong-tools.sftp.createDirectory', rename: 'leidong-tools.sftp.rename', delete: 'leidong-tools.sftp.delete',
+                test: 'leidong-tools.sftp.testConnection', disconnect: 'leidong-tools.sftp.disconnect', toggleProfileAuto: 'leidong-tools.sftp.toggleProfileAutoUpload', selectAuto: 'leidong-tools.sftp.selectAutoUploadProfile',
+            };
+            if (message.action === 'copyPath') { await vscode.env.clipboard.writeText(node.remotePath); return; }
+            if (message.action === 'refreshNode') {
+                this.cache.delete(this.cacheKey(profile.id, node.remotePath));
+                await this.view?.webview.postMessage({ type: 'directoryChanged', profileId: profile.id, remotePath: node.remotePath });
+                return;
+            }
+            const command = commands[message.action];
+            if (command) {
+                await vscode.commands.executeCommand(command, item);
+                if (message.action === 'test' || message.action === 'disconnect' || message.action === 'toggleProfileAuto' || message.action === 'selectAuto') { await this.postProfiles(false); }
+            }
         }
     }
 
-    private async postProfiles(): Promise<void> {
+    private async postProfiles(resetDirectories = false): Promise<void> {
         const profiles = await this.configs.loadProfiles(true);
-        await this.view?.webview.postMessage({ type: 'profiles', items: profiles.map(profile => ({ profileId: profile.id, remotePath: profile.remotePath, kind: 'profile', label: profile.name, meta: profile.protocol.toUpperCase() })) });
+        const workspaces = (vscode.workspace.workspaceFolders ?? []).map(folder => {
+            const folderProfiles = profiles.filter(profile => profile.workspaceFolder.uri.toString() === folder.uri.toString());
+            const storedTargets = readAutoUploadTargets(this.context, folder);
+            const activeTargets = new Set(storedTargets ?? folderProfiles.filter(profile => profile.uploadOnSave).map(profile => profile.id));
+            const uploadOnSaveEnabled = vscode.workspace.getConfiguration('leidong-tools', folder.uri).get<boolean>('remoteUploadOnSaveEnabled', true);
+            return {
+                kind: 'workspace', nodeId: `workspace:${folder.uri.toString()}`, workspaceUri: folder.uri.toString(), label: folder.name,
+                uploadOnSaveEnabled,
+                children: folderProfiles.map(profile => {
+                    const autoUploadSelected = profile.uploadOnSave && activeTargets.has(profile.id);
+                    const autoUploadActive = uploadOnSaveEnabled && autoUploadSelected;
+                    return {
+                        profileId: profile.id, remotePath: profile.remotePath, kind: 'profile', label: profile.name,
+                        meta: `${profile.protocol.toUpperCase()} · ${this.service.isConnected(profile) ? '已连接' : '未连接'} · 自动上传${autoUploadActive ? '开' : '关'}`,
+                        workspaceUri: folder.uri.toString(), autoUploadActive, autoUploadSelected, profileUploadOnSave: profile.uploadOnSave,
+                    };
+                }),
+            };
+        });
+        await this.view?.webview.postMessage({ type: 'profiles', items: workspaces, resetDirectories });
+    }
+
+    private cacheKey(profileId: string, remotePath: string): string { return `${profileId}|${remotePath}`; }
+
+    private async listCached(profile: SftpProfile, remotePath: string, force: boolean): Promise<any[]> {
+        const key = this.cacheKey(profile.id, remotePath);
+        if (force) { this.cache.delete(key); }
+        const cached = this.cache.get(key);
+        if (cached) { this.cache.delete(key); this.cache.set(key, cached); return cached; }
+        const running = this.inFlight.get(key);
+        if (running) { return running; }
+        const request = this.service.list(profile, remotePath).then(entries => entries
+            .filter(entry => entry.name !== '.' && entry.name !== '..')
+            .sort((a, b) => (a.type === 'd' ? 0 : 1) - (b.type === 'd' ? 0 : 1) || a.name.localeCompare(b.name))
+            .map(entry => ({ profileId: profile.id, remotePath: joinRemote(remotePath, entry.name), kind: entry.type === 'd' ? 'directory' : 'file', label: entry.name, meta: entry.type === 'd' ? '' : formatSize(entry.size) }))
+        ).finally(() => this.inFlight.delete(key));
+        this.inFlight.set(key, request);
+        const items = await request;
+        this.cache.set(key, items);
+        while (this.cache.size > 100) { this.cache.delete(this.cache.keys().next().value as string); }
+        return items;
     }
 }
 
@@ -802,16 +884,19 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     const configs = new SftpConfigStore();
     const logger = new RemoteLogger();
     const activity = new RemoteActivity();
-    const service = new SftpService(logger);
-    const remoteProvider = new RemoteExplorerWebviewProvider(context.extensionUri, configs, service);
-    const preview = new SftpPreviewProvider(service);
+    const service = new SftpService(logger, (transferred, total) => activity.report(transferred, total));
+    const remoteProvider = new RemoteExplorerWebviewProvider(context, context.extensionUri, configs, service);
+    const preview = new SftpPreviewProvider(service, configs, activity, (profile, remotePath, size) => remoteProvider.updateFile(profile, remotePath, size));
     const viewRegistration = vscode.window.registerWebviewViewProvider(RemoteExplorerWebviewProvider.viewType, remoteProvider);
 
     const run = async (label: string, action: () => Promise<void>) => {
         const finish = activity.begin(label);
         logger.info(undefined, label);
         try {
-            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: label }, action);
+            await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: label, cancellable: true }, async (_progress, token) => {
+                token.onCancellationRequested(() => service.cancelActiveTransfers());
+                await action();
+            });
             logger.info(undefined, `${label}完成`);
             finish(true);
         } catch (error) {
@@ -855,6 +940,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                         void vscode.window.showErrorMessage(`自动上传到 ${targets[index].name} 失败: ${messageOf(result.reason)}`);
                     } else {
                         logger.info(targets[index], '自动上传完成');
+                        if (result.value) { remoteProvider.invalidateDirectory(targets[index], posixDirname(result.value)); }
                     }
                 });
             } finally {
@@ -871,6 +957,8 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     };
 
     const scheduleAutoUpload = (document: vscode.TextDocument): void => {
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (!folder || !vscode.workspace.getConfiguration('leidong-tools', folder.uri).get<boolean>('remoteUploadOnSaveEnabled', true)) { return; }
         const key = document.uri.toString();
         let state = autoUploads.get(key);
         if (!state) {
@@ -894,11 +982,29 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             }
             autoUploads.clear();
         }),
-        vscode.workspace.registerFileSystemProvider('leidong-sftp', preview, { isReadonly: true, isCaseSensitive: true }),
+        vscode.workspace.registerFileSystemProvider('leidong-sftp', preview, { isReadonly: false, isCaseSensitive: true }),
         vscode.commands.registerCommand('leidong-tools.sftp.showLogs', () => logger.show()),
-        vscode.commands.registerCommand('leidong-tools.sftp.refresh', () => remoteProvider.refresh()),
-        vscode.commands.registerCommand('leidong-tools.sftp.openConfig', async () => {
+        vscode.commands.registerCommand('leidong-tools.sftp.toggleUploadOnSave', async () => {
             const folder = await chooseWorkspaceFolder();
+            if (!folder) { return; }
+            const configuration = vscode.workspace.getConfiguration('leidong-tools', folder.uri);
+            const enabled = !configuration.get<boolean>('remoteUploadOnSaveEnabled', true);
+            await configuration.update('remoteUploadOnSaveEnabled', enabled, vscode.ConfigurationTarget.WorkspaceFolder);
+            remoteProvider.refreshProfiles();
+            void vscode.window.showInformationMessage(`保存自动上传已${enabled ? '开启' : '关闭'}`);
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.refresh', () => remoteProvider.refresh()),
+        vscode.commands.registerCommand('leidong-tools.sftp.testConnection', async (item?: SftpTreeItem) => {
+            if (!item) { return; }
+            await run(`测试连接 ${item.profile.name}`, () => service.testConnection(item.profile));
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.disconnect', async (item?: SftpTreeItem) => {
+            if (!item) { return; }
+            await service.disconnect(item.profile);
+            void vscode.window.showInformationMessage(`已断开 ${item.profile.name}`);
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.openConfig', async (workspaceUri?: string) => {
+            const folder = vscode.workspace.workspaceFolders?.find(item => item.uri.toString() === workspaceUri) ?? await chooseWorkspaceFolder();
             if (!folder) { return; }
             const uri = vscode.Uri.joinPath(folder.uri, '.vscode', 'sftp.json');
             try {
@@ -916,7 +1022,13 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('leidong-tools.sftp.preview', async (item: SftpTreeItem) => {
             if (!item || item.kind !== 'file') { return; }
             await run('远程文件预览', async () => {
-                await vscode.commands.executeCommand('vscode.open', preview.createUri(item), { preview: true });
+                await openRemoteFile(preview, item, false);
+            });
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.open', async (item: SftpTreeItem) => {
+            if (!item || item.kind !== 'file') { return; }
+            await run('打开远程文件', async () => {
+                await openRemoteFile(preview, item, true);
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.download', async (item: SftpTreeItem) => {
@@ -931,7 +1043,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                 : target;
             await run('远程下载', async () => {
                 await service.download(item.profile, item.remotePath, localUri, item.kind !== 'file');
-                void vscode.window.showInformationMessage(`已下载到 ${localUri.fsPath}`);
+                void vscode.window.showInformationMessage(`已下载：${path.basename(localUri.fsPath)}`);
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.upload', async (argument?: SftpTreeItem | vscode.Uri, selectionMode?: 'file' | 'folder') => {
@@ -939,7 +1051,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             const resource = argument instanceof vscode.Uri ? argument : undefined;
             const profile = item?.profile ?? await pickProfile(configs);
             if (!profile) { return; }
-            const targetDirectory = item?.kind === 'directory' ? item.remotePath : item?.kind === 'profile' ? item.profile.remotePath : profile.remotePath;
+            const targetDirectory = item?.kind === 'directory' ? item.remotePath : item?.kind === 'profile' ? item.profile.remotePath : item?.kind === 'file' ? posixDirname(item.remotePath) : profile.remotePath;
             const sources = resource ? [resource] : await vscode.window.showOpenDialog({
                 canSelectFiles: selectionMode !== 'folder',
                 canSelectFolders: selectionMode !== 'file',
@@ -957,7 +1069,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                         await service.upload(profile, source, remote);
                     }
                 }
-                remoteProvider.refresh();
+                remoteProvider.invalidateDirectory(profile, targetDirectory);
                 void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${targetDirectory}`);
             });
         }),
@@ -965,6 +1077,15 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             vscode.commands.executeCommand('leidong-tools.sftp.upload', argument, 'file')),
         vscode.commands.registerCommand('leidong-tools.sftp.uploadFolder', (argument?: SftpTreeItem | vscode.Uri) =>
             vscode.commands.executeCommand('leidong-tools.sftp.upload', argument, 'folder')),
+        vscode.commands.registerCommand('leidong-tools.sftp.uploadOverwrite', async (item?: SftpTreeItem) => {
+            if (!item || item.kind !== 'file') { return; }
+            const source = (await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, title: `选择文件覆盖 ${item.label}` }))?.[0];
+            if (!source) { return; }
+            await run('上传覆盖远程文件', async () => {
+                await service.upload(item.profile, source, item.remotePath);
+                remoteProvider.invalidateDirectory(item.profile, posixDirname(item.remotePath));
+            });
+        }),
         vscode.commands.registerCommand('leidong-tools.sftp.uploadCurrentFile', async (resource?: vscode.Uri) => {
             const localUri = resource?.scheme === 'file' ? resource : vscode.window.activeTextEditor?.document.uri;
             if (!localUri || localUri.scheme !== 'file') {
@@ -974,9 +1095,97 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             const profile = await pickProfile(configs, localUri);
             if (!profile) { return; }
             await run(`正在上传到 ${profile.name}`, async () => {
-                await uploadMappedFile(service, profile, localUri, true);
-                remoteProvider.refresh();
+                const uploaded = await uploadMappedFile(service, profile, localUri, true);
+                if (uploaded) { remoteProvider.invalidateDirectory(profile, posixDirname(uploaded)); }
             });
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.backupUpload', async (argument?: SftpTreeItem | vscode.Uri) => {
+            const remoteItem = argument instanceof SftpTreeItem ? argument : undefined;
+            if (remoteItem && remoteItem.kind !== 'file') { return; }
+
+            const localFromArgument = argument instanceof vscode.Uri && argument.scheme === 'file' ? argument : undefined;
+            let profile = remoteItem?.profile;
+            let remotePath = remoteItem?.remotePath;
+            let localUri = localFromArgument;
+
+            if (!profile) {
+                localUri = localUri ?? vscode.window.activeTextEditor?.document.uri;
+                if (!localUri || localUri.scheme !== 'file') {
+                    void vscode.window.showWarningMessage('没有可备份上传的本地文件');
+                    return;
+                }
+                profile = await pickProfile(configs, localUri);
+                if (!profile) { return; }
+                remotePath = mappedRemotePath(profile, localUri);
+            } else {
+                localUri = resolveLocalUriForRemoteItem(remoteItem!);
+                if (!localUri || !(await isReadableFile(localUri))) {
+                    const picked = (await vscode.window.showOpenDialog({
+                        canSelectFiles: true,
+                        canSelectFolders: false,
+                        canSelectMany: false,
+                        title: `选择要上传到 ${path.posix.basename(remotePath!)} 的本地文件`,
+                    }))?.[0];
+                    if (!picked) { return; }
+                    localUri = picked;
+                }
+            }
+
+            const targetRemote = remotePath!;
+            const targetProfile = profile;
+            const sourceUri = localUri!;
+            await run(`备份并上传 ${path.basename(sourceUri.fsPath)}`, async () => {
+                const backupPath = await nextBackupRemotePath(service, targetProfile, targetRemote);
+                await service.rename(targetProfile, targetRemote, backupPath);
+                await service.upload(targetProfile, sourceUri, targetRemote);
+                remoteProvider.invalidateDirectory(targetProfile, posixDirname(targetRemote), { oldPath: targetRemote, newPath: backupPath });
+                void vscode.window.showInformationMessage(`已备份并上传：${path.basename(sourceUri.fsPath)}`);
+            });
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.downloadCurrentFile', async (resource?: vscode.Uri) => {
+            const localUri = resource?.scheme === 'file' ? resource : vscode.window.activeTextEditor?.document.uri;
+            if (!localUri || localUri.scheme !== 'file') {
+                void vscode.window.showWarningMessage('没有可下载覆盖的本地文件');
+                return;
+            }
+            const profile = await pickProfile(configs, localUri);
+            if (!profile) { return; }
+            const remotePath = mappedRemotePath(profile, localUri);
+            const document = vscode.workspace.textDocuments.find(item => item.uri.toString() === localUri.toString());
+            if (document?.isDirty) {
+                const answer = await vscode.window.showWarningMessage('当前文件有未保存修改，下载将覆盖这些修改。是否继续？', { modal: true }, '覆盖并下载');
+                if (answer !== '覆盖并下载') { return; }
+                await vscode.window.showTextDocument(document, { preview: false });
+                await vscode.commands.executeCommand('workbench.action.files.revert');
+            }
+            await run(`正在从 ${profile.name} 下载`, async () => {
+                await service.download(profile, remotePath, localUri, false);
+                const opened = vscode.workspace.textDocuments.find(item => item.uri.toString() === localUri.toString());
+                if (opened) {
+                    await vscode.window.showTextDocument(opened, { preview: false });
+                    await vscode.commands.executeCommand('workbench.action.files.revert');
+                }
+                void vscode.window.showInformationMessage(`已从 ${profile.name} 下载：${path.basename(localUri.fsPath)}`);
+            });
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.toggleProfileAutoUpload', async (item?: SftpTreeItem) => {
+            if (!item) { return; }
+            const profile = item.profile;
+            if (!profile.uploadOnSave) {
+                void vscode.window.showWarningMessage(`${profile.name} 的配置中 uploadOnSave 未开启，请先在 sftp.json 中设为 true`);
+                return;
+            }
+            const folder = profile.workspaceFolder;
+            const eligible = (await configs.loadProfiles(true)).filter(candidate =>
+                candidate.workspaceFolder.uri.toString() === folder.uri.toString() && candidate.uploadOnSave,
+            );
+            const stored = readAutoUploadTargets(context, folder);
+            const selected = new Set(stored ?? eligible.map(candidate => candidate.id));
+            const enabled = !selected.has(profile.id);
+            if (enabled) { selected.add(profile.id); } else { selected.delete(profile.id); }
+            await context.workspaceState.update(autoUploadKey(folder), [...selected]);
+            remoteProvider.refreshProfiles();
+            void vscode.window.showInformationMessage(`${profile.name} 自动上传已${enabled ? '开启' : '关闭'}`);
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.selectAutoUploadProfile', async (item?: SftpTreeItem) => {
             const folder = item?.profile.workspaceFolder ?? await chooseWorkspaceFolder();
@@ -1000,6 +1209,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             );
             if (!selected) { return; }
             await context.workspaceState.update(autoUploadKey(folder), selected.map(entry => entry.profile.id));
+            remoteProvider.refreshProfiles();
             const names = selected.map(entry => entry.profile.name);
             void vscode.window.showInformationMessage(names.length ? `自动上传目标：${names.join('、')}` : '已关闭该工作区的保存自动上传');
         }),
@@ -1008,8 +1218,9 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             const name = await vscode.window.showInputBox({ prompt: '输入新目录名称', validateInput: validateRemoteName });
             if (!name) { return; }
             await run('新建远程目录', async () => {
-                await service.createDirectory(item.profile, joinRemote(item.remotePath, name));
-                remoteProvider.refresh();
+                const created = joinRemote(item.remotePath, name);
+                await service.createDirectory(item.profile, created);
+                remoteProvider.invalidateDirectory(item.profile, item.remotePath);
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.rename', async (item?: SftpTreeItem) => {
@@ -1018,8 +1229,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             const name = await vscode.window.showInputBox({ prompt: '输入新名称', value: currentName, validateInput: validateRemoteName });
             if (!name || name === currentName) { return; }
             await run('远程重命名', async () => {
-                await service.rename(item.profile, item.remotePath, joinRemote(posixDirname(item.remotePath), name));
-                remoteProvider.refresh();
+                const parent = posixDirname(item.remotePath);
+                const target = joinRemote(parent, name);
+                await service.rename(item.profile, item.remotePath, target);
+                remoteProvider.invalidateDirectory(item.profile, parent, { oldPath: item.remotePath, newPath: target });
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.delete', async (item?: SftpTreeItem) => {
@@ -1032,7 +1245,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (answer !== '删除') { return; }
             await run('远程删除', async () => {
                 await service.delete(item.profile, item.remotePath, item.kind === 'directory');
-                remoteProvider.refresh();
+                remoteProvider.invalidateDirectory(item.profile, posixDirname(item.remotePath), { removedPath: item.remotePath });
             });
         }),
         vscode.workspace.onDidSaveTextDocument(document => {
@@ -1056,16 +1269,76 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     );
 }
 
-async function uploadMappedFile(service: SftpService, profile: SftpProfile, localUri: vscode.Uri, notify: boolean): Promise<void> {
-    const relative = path.relative(profile.workspaceFolder.uri.fsPath, localUri.fsPath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-        throw new Error('文件不在该配置所属的工作区中');
-    }
-    const remote = joinRemote(profile.remotePath, relative.replace(/\\/g, '/'));
+async function uploadMappedFile(service: SftpService, profile: SftpProfile, localUri: vscode.Uri, notify: boolean): Promise<string | undefined> {
+    const remote = mappedRemotePath(profile, localUri);
     await service.upload(profile, localUri, remote);
     if (notify) {
         void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${remote}`);
     }
+    return remote;
+}
+
+async function nextBackupRemotePath(service: SftpService, profile: SftpProfile, remotePath: string): Promise<string> {
+    const preferred = `${remotePath}.dis`;
+    if (!(await remoteExists(service, profile, preferred))) { return preferred; }
+    const parsed = path.posix.parse(remotePath);
+    const stamp = formatBackupStamp(new Date());
+    return joinRemote(parsed.dir || '/', `${parsed.base}.${stamp}.dis`);
+}
+
+async function remoteExists(service: SftpService, profile: SftpProfile, remotePath: string): Promise<boolean> {
+    try {
+        await service.stat(profile, remotePath);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function resolveLocalUriForRemoteItem(item: SftpTreeItem): vscode.Uri | undefined {
+    const root = normalizeRemote(item.profile.remotePath);
+    const remote = normalizeRemote(item.remotePath);
+    if (remote !== root && !remote.startsWith(`${root}/`)) { return undefined; }
+    const relative = remote === root ? '' : remote.slice(root.length + 1);
+    if (!relative) { return undefined; }
+    return vscode.Uri.joinPath(item.profile.workspaceFolder.uri, ...relative.split('/'));
+}
+
+async function isReadableFile(uri: vscode.Uri): Promise<boolean> {
+    try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        return (stat.type & vscode.FileType.File) !== 0;
+    } catch {
+        return false;
+    }
+}
+
+function formatBackupStamp(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+const remoteImageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.ico', '.avif', '.svg']);
+
+async function openRemoteFile(preview: SftpPreviewProvider, item: SftpTreeItem, pinned: boolean): Promise<void> {
+    const uri = preview.createUri(item);
+    if (remoteImageExtensions.has(path.posix.extname(item.remotePath).toLowerCase())) {
+        try {
+            await vscode.commands.executeCommand('vscode.openWith', uri, 'imagePreview.previewEditor', { preview: !pinned });
+        } catch (error) {
+            throw new Error(`无法使用 VS Code 图片预览打开 ${path.posix.basename(item.remotePath)}：${messageOf(error)}`);
+        }
+        return;
+    }
+    await vscode.commands.executeCommand('vscode.open', uri, { preview: !pinned });
+}
+
+function mappedRemotePath(profile: SftpProfile, localUri: vscode.Uri): string {
+    const relative = path.relative(profile.workspaceFolder.uri.fsPath, localUri.fsPath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error('文件不在该配置所属的工作区中');
+    }
+    return joinRemote(profile.remotePath, relative.replace(/\\/g, '/'));
 }
 
 async function pickProfile(configs: SftpConfigStore, localUri?: vscode.Uri): Promise<SftpProfile | undefined> {

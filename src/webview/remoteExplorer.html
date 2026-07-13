@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src {{cspSource}}; img-src {{cspSource}}; script-src 'nonce-{{nonce}}';">
+  <link rel="stylesheet" href="{{styleUri}}">
+</head>
+<body>
+  <header class="remote-toolbar">
+    <button id="refresh" title="刷新" aria-label="刷新"><i class="codicon codicon-refresh"></i></button>
+    <button id="auto-upload"><i class="codicon codicon-sync"></i><span>自动上传</span></button>
+    <button id="config"><i class="codicon codicon-settings-gear"></i><span>配置</span></button>
+    <button id="logs"><i class="codicon codicon-output"></i><span>日志</span></button>
+  </header>
+  <div id="remote-viewport"><div id="remote-spacer"><div id="remote-root"></div></div></div>
+  <div id="remote-empty" class="remote-empty">未找到远程配置</div>
+  <script nonce="{{nonce}}" src="{{popoverScriptUri}}"></script>
+  <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+</body>
+</html>

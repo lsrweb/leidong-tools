@@ -2,5 +2,6 @@ node_modules
 *.vsix
 server/vendor
 out/
+.vscode-test/
 dist/
 .codex*

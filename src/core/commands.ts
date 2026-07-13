@@ -19,6 +19,7 @@ import { buildVueRelatedIndexesForDocument } from '../managers/indexManager';
 import { formatXTemplateSelectionOrFallback } from '../providers/xTemplateFormattingProvider';
 import { refreshAllOpenVueDiagnostics, refreshVueDiagnostics } from '../providers/vueDiagnosticsProvider';
 import { refreshProviderConfiguration } from './providers';
+import { warmCssQuickIndexForDocument } from '../providers/cssIndexProvider';
 
 /**
  * 日志配置项接口 (用于 dotLogReplace 命令)
@@ -305,13 +306,14 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
                 return;
             }
             const ok = buildVueRelatedIndexesForDocument(document);
-            if (ok) {
+            const cssOk = await warmCssQuickIndexForDocument(document);
+            if (ok || cssOk) {
                 refreshProviderConfiguration();
                 refreshVueDiagnostics(document);
                 refreshAllOpenVueDiagnostics();
-                vscode.window.showInformationMessage(`Vue 索引已构建: ${path.basename(document.uri.fsPath)}`);
+                vscode.window.showInformationMessage(`索引已构建: ${path.basename(document.uri.fsPath)}`);
             } else {
-                vscode.window.showWarningMessage('当前文件类型不支持 Vue 索引构建');
+                vscode.window.showWarningMessage('当前文件类型不支持索引构建');
             }
         })
     );
