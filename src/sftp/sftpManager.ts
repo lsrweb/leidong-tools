@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { Readable, Writable } from 'stream';
 import { Client as FtpClient, FileType as FtpFileType } from 'basic-ftp';
+import { registerRemoteTerminal } from './remoteTerminal';
 
 // ssh2-sftp-client does not ship first-party TypeScript declarations.
 const SftpClient = require('ssh2-sftp-client');
@@ -162,7 +163,7 @@ export class SftpTreeItem extends vscode.TreeItem {
     }
 }
 
-class SftpConfigStore {
+export class SftpConfigStore {
     async loadProfiles(showErrors = false): Promise<SftpProfile[]> {
         const folders = vscode.workspace.workspaceFolders ?? [];
         const profiles: SftpProfile[] = [];
@@ -888,6 +889,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     const remoteProvider = new RemoteExplorerWebviewProvider(context, context.extensionUri, configs, service);
     const preview = new SftpPreviewProvider(service, configs, activity, (profile, remotePath, size) => remoteProvider.updateFile(profile, remotePath, size));
     const viewRegistration = vscode.window.registerWebviewViewProvider(RemoteExplorerWebviewProvider.viewType, remoteProvider);
+    registerRemoteTerminal(context, configs);
 
     const run = async (label: string, action: () => Promise<void>) => {
         const finish = activity.begin(label);

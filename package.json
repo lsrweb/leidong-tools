@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.6.6",
+  "version": "2.7.0",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -49,7 +49,9 @@
     "onLanguage:javascriptreact",
     "onLanguage:typescriptreact",
     "onLanguage:vue",
-    "onView:leidong-tools.sftpView"
+    "onView:leidong-tools.sftpView",
+    "onTerminalProfile:leidong-tools.remoteTerminal",
+    "onCommand:leidong-tools.remoteTerminal.open"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -337,8 +339,23 @@
         "title": "删除远程资源",
         "category": "雷动三千工具集",
         "icon": "$(trash)"
+      },
+      {
+        "command": "leidong-tools.remoteTerminal.open",
+        "title": "打开远程终端",
+        "category": "雷动三千工具集",
+        "icon": "$(terminal)"
       }
     ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "leidong-tools.remoteTerminal",
+          "title": "雷动远程终端",
+          "icon": "terminal"
+        }
+      ]
+    },
     "configuration": {
       "title": "Leidong Tools",
       "properties": {
@@ -899,34 +916,35 @@
     "test": "vscode-test"
   },
   "dependencies": {
-    "@vue/compiler-dom": "^3.3.9",
-    "acorn": "^8.11.2",
-    "acorn-walk": "^8.3.0",
-    "axios": "^1.6.0",
+    "@vue/compiler-dom": "^3.5.39",
+    "acorn": "^8.17.0",
+    "acorn-walk": "^8.3.5",
+    "axios": "^1.18.1",
     "basic-ftp": "^6.0.1",
-    "cheerio": "^1.0.0-rc.12",
-    "prettier": "^3.8.3",
+    "cheerio": "^1.2.0",
+    "prettier": "^3.9.5",
+    "ssh2": "^1.17.0",
     "ssh2-sftp-client": "^12.1.1",
     "vue-template-compiler": "^2.7.15"
   },
   "devDependencies": {
-    "@babel/parser": "^7.27.0",
-    "@babel/traverse": "^7.27.0",
-    "@babel/types": "^7.27.0",
+    "@babel/parser": "^7.29.7",
+    "@babel/traverse": "^7.29.7",
+    "@babel/types": "^7.29.7",
     "@types/babel__traverse": "^7.20.7",
     "@types/mocha": "^10.0.10",
-    "@types/node": "^20.19.41",
+    "@types/node": "^20.19.43",
     "@types/ssh2-sftp-client": "^9.0.6",
-    "@types/vscode": "^1.99.0",
-    "@typescript-eslint/eslint-plugin": "^8.28.0",
-    "@typescript-eslint/parser": "^8.28.0",
+    "@types/vscode": "^1.125.0",
+    "@typescript-eslint/eslint-plugin": "^8.64.0",
+    "@typescript-eslint/parser": "^8.64.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
-    "@vscode/vsce": "^3.7.1",
-    "eslint": "^9.23.0",
-    "ts-loader": "^9.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "eslint": "^9.39.5",
+    "ts-loader": "^9.6.2",
     "typescript": "^5.8.2",
-    "webpack": "^5.98.0",
+    "webpack": "^5.108.4",
     "webpack-cli": "^6.0.1"
   }
 }
