@@ -194,6 +194,28 @@ my-project/
 
 远程终端会以灰色幽灵文本提示常用命令；在 `cd`、`ls`、`cat`、`vim`、`rm` 等命令后输入路径时，会读取当前远程目录并提示文件或子目录。按 <kbd>Tab</kbd> 接受当前建议；继续输入、退格、回车、移动光标或收到远端输出时会自动隐藏提示，灰色建议不会在接受前发送到服务器。
 
+终端会按连接保存最近 100 条命令。可通过命令面板执行“在远程终端执行收藏/历史命令”；收藏命令使用 `leidong-tools.remoteTerminalFavoriteCommands` 配置。
+
+### Copilot Chat 自定义端点（DeepSeek / MiMo）
+
+需要 VS Code 1.116 或更高版本及 GitHub Copilot Chat。安装后，从命令面板运行“设置 MiMo API Key”或“设置 DeepSeek API Key”，密钥会保存在 VS Code 安全存储，不会写入项目的设置文件。随后在 Copilot Chat 的模型选择器中选择 `MiMo V2.5 Pro`、`MiMo V2.5` 或 DeepSeek V4 模型即可使用。
+
+MiMo 默认使用 **TokenPlan 中国区** OpenAI 兼容地址 `https://token-plan-cn.xiaomimimo.com/v1`。先运行“设置 MiMo TokenPlan API Key”保存以 `tp-` 开头的专属密钥；设置 `leidong-tools.copilot.mimoTokenPlanRegion` 可改为 `sgp`（新加坡）或 `ams`（欧洲）。如需按量计费，将 `leidong-tools.copilot.mimoAccessMode` 改为 `payAsYouGo`，然后保存 `sk-` 密钥。两类密钥独立，不能混用。代理或新模型名称可通过 `mimoModelIdOverrides` 覆盖，例如：
+
+```json
+{
+  "leidong-tools.copilot.mimoModelIdOverrides": {
+    "mimo-v2.5-pro": "mimo-v2.5-pro"
+  }
+}
+```
+
+CSS class 补全会在提示详情中显示该 class 的来源及 CSS 声明内容；同名 class 存在多处定义时会展示多个来源，便于确认样式实际内容。本地 `<link rel="stylesheet">` 外部 CSS 默认不索引，开启 `leidong-tools.cssIndexLinkCssEnabled` 后才会读取；单个 CSS 默认超过 2000 行会跳过并在右下角提示，可通过 `leidong-tools.cssIndexMaxFileLines` 调整阈值。索引会在打开或切换文件时后台预热，并只在相关文件变更时失效重建。
+
+本地文件右键提供“比较本地与远程文件”和“同步当前文件（比较后选择）”：前者可打开 VS Code 原生差异编辑器，后者先显示大小与修改时间，再由你明确选择上传覆盖或下载覆盖。远端不存在时会提示可直接上传。
+
+默认 `.vscode/sftp.json` 带有字段补全和校验；多连接可通过命令面板“测试全部远程连接”批量诊断。
+
 扩展侧边栏提供 **远程资源** 视图，支持远程目录浏览、文件预览、上传、下载、新建目录、重命名和删除。默认读取当前工作区的 `.vscode/sftp.json`，配置既可以是单个对象，也可以是多个配置组成的数组：
 
 远程资源按“工作区 → 连接 → 目录/文件”分组。文本文件可直接在编辑器中修改并保存回原服务器；图片和二进制文件使用 VS Code 原生预览。右键菜单提供连接测试、断开、刷新、上传、下载、新建目录、重命名、删除和复制远程路径等完整操作。
@@ -287,7 +309,8 @@ my-project/
 | `rebuildOnSave` | `false` | 旧配置，建议改用 `indexBuildMode` |
 | `maxIndexEntries` | `200` | Vue 索引 LRU 缓存上限 |
 | `maxTemplateIndexEntries` | `300` | 模板索引 LRU 缓存上限 |
-| `cssIndexLinkCssEnabled` | `false` | CSS 快速索引是否读取当前 HTML 中 link 引入的本地 CSS；默认只索引当前 HTML 的 style 标签 |
+| `cssIndexLinkCssEnabled` | `false` | CSS 快速索引是否读取当前 HTML 中 link 引入的本地 CSS；默认关闭 |
+| `cssIndexMaxFileLines` | `2000` | CSS 自动索引单文件行数上限；超过时跳过并提示，`0` 表示不限制 |
 | `cssIndexExtraPaths` | `[]` | 额外参与 CSS 索引的文件、目录或 glob，支持绝对路径、工作区相对路径、`${workspaceFolder}`、`${fileDir}` |
 | `cssIndexExcludePatterns` | `[]` | CSS 索引排除规则，支持路径/文件名片段或正则，例如 `layui\\.css$` |
 | `devScriptPatterns` | `[]` | 自定义 dev.js 路径模式，支持 `${dir}` `${base}` |
@@ -309,6 +332,7 @@ my-project/
   "leidong-tools.indexLogging": false,
   // CSS 快速索引：默认无需配置即可读取当前 HTML 的 <style>
   "leidong-tools.cssIndexLinkCssEnabled": false,
+  "leidong-tools.cssIndexMaxFileLines": 2000,
   "leidong-tools.cssIndexExtraPaths": [
     "${workspaceFolder}/common/css",
     "theme/**/*.css"

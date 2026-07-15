@@ -1000,6 +1000,19 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (!item) { return; }
             await run(`测试连接 ${item.profile.name}`, () => service.testConnection(item.profile));
         }),
+        vscode.commands.registerCommand('leidong-tools.sftp.testAllConnections', async () => {
+            const profiles = await configs.loadProfiles(true);
+            if (!profiles.length) {
+                void vscode.window.showWarningMessage('未找到远程连接配置');
+                return;
+            }
+            await run(`测试 ${profiles.length} 个远程连接`, async () => {
+                const results = await Promise.allSettled(profiles.map(profile => service.testConnection(profile)));
+                const failed = results.flatMap((result, index) => result.status === 'rejected' ? [`${profiles[index].name}: ${messageOf(result.reason)}`] : []);
+                if (failed.length) { throw new Error(`失败 ${failed.length} 个：${failed.join('；')}`); }
+                void vscode.window.showInformationMessage(`全部 ${profiles.length} 个远程连接测试成功`);
+            });
+        }),
         vscode.commands.registerCommand('leidong-tools.sftp.disconnect', async (item?: SftpTreeItem) => {
             if (!item) { return; }
             await service.disconnect(item.profile);
@@ -1099,6 +1112,61 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             await run(`正在上传到 ${profile.name}`, async () => {
                 const uploaded = await uploadMappedFile(service, profile, localUri, true);
                 if (uploaded) { remoteProvider.invalidateDirectory(profile, posixDirname(uploaded)); }
+            });
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.compareCurrentFile', async (resource?: vscode.Uri) => {
+            const localUri = resource?.scheme === 'file' ? resource : vscode.window.activeTextEditor?.document.uri;
+            if (!localUri || localUri.scheme !== 'file') {
+                void vscode.window.showWarningMessage('没有可比较的本地文件');
+                return;
+            }
+            const profile = await pickProfile(configs, localUri);
+            if (!profile) { return; }
+            const comparison = await compareMappedFile(service, profile, localUri);
+            if (!comparison.remote) {
+                void vscode.window.showInformationMessage(formatComparison(comparison), { modal: true });
+                return;
+            }
+            const answer = await vscode.window.showInformationMessage(formatComparison(comparison), { modal: true }, '打开文本差异');
+            if (answer === '打开文本差异') {
+                const remoteItem = new SftpTreeItem(profile, comparison.remotePath, 'file', path.posix.basename(comparison.remotePath), vscode.TreeItemCollapsibleState.None);
+                const remoteUri = preview.createUri(remoteItem);
+                await vscode.commands.executeCommand('vscode.diff', localUri, remoteUri, `本地 ↔ ${profile.name}: ${path.basename(localUri.fsPath)}`);
+            }
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.syncCurrentFile', async (resource?: vscode.Uri) => {
+            const localUri = resource?.scheme === 'file' ? resource : vscode.window.activeTextEditor?.document.uri;
+            if (!localUri || localUri.scheme !== 'file') {
+                void vscode.window.showWarningMessage('没有可同步的本地文件');
+                return;
+            }
+            const profile = await pickProfile(configs, localUri);
+            if (!profile) { return; }
+            const comparison = await compareMappedFile(service, profile, localUri);
+            const actions: vscode.QuickPickItem[] = [
+                { label: '上传本地文件', description: `覆盖远端 ${path.posix.basename(comparison.remotePath)}`, detail: formatComparison(comparison) },
+                { label: '下载远程文件', description: `覆盖本地 ${path.basename(localUri.fsPath)}`, detail: formatComparison(comparison) },
+            ];
+            const action = await vscode.window.showQuickPick(actions, { placeHolder: '确认差异后选择同步方向' });
+            if (!action) { return; }
+            if (action.label === '上传本地文件') {
+                await run(`同步上传到 ${profile.name}`, async () => {
+                    await service.upload(profile, localUri, comparison.remotePath);
+                    remoteProvider.invalidateDirectory(profile, posixDirname(comparison.remotePath));
+                });
+                return;
+            }
+            const document = vscode.workspace.textDocuments.find(item => item.uri.toString() === localUri.toString());
+            if (document?.isDirty) {
+                const answer = await vscode.window.showWarningMessage('当前文件有未保存修改，下载将覆盖这些修改。是否继续？', { modal: true }, '覆盖并下载');
+                if (answer !== '覆盖并下载') { return; }
+            }
+            await run(`同步下载自 ${profile.name}`, async () => {
+                await service.download(profile, comparison.remotePath, localUri, false);
+                if (document) {
+                    await vscode.window.showTextDocument(document, { preview: false });
+                    await vscode.commands.executeCommand('workbench.action.files.revert');
+                }
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.backupUpload', async (argument?: SftpTreeItem | vscode.Uri) => {
@@ -1278,6 +1346,40 @@ async function uploadMappedFile(service: SftpService, profile: SftpProfile, loca
         void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${remote}`);
     }
     return remote;
+}
+
+interface MappedFileComparison {
+    remotePath: string;
+    local: { size: number; mtime: number };
+    remote?: { size: number; mtime: number };
+}
+
+async function compareMappedFile(service: SftpService, profile: SftpProfile, localUri: vscode.Uri): Promise<MappedFileComparison> {
+    const local = await vscode.workspace.fs.stat(localUri);
+    if ((local.type & vscode.FileType.File) === 0) { throw new Error('只能比较文件'); }
+    const remotePath = mappedRemotePath(profile, localUri);
+    try {
+        const remote = await service.stat(profile, remotePath);
+        if (remote.directory) { throw new Error('远端同名路径是目录'); }
+        return { remotePath, local: { size: local.size, mtime: local.mtime }, remote: { size: remote.size, mtime: remote.mtime } };
+    } catch (error) {
+        const message = messageOf(error);
+        if (message === '远端同名路径是目录' || !/no such|not found|does not exist|ENOENT|550/i.test(message)) { throw error; }
+        return { remotePath, local: { size: local.size, mtime: local.mtime } };
+    }
+}
+
+function formatComparison(comparison: MappedFileComparison): string {
+    const local = `本地 ${formatSize(comparison.local.size)} · ${formatTime(comparison.local.mtime)}`;
+    if (!comparison.remote) { return `${local}；远端不存在，可直接上传。`; }
+    const remote = `远端 ${formatSize(comparison.remote.size)} · ${formatTime(comparison.remote.mtime)}`;
+    const sameSize = comparison.local.size === comparison.remote.size;
+    const sameTime = comparison.local.mtime > 0 && comparison.remote.mtime > 0 && Math.abs(comparison.local.mtime - comparison.remote.mtime) < 2000;
+    return `${local}；${remote}；${sameSize && sameTime ? '大小和时间一致' : '存在差异'}`;
+}
+
+function formatTime(value: number): string {
+    return value > 0 ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '时间未知';
 }
 
 async function nextBackupRemotePath(service: SftpService, profile: SftpProfile, remotePath: string): Promise<string> {

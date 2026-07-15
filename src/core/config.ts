@@ -83,6 +83,7 @@ export const FILE_SELECTORS = {
         { scheme: 'file', pattern: '**/*.dev.js' }
     ],
     HTML: [
-        { scheme: 'file', language: 'html' }
+        { scheme: 'file', language: 'html' },
+        { scheme: 'file', language: 'vue' }
     ]
 } as const;

@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "2.7.0",
+  "version": "3.0.1",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -32,7 +32,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "vscode": "^1.99.0"
+    "vscode": "^1.116.0"
   },
   "categories": [
     "Programming Languages",
@@ -51,10 +51,26 @@
     "onLanguage:vue",
     "onView:leidong-tools.sftpView",
     "onTerminalProfile:leidong-tools.remoteTerminal",
-    "onCommand:leidong-tools.remoteTerminal.open"
+    "onCommand:leidong-tools.remoteTerminal.open",
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "languageModelChatProviders": [
+      {
+        "vendor": "leidong-tools",
+        "displayName": "雷动自定义端点（DeepSeek / MiMo）"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          ".vscode/sftp.json",
+          "**/.vscode/sftp.json"
+        ],
+        "url": "./schemas/sftp.schema.json"
+      }
+    ],
     "chatParticipants": [
       {
         "id": "leidong-tools.analyzer",
@@ -71,6 +87,41 @@
       }
     ],
     "commands": [
+      {
+        "command": "leidong-tools.copilot.setDeepSeekApiKey",
+        "title": "设置 DeepSeek API Key",
+        "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.copilot.setMiMoApiKey",
+        "title": "设置 MiMo 当前模式 API Key",
+        "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.copilot.setMiMoTokenPlanApiKey",
+        "title": "设置 MiMo TokenPlan API Key",
+        "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.copilot.setMiMoPayAsYouGoApiKey",
+        "title": "设置 MiMo 按量计费 API Key",
+        "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.copilot.clearDeepSeekApiKey",
+        "title": "清除 DeepSeek API Key",
+        "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.copilot.clearMiMoApiKey",
+        "title": "清除 MiMo API Key",
+        "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.copilot.showLogs",
+        "title": "显示自定义端点日志",
+        "category": "雷动三千工具集：自定义端点"
+      },
       {
         "command": "leidong-tools.goToDefinitionInNewTab",
         "title": "HTML Vue: Go To Definition in New Tab",
@@ -345,6 +396,30 @@
         "title": "打开远程终端",
         "category": "雷动三千工具集",
         "icon": "$(terminal)"
+      },
+      {
+        "command": "leidong-tools.remoteTerminal.runSavedCommand",
+        "title": "在远程终端执行收藏/历史命令",
+        "category": "雷动三千工具集",
+        "icon": "$(history)"
+      },
+      {
+        "command": "leidong-tools.sftp.compareCurrentFile",
+        "title": "比较本地与远程文件",
+        "category": "雷动三千工具集",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "leidong-tools.sftp.syncCurrentFile",
+        "title": "同步当前文件（比较后选择）",
+        "category": "雷动三千工具集",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "leidong-tools.sftp.testAllConnections",
+        "title": "测试全部远程连接",
+        "category": "雷动三千工具集",
+        "icon": "$(debug-start)"
       }
     ],
     "terminal": {
@@ -413,7 +488,13 @@
         "leidong-tools.cssIndexLinkCssEnabled": {
           "type": "boolean",
           "default": false,
-          "description": "CSS 快速索引是否读取当前 HTML 中 link rel=stylesheet 引入的本地 CSS。默认关闭，只索引当前 HTML 内的 style 标签。"
+          "description": "CSS 快速索引是否读取当前 HTML 中 link rel=stylesheet 引入的本地 CSS。默认关闭；开启后会自动跳过超过 cssIndexMaxFileLines 的超大 CSS。"
+        },
+        "leidong-tools.cssIndexMaxFileLines": {
+          "type": "number",
+          "default": 2000,
+          "minimum": 0,
+          "description": "CSS 自动索引的单文件行数上限，默认 2000 行。超过上限的 CSS 会跳过并提示；设为 0 表示不限制。"
         },
         "leidong-tools.cssIndexExtraPaths": {
           "type": "array",
@@ -577,6 +658,60 @@
             "type": "string"
           },
           "description": "高级上传排除正则列表，匹配工作区相对路径（统一使用 / 分隔符），例如 (^|/)node_modules/、\\.min\\.js$。"
+        },
+        "leidong-tools.remoteTerminalFavoriteCommands": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "远程终端收藏命令。打开远程终端后，通过“在远程终端执行收藏/历史命令”选择执行。"
+        },
+        "leidong-tools.copilot.deepseekBaseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com",
+          "description": "DeepSeek 或其兼容服务的 OpenAI Chat Completions 基础地址。"
+        },
+        "leidong-tools.copilot.mimoBaseUrl": {
+          "type": "string",
+          "default": "https://api.xiaomimimo.com/v1",
+          "description": "MiMo OpenAI 兼容 API 基础地址；按套餐需要可改为官方 Token Plan 地址。"
+        },
+        "leidong-tools.copilot.mimoAccessMode": {
+          "type": "string",
+          "default": "tokenPlan",
+          "enum": ["tokenPlan", "payAsYouGo", "custom"],
+          "enumDescriptions": [
+            "MiMo TokenPlan 订阅；使用 tp- 密钥和选择的 TokenPlan 区域端点。",
+            "MiMo 按量计费；使用 sk- 密钥和官方 api.xiaomimimo.com 端点。",
+            "使用 mimoBaseUrl 中的自定义兼容端点。"
+          ],
+          "description": "MiMo 凭据和端点模式。TokenPlan 与按量计费密钥相互独立，不能混用。"
+        },
+        "leidong-tools.copilot.mimoTokenPlanRegion": {
+          "type": "string",
+          "default": "cn",
+          "enum": ["cn", "sgp", "ams"],
+          "enumDescriptions": ["中国集群", "新加坡集群", "欧洲集群"],
+          "description": "MiMo TokenPlan OpenAI 兼容端点区域；以 TokenPlan 页面显示的专属地址为准。"
+        },
+        "leidong-tools.copilot.deepseekModelIdOverrides": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "description": "将 Copilot 模型 ID 映射为 DeepSeek 或兼容端点实际模型 ID。"
+        },
+        "leidong-tools.copilot.mimoModelIdOverrides": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "description": "将 MiMo 模型 ID 映射为 MiMo API 实际模型 ID；适用于官方模型更新或兼容网关。"
+        },
+        "leidong-tools.copilot.maxTokens": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "自定义端点单次最大输出 token；0 表示交由模型 API 决定。"
         }
       }
     },
@@ -695,6 +830,16 @@
           "group": "leidong-tools@3"
         },
         {
+          "command": "leidong-tools.sftp.compareCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@4"
+        },
+        {
+          "command": "leidong-tools.sftp.syncCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@5"
+        },
+        {
           "command": "leidong-tools.sftp.uploadFolder",
           "when": "resourceScheme == file && explorerResourceIsFolder",
           "group": "leidong-tools@4"
@@ -725,6 +870,16 @@
           "command": "leidong-tools.sftp.backupUpload",
           "when": "resourceScheme == file",
           "group": "leidong-tools@3"
+        },
+        {
+          "command": "leidong-tools.sftp.compareCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@4"
+        },
+        {
+          "command": "leidong-tools.sftp.syncCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@5"
         },
         {
           "command": "leidong-tools.buildCurrentVueIndex",
@@ -935,7 +1090,7 @@
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.19.43",
     "@types/ssh2-sftp-client": "^9.0.6",
-    "@types/vscode": "^1.99.0",
+    "@types/vscode": "^1.116.0",
     "@typescript-eslint/eslint-plugin": "^8.64.0",
     "@typescript-eslint/parser": "^8.64.0",
     "@vscode/test-cli": "^0.0.10",

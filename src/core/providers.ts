@@ -26,7 +26,7 @@ import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView'
 import { GameSidebarProvider } from '../games/gameWebviewProvider';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
-import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache } from '../providers/cssIndexProvider';
+import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache, warmCssQuickIndexForDocument } from '../providers/cssIndexProvider';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -38,6 +38,21 @@ export function refreshProviderConfiguration(): void {
  * 注册所有 Language Providers
  */
 export function registerProviders(context: vscode.ExtensionContext, fileWatchManager: FileWatchManager) {
+    const cssWarmTimers = new Map<string, NodeJS.Timeout>();
+    const scheduleCssIndexWarm = (document: vscode.TextDocument | undefined): void => {
+        if (!document || document.uri.scheme !== 'file' || (document.languageId !== 'html' && document.languageId !== 'vue')) { return; }
+        const key = document.uri.toString();
+        const previous = cssWarmTimers.get(key);
+        if (previous) { clearTimeout(previous); }
+        cssWarmTimers.set(key, setTimeout(() => {
+            cssWarmTimers.delete(key);
+            void warmCssQuickIndexForDocument(document).catch(() => undefined);
+        }, 150));
+    };
+    const invalidateCssIndexes = (): void => {
+        clearCssQuickIndexCache();
+        scheduleCssIndexWarm(vscode.window.activeTextEditor?.document);
+    };
     const vueLanguageSelector = [
         { scheme: 'file', language: 'html' },
         { scheme: 'file', language: 'javascript' },
@@ -63,6 +78,10 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
 
     // 注册悬停提供器
     context.subscriptions.push(
+        new vscode.Disposable(() => {
+            for (const timer of cssWarmTimers.values()) { clearTimeout(timer); }
+            cssWarmTimers.clear();
+        }),
         vscode.languages.registerHoverProvider(
             vueLanguageSelector,
             new VueHoverProvider()
@@ -200,6 +219,13 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             updateInlineRefDecorations(editor);
             updateLaytplBracketHighlights(editor);
+            scheduleCssIndexWarm(editor?.document);
+        }),
+        vscode.workspace.onDidOpenTextDocument(scheduleCssIndexWarm),
+        vscode.workspace.onDidSaveTextDocument(document => {
+            if (document.languageId === 'css' || document.languageId === 'html' || document.languageId === 'vue') {
+                invalidateCssIndexes();
+            }
         }),
         vscode.window.onDidChangeTextEditorSelection((event) => {
             updateLaytplBracketHighlights(event.textEditor);
@@ -211,18 +237,27 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
                 e.affectsConfiguration('leidong-tools.enableAIAnalysis') ||
                 e.affectsConfiguration('leidong-tools.enableColorPicker') ||
                 e.affectsConfiguration('leidong-tools.cssIndexLinkCssEnabled') ||
+                e.affectsConfiguration('leidong-tools.cssIndexMaxFileLines') ||
                 e.affectsConfiguration('leidong-tools.cssIndexExtraPaths') ||
                 e.affectsConfiguration('leidong-tools.cssIndexExcludePatterns') ||
                 e.affectsConfiguration('leidong-tools.codeLensPosition') ||
                 e.affectsConfiguration('leidong-tools.enableAIAnalysis')) {
-                clearCssQuickIndexCache();
+                invalidateCssIndexes();
                 refreshConfiguration();
             }
         })
     );
+    const cssWatcher = vscode.workspace.createFileSystemWatcher('**/*.css');
+    context.subscriptions.push(
+        cssWatcher,
+        cssWatcher.onDidCreate(invalidateCssIndexes),
+        cssWatcher.onDidChange(invalidateCssIndexes),
+        cssWatcher.onDidDelete(invalidateCssIndexes),
+    );
     // 初始化当前编辑器的装饰
     updateInlineRefDecorations(vscode.window.activeTextEditor);
     updateLaytplBracketHighlights(vscode.window.activeTextEditor);
+    scheduleCssIndexWarm(vscode.window.activeTextEditor?.document);
 
     // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
     context.subscriptions.push(

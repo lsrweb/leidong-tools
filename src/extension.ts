@@ -9,11 +9,12 @@ import { registerCommands } from './core/commands';
 import { registerProviders } from './core/providers';
 import { registerIndexLifecycle } from './managers/indexManager';
 import { initVueDiagnostics } from './providers/vueDiagnosticsProvider';
+import { activate as activateCustomEndpoint, deactivate as deactivateCustomEndpoint } from './copilotByok/runtime';
 
 /**
  * Extension activation function
  */
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     console.log('🚀 Extension "unitools" is now active!');
 
     // Register all commands and get fileWatchManager
@@ -28,6 +29,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Register Vue diagnostics (unused variables, template expression checks)
     initVueDiagnostics(context);
 
+    // Registers the BYOK provider shown in Copilot Chat's model picker.
+    await activateCustomEndpoint(context);
+
 
     console.log('✅ All commands and providers registered successfully!');
 }
@@ -35,6 +39,7 @@ export function activate(context: vscode.ExtensionContext) {
 /**
  * Extension deactivation function
  */
-export function deactivate() {
+export async function deactivate() {
+    await deactivateCustomEndpoint();
     console.log('👋 Extension "unitools" deactivated');
 }

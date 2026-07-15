@@ -1,5 +1,53 @@
 # 更新日志 (Changelog)
 
+## [3.0.1] - 2026-07-14
+
+### 🐛 修复与完善
+
+- 修复自定义端点与上游 DeepSeek 扩展共用 vendor 时，MiMo 模型可能未出现在 Copilot Chat 模型选择器的问题；改用独立 `leidong-tools` provider。
+- MiMo 新增正式 TokenPlan 模式，默认使用中国区 OpenAI 兼容端点 `https://token-plan-cn.xiaomimimo.com/v1` 和独立 `tp-` 密钥；可切换新加坡、欧洲、按量计费或自定义端点。
+- TokenPlan 与按量计费密钥分开保存，避免 `tp-` 与 `sk-` 密钥混用。
+
+## [3.0.0] - 2026-07-14
+
+### ✨ 新增
+
+- 集成基于 VS Code Copilot Chat 模型提供器的自定义端点能力：DeepSeek V4 与 MiMo 模型可直接在 Copilot Chat 模型选择器中选用，支持流式对话、工具调用和自定义 OpenAI Chat Completions 端点。
+- 新增 DeepSeek、MiMo 独立 API Key 命令；密钥分别保存于 VS Code SecretStorage，不写入工作区配置。
+- 新增 MiMo V2.5 Pro、MiMo V2.5 官方模型及 `mimoBaseUrl`、`mimoModelIdOverrides` 设置，默认使用 `https://api.xiaomimimo.com/v1`。
+
+### ⚠️ 兼容性
+
+- 该功能依赖 VS Code 1.116 的 Language Model Chat Provider API，扩展最低 VS Code 版本提升至 1.116；旧版 VS Code 请继续使用 2.8.x。
+
+### 📄 许可
+
+- 包含并修改了 Vizards/deepseek-v4-for-copilot 的 MIT 授权代码，完整声明见 THIRD_PARTY_NOTICES.md。
+
+## [2.8.2] - 2026-07-14
+
+### ⚡ 性能优化
+
+- CSS 索引改为事件驱动缓存：仅在相关 HTML/Vue/CSS 保存、配置变更或 VS Code 文件监视器报告 CSS 变更时失效，不再使用固定 TTL 重复读取。
+- 外部 `<link rel="stylesheet">` 恢复为默认关闭；开启后仅自动索引不超过 2000 行的 CSS。超限文件会跳过并在右下角明确提示，可通过 `cssIndexMaxFileLines` 调整。
+
+## [2.8.1] - 2026-07-14
+
+### 🐛 修复
+
+- 修复本地 `<link rel="stylesheet">` 外部 CSS 默认未进入索引的问题；改为后台预热、并行读取和共享进行中的索引任务，显著降低首个 class 补全等待。
+
+## [2.8.0] - 2026-07-14
+
+### ✨ 新增
+
+- CSS 快速索引支持 Vue 文件和 CSS `@import` 链路；class 补全项会显示对应 CSS 声明内容和来源。
+- CSS 本地 `<link rel="stylesheet">` 索引改为默认开启，并改为后台预热、并行读取和 30 秒缓存，避免首个 class 补全卡顿。
+- `.vscode/sftp.json` 新增 JSON Schema 校验与字段说明，支持单对象和多连接数组。
+- 新增“测试全部远程连接”命令，用于快速诊断多配置文件。
+- 本地资源管理器和编辑器新增“比较本地与远程文件”“同步当前文件（比较后选择）”；可查看 VS Code 文本差异，再明确选择上传或下载。
+- 远程终端新增每个连接独立的历史命令记录和收藏命令执行入口。
+
 ## [2.7.0] - 2026-07-14
 
 ### ✨ 新增

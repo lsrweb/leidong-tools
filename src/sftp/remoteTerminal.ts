@@ -13,10 +13,19 @@ const pathCommands = new Set(['cd', 'ls', 'cat', 'less', 'head', 'tail', 'grep',
 
 /** Interactive shells use a dedicated SSH client and never block SFTP transfers. */
 export function registerRemoteTerminal(context: vscode.ExtensionContext, configs: SftpConfigStore): void {
+    let activeTerminal: RemoteSshTerminal | undefined;
+    const recordHistory = (profile: SftpProfile, command: string): void => {
+        const trimmed = command.trim();
+        if (!trimmed) { return; }
+        const key = `remoteTerminal.history.${profile.id}`;
+        const previous = context.workspaceState.get<string[]>(key, []).filter(item => item !== trimmed);
+        void context.workspaceState.update(key, [trimmed, ...previous].slice(0, 100));
+    };
+    const create = (profile: SftpProfile): vscode.TerminalProfile => createTerminalProfile(profile, terminal => { activeTerminal = terminal; }, recordHistory);
     const provider: vscode.TerminalProfileProvider = {
         provideTerminalProfile: async (token) => {
             const profile = await pickTerminalProfile(configs, token);
-            return profile ? createTerminalProfile(profile) : undefined;
+            return profile ? create(profile) : undefined;
         },
     };
 
@@ -25,17 +34,37 @@ export function registerRemoteTerminal(context: vscode.ExtensionContext, configs
         vscode.commands.registerCommand('leidong-tools.remoteTerminal.open', async () => {
             const profile = await pickTerminalProfile(configs);
             if (!profile) { return; }
-            const terminal = vscode.window.createTerminal(createTerminalProfile(profile).options);
+            const terminal = vscode.window.createTerminal(create(profile).options);
             terminal.show();
+        }),
+        vscode.commands.registerCommand('leidong-tools.remoteTerminal.runSavedCommand', async () => {
+            if (!activeTerminal?.isOpen) {
+                void vscode.window.showWarningMessage('请先打开一个雷动远程终端');
+                return;
+            }
+            const configuration = vscode.workspace.getConfiguration('leidong-tools', activeTerminal.profile.workspaceFolder.uri);
+            const favorites = configuration.get<string[]>('remoteTerminalFavoriteCommands', []);
+            const history = context.workspaceState.get<string[]>(`remoteTerminal.history.${activeTerminal.profile.id}`, []);
+            const picked = await vscode.window.showQuickPick([
+                ...favorites.map(command => ({ label: command, description: '收藏命令' })),
+                ...history.filter(command => !favorites.includes(command)).map(command => ({ label: command, description: '历史命令' })),
+            ], { placeHolder: '选择要在当前远程终端执行的命令' });
+            if (picked) { activeTerminal.runCommand(picked.label); }
         }),
     );
 }
 
-function createTerminalProfile(profile: SftpProfile): vscode.TerminalProfile {
+function createTerminalProfile(
+    profile: SftpProfile,
+    onCreated: (terminal: RemoteSshTerminal) => void,
+    onCommandSubmitted: (profile: SftpProfile, command: string) => void,
+): vscode.TerminalProfile {
+    const terminal = new RemoteSshTerminal(profile, onCommandSubmitted);
+    onCreated(terminal);
     return new vscode.TerminalProfile({
         name: `远程终端: ${profile.name}`,
         iconPath: new vscode.ThemeIcon('terminal'),
-        pty: new RemoteSshTerminal(profile),
+        pty: terminal,
         isTransient: true,
     });
 }
@@ -85,8 +114,20 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
     readonly onDidClose = this.closeEmitter.event;
     readonly onDidChangeName = this.nameEmitter.event;
 
-    constructor(private readonly profile: SftpProfile) {
+    constructor(
+        readonly profile: SftpProfile,
+        private readonly onCommandSubmitted: (profile: SftpProfile, command: string) => void,
+    ) {
         this.currentDirectory = profile.remotePath;
+    }
+
+    get isOpen(): boolean { return !this.closed && !!this.channel; }
+
+    runCommand(command: string): void {
+        if (!this.isOpen || !command.trim()) { return; }
+        this.clearGhost();
+        this.trackInput(`${command}\n`);
+        this.sendInput(`${command}\n`);
     }
 
     open(initialDimensions: vscode.TerminalDimensions | undefined): void {
@@ -229,6 +270,7 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
         }
         if (data.includes('\r') || data.includes('\n')) {
             const lines = data.split(/\r?\n|\r/);
+            this.onCommandSubmitted(this.profile, this.inputLine);
             this.updateDirectoryFromCommand(this.inputLine);
             this.inputLine = lines[lines.length - 1] || '';
             this.clearCompletionTimer();

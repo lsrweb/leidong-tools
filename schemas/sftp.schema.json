@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "雷动远程连接配置",
+  "description": "支持单个连接对象或连接数组。密码仍兼容明文配置；请勿提交包含真实密码的配置文件。",
+  "oneOf": [
+    { "$ref": "#/$defs/profile" },
+    {
+      "type": "array",
+      "items": { "$ref": "#/$defs/profile" }
+    }
+  ],
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "required": ["host", "username", "remotePath"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "连接显示名称" },
+        "host": { "type": "string", "description": "主机名或 IP 地址" },
+        "protocol": { "type": "string", "enum": ["sftp", "ssh", "ftp", "ftps"], "default": "sftp" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "username": { "type": "string" },
+        "password": { "type": "string", "description": "建议不要提交到版本库" },
+        "privateKey": { "type": "string", "description": "私钥路径，可为工作区相对路径或绝对路径" },
+        "passphrase": { "type": "string" },
+        "remotePath": { "type": "string", "description": "远端项目根目录" },
+        "uploadOnSave": { "type": "boolean", "default": false },
+        "secure": { "oneOf": [{ "type": "boolean" }, { "const": "implicit" }], "description": "仅 FTPS 使用" },
+        "rejectUnauthorized": { "type": "boolean", "default": true, "description": "仅 FTPS 使用" }
+      }
+    }
+  }
+}

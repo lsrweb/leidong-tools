@@ -11,6 +11,7 @@ interface CssIndexEntry {
     name: string;
     sources: Set<string>;
     value?: string;
+    contents: Map<string, string>;
 }
 
 interface CssSource {
@@ -25,9 +26,10 @@ interface ExcludeMatcher {
     regex?: RegExp;
 }
 
-const cache = new Map<string, { signature: string; builtAt: number; index: CssIndex }>();
+const cache = new Map<string, { signature: string; index: CssIndex }>();
+const inFlight = new Map<string, Promise<CssIndex>>();
 const warnedRegex = new Set<string>();
-const CACHE_TTL_MS = 3000;
+const warnedLargeSources = new Set<string>();
 const MAX_DIRECTORY_CSS_FILES = 500;
 
 export class CssQuickIndexCompletionProvider implements vscode.CompletionItemProvider {
@@ -36,7 +38,7 @@ export class CssQuickIndexCompletionProvider implements vscode.CompletionItemPro
         position: vscode.Position,
         token: vscode.CancellationToken,
     ): Promise<vscode.CompletionList | vscode.CompletionItem[]> {
-        if (token.isCancellationRequested || document.languageId !== 'html' || document.uri.scheme !== 'file') {
+        if (token.isCancellationRequested || !isCssIndexDocument(document) || document.uri.scheme !== 'file') {
             return [];
         }
 
@@ -61,24 +63,39 @@ export class CssQuickIndexCompletionProvider implements vscode.CompletionItemPro
 }
 
 export async function warmCssQuickIndexForDocument(document: vscode.TextDocument): Promise<boolean> {
-    if (document.languageId !== 'html' || document.uri.scheme !== 'file') { return false; }
-    await buildCssQuickIndex(document, true);
+    if (!isCssIndexDocument(document) || document.uri.scheme !== 'file') { return false; }
+    await buildCssQuickIndex(document);
     return true;
 }
 
 export function clearCssQuickIndexCache(): void {
     cache.clear();
+    inFlight.clear();
 }
 
 async function buildCssQuickIndex(document: vscode.TextDocument, force = false): Promise<CssIndex> {
+    const key = document.uri.toString();
+    const running = inFlight.get(key);
+    if (running) { return running; }
+    const task = buildCssQuickIndexFresh(document, force);
+    inFlight.set(key, task);
+    try {
+        return await task;
+    } finally {
+        if (inFlight.get(key) === task) { inFlight.delete(key); }
+    }
+}
+
+async function buildCssQuickIndexFresh(document: vscode.TextDocument, force = false): Promise<CssIndex> {
     const folder = vscode.workspace.getWorkspaceFolder(document.uri);
     const configuration = vscode.workspace.getConfiguration('leidong-tools', folder?.uri ?? document.uri);
     const linkCssEnabled = configuration.get<boolean>('cssIndexLinkCssEnabled', false);
     const extraPaths = configuration.get<string[]>('cssIndexExtraPaths', []);
     const excludes = configuration.get<string[]>('cssIndexExcludePatterns', []);
-    const signatureBase = JSON.stringify([document.uri.toString(), document.version, linkCssEnabled, extraPaths, excludes]);
+    const maxFileLines = Math.max(0, configuration.get<number>('cssIndexMaxFileLines', 2000));
+    const signatureBase = JSON.stringify([document.uri.toString(), document.version, linkCssEnabled, extraPaths, excludes, maxFileLines]);
     const cached = cache.get(document.uri.toString());
-    if (!force && cached && cached.signature === signatureBase && Date.now() - cached.builtAt < CACHE_TTL_MS) {
+    if (!force && cached && cached.signature === signatureBase) {
         return cached.index;
     }
 
@@ -99,25 +116,59 @@ async function buildCssQuickIndex(document: vscode.TextDocument, force = false):
     }
 
     const index = emptyIndex();
-    for (const source of sources) {
+    const seen = new Set<string>();
+    const addSource = async (source: CssSource, depth = 0): Promise<void> => {
+        if (depth > 12) { return; }
+        const sourceKey = source.uri?.toString() ?? `${source.label}:${source.content?.length ?? 0}`;
+        if (seen.has(sourceKey)) { return; }
+        seen.add(sourceKey);
         let content = source.content;
         if (content === undefined && source.uri) {
             try {
                 content = Buffer.from(await vscode.workspace.fs.readFile(source.uri)).toString('utf8');
             } catch {
-                continue;
+                return;
             }
         }
-        if (!content) { continue; }
+        if (!content) { return; }
+        if (source.uri && maxFileLines > 0) {
+            const lineCount = countLines(content);
+            if (lineCount > maxFileLines) {
+                notifyLargeCssSource(source.uri, lineCount, maxFileLines);
+                return;
+            }
+        }
         parseCssIntoIndex(content, source.label, index);
-    }
-    index.sourceCount = sources.length;
-    cache.set(document.uri.toString(), { signature: signatureBase, builtAt: Date.now(), index });
+        if (!source.uri) { return; }
+        for (const imported of collectCssImports(content, source.uri, document)) {
+            if (!shouldExclude(imported, matchers, document)) {
+                await addSource({ uri: imported, label: sourceLabel(imported, document) }, depth + 1);
+            }
+        }
+    };
+    await Promise.all(sources.map(source => addSource(source)));
+    index.sourceCount = seen.size;
+    cache.set(document.uri.toString(), { signature: signatureBase, index });
     while (cache.size > 30) {
         const oldest = cache.keys().next().value;
         if (oldest) { cache.delete(oldest); }
     }
     return index;
+}
+
+function countLines(content: string): number {
+    return content ? content.split(/\r\n|\r|\n/).length : 0;
+}
+
+function notifyLargeCssSource(uri: vscode.Uri, lineCount: number, limit: number): void {
+    const key = `${uri.toString()}|${lineCount}|${limit}`;
+    if (warnedLargeSources.has(key)) { return; }
+    warnedLargeSources.add(key);
+    void vscode.window.showWarningMessage(`CSS 索引已跳过超大文件：${path.basename(uri.fsPath)}（${lineCount} 行，自动索引上限 ${limit} 行）`);
+}
+
+function isCssIndexDocument(document: vscode.TextDocument): boolean {
+    return document.languageId === 'html' || document.languageId === 'vue';
 }
 
 function emptyIndex(): CssIndex {
@@ -137,7 +188,8 @@ function collectLinkedCssUris(text: string, document: vscode.TextDocument): vsco
     const uris: vscode.Uri[] = [];
     const linkRe = /<link\b[^>]*>/gi;
     let match: RegExpExecArray | null;
-    while ((match = linkRe.exec(text)) !== null) {
+    const withoutComments = text.replace(/<!--[\s\S]*?-->/g, '');
+    while ((match = linkRe.exec(withoutComments)) !== null) {
         const tag = match[0];
         if (!/\brel\s*=\s*(['"]?)[^'">\s]*stylesheet[^'">\s]*\1/i.test(tag)) { continue; }
         const href = /\bhref\s*=\s*(['"])(.*?)\1/i.exec(tag) || /\bhref\s*=\s*([^\s>]+)/i.exec(tag);
@@ -146,6 +198,17 @@ function collectLinkedCssUris(text: string, document: vscode.TextDocument): vsco
         if (uri) { uris.push(uri); }
     }
     return uris;
+}
+
+function collectCssImports(text: string, sourceUri: vscode.Uri, document: vscode.TextDocument): vscode.Uri[] {
+    const result: vscode.Uri[] = [];
+    const importRe = /@import\s+(?:url\(\s*)?(['"]?)([^'"\s)]+)\1\s*\)?[^;]*;/gi;
+    let match: RegExpExecArray | null;
+    while ((match = importRe.exec(text)) !== null) {
+        const uri = resolveCssPath(match[2], document, path.dirname(sourceUri.fsPath));
+        if (uri && path.extname(uri.fsPath).toLowerCase() === '.css') { result.push(uri); }
+    }
+    return result;
 }
 
 async function collectExtraCssSources(
@@ -274,6 +337,18 @@ function normalizePathLike(value: string, document: vscode.TextDocument): string
 
 function parseCssIntoIndex(content: string, label: string, index: CssIndex): void {
     const css = content.replace(/\/\*[\s\S]*?\*\//g, '');
+    const ruleRe = /([^{}@][^{}]*)\{([^{}]*)\}/g;
+    let ruleMatch: RegExpExecArray | null;
+    while ((ruleMatch = ruleRe.exec(css)) !== null) {
+        const declarations = ruleMatch[2].trim();
+        if (!declarations) { continue; }
+        const selector = ruleMatch[1];
+        const selectorClassRe = /\.(-?[_a-zA-Z][-_a-zA-Z0-9]*)/g;
+        let selectorClass: RegExpExecArray | null;
+        while ((selectorClass = selectorClassRe.exec(selector)) !== null) {
+            addEntry(index.classes, selectorClass[1], label, undefined, declarations);
+        }
+    }
     const classRe = /\.(-?[_a-zA-Z][-_a-zA-Z0-9]*)/g;
     let classMatch: RegExpExecArray | null;
     while ((classMatch = classRe.exec(css)) !== null) {
@@ -287,14 +362,15 @@ function parseCssIntoIndex(content: string, label: string, index: CssIndex): voi
     }
 }
 
-function addEntry(map: Map<string, CssIndexEntry>, name: string, source: string, value?: string): void {
+function addEntry(map: Map<string, CssIndexEntry>, name: string, source: string, value?: string, content?: string): void {
     const existing = map.get(name);
     if (existing) {
         existing.sources.add(source);
         if (!existing.value && value) { existing.value = value; }
+        if (content) { existing.contents.set(source, content); }
         return;
     }
-    map.set(name, { name, sources: new Set([source]), value });
+    map.set(name, { name, sources: new Set([source]), value, contents: new Map(content ? [[source, content]] : []) });
 }
 
 function buildClassItems(index: CssIndex, context: AttributeContext): vscode.CompletionItem[] {
@@ -303,8 +379,16 @@ function buildClassItems(index: CssIndex, context: AttributeContext): vscode.Com
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((entry, idx) => {
             const item = new vscode.CompletionItem(entry.name, vscode.CompletionItemKind.Class);
-            item.detail = `CSS class (${entry.sources.size} 个来源)`;
-            item.documentation = new vscode.MarkdownString(Array.from(entry.sources).slice(0, 8).map(source => `- ${source}`).join('\n'));
+            const contents = Array.from(entry.contents.entries()).slice(0, 4);
+            const firstContent = contents[0]?.[1]?.replace(/\s+/g, ' ').trim();
+            item.detail = firstContent ? `CSS class · ${firstContent.slice(0, 80)}` : `CSS class (${entry.sources.size} 个来源)`;
+            const documentation = new vscode.MarkdownString();
+            documentation.appendMarkdown(Array.from(entry.sources).slice(0, 8).map(source => `- ${source}`).join('\n'));
+            for (const [source, content] of contents) {
+                documentation.appendMarkdown(`\n\n**${source}**\n\n\`\`\`css\n.${entry.name} {\n${content}\n}\n\`\`\``);
+            }
+            if (entry.contents.size > contents.length) { documentation.appendMarkdown(`\n\n另有 ${entry.contents.size - contents.length} 处定义未展开。`); }
+            item.documentation = documentation;
             item.range = context.range;
             item.sortText = `0000${idx.toString().padStart(5, '0')}`;
             return item;
