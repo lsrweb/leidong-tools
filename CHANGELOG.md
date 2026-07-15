@@ -12,7 +12,7 @@
 
 ### 🔧 依赖升级
 
-- 升级 Vue 编译器、Axios、Cheerio、Prettier、Babel、TypeScript ESLint、Webpack、VSCE 等依赖至当前兼容版本。
+- 升级 Vue 编译器、Axios、Cheerio、Prettier、Babel、TypeScript ESLint、Webpack、VSCE 等依赖至当前兼容版本；保留 VS Code 1.99 的最低兼容范围。
 
 ## [2.6.4] - 2026-07-07
 
