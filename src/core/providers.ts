@@ -24,6 +24,7 @@ import { registerSftpManager } from '../sftp/sftpManager';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
 import { GameSidebarProvider } from '../games/gameWebviewProvider';
+import { ToolboxWebviewProvider } from '../providers/toolboxWebview';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
 import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache, warmCssQuickIndexForDocument } from '../providers/cssIndexProvider';
@@ -327,5 +328,31 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             GameSidebarProvider.viewType,
             gameSidebarProvider
         )
+    );
+
+    // 4. 在线工具箱 WebView
+    const toolboxProvider = new ToolboxWebviewProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.toolbox.openExternal', () =>
+            vscode.env.openExternal(vscode.Uri.parse('https://todo.srliforever.ltd/'))
+        ),
+        vscode.commands.registerCommand('leidong-tools.toolbox.openInEditor', () =>
+            toolboxProvider.openInEditor()
+        ),
+        vscode.commands.registerCommand('leidong-tools.toolbox.sendSelection', () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || editor.selection.isEmpty) {
+                void vscode.window.showWarningMessage('请先在编辑器中选中要发送到在线工具箱的内容。');
+                return;
+            }
+            const text = editor.document.getText(editor.selection);
+            toolboxProvider.send({
+                text,
+                language: editor.document.languageId,
+                source: 'vscode-selection',
+                fileName: vscode.workspace.asRelativePath(editor.document.uri, false),
+            });
+        }),
+        // The toolbox opens as a movable editor Webview, not a fixed sidebar view.
     );
 }

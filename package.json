@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.0.1",
+  "version": "3.0.5",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -51,6 +51,7 @@
     "onLanguage:vue",
     "onView:leidong-tools.sftpView",
     "onTerminalProfile:leidong-tools.remoteTerminal",
+    "onCommand:leidong-tools.toolbox.openInEditor",
     "onCommand:leidong-tools.remoteTerminal.open",
     "onStartupFinished"
   ],
@@ -121,6 +122,21 @@
         "command": "leidong-tools.copilot.showLogs",
         "title": "显示自定义端点日志",
         "category": "雷动三千工具集：自定义端点"
+      },
+      {
+        "command": "leidong-tools.toolbox.openExternal",
+        "title": "打开在线工具箱",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.toolbox.openInEditor",
+        "title": "在编辑器中打开在线工具箱",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.toolbox.sendSelection",
+        "title": "发送选中内容到在线工具箱",
+        "category": "雷动三千工具集"
       },
       {
         "command": "leidong-tools.goToDefinitionInNewTab",
@@ -763,6 +779,21 @@
         "key": "ctrl+k ctrl+f",
         "mac": "cmd+k cmd+f",
         "when": "editorTextFocus && editorLangId == html && editorHasSelection"
+      },
+      {
+        "command": "leidong-tools.toolbox.openInEditor",
+        "key": "ctrl+t l",
+        "mac": "cmd+t l"
+      },
+      {
+        "command": "-workbench.action.gotoSymbol",
+        "key": "ctrl+t",
+        "mac": "cmd+t"
+      },
+      {
+        "command": "leidong-tools.toolbox.openInEditor",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
       }
     ],
     "viewsContainers": {
@@ -856,6 +887,11 @@
         }
       ],
       "editor/context": [
+        {
+          "command": "leidong-tools.toolbox.sendSelection",
+          "when": "editorHasSelection",
+          "group": "leidong-tools@1"
+        },
         {
           "command": "leidong-tools.sftp.downloadCurrentFile",
           "when": "resourceScheme == file",
