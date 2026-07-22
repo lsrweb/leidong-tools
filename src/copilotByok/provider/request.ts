@@ -1,7 +1,7 @@
 import vscode from 'vscode';
 import { AuthManager } from '../auth';
 import { DeepSeekClient } from '../client';
-import { getApiModelId, getBaseUrl, getMaxTokens, getMiMoAccessMode } from '../config';
+import { getApiModelId, getBaseUrl, getMaxTokens, getMiMoAccessMode, getMiMoThinkingEffort } from '../config';
 import { MODELS } from '../consts';
 import { isOfficialDeepSeekBaseUrl } from '../endpoint';
 import { t } from '../i18n';
@@ -89,6 +89,7 @@ export async function prepareChatRequest({
 	});
 	const configuredThinkingEffort = getConfiguredThinkingEffort(
 		options as ModelConfigurationOptions,
+		endpoint === 'mimo' ? getMiMoThinkingEffort() : 'high',
 	);
 	// Only force helper requests into disabled thinking on the official API.
 	// Custom endpoints keep their configured effort to preserve pre-#137 request shape.
@@ -102,7 +103,9 @@ export async function prepareChatRequest({
 					thinking: {
 						type: thinkingEffort === 'none' ? ('disabled' as const) : ('enabled' as const),
 					},
-					...(thinkingEffort === 'none' ? {} : { reasoning_effort: thinkingEffort }),
+					...(endpoint === 'deepseek' && thinkingEffort !== 'none'
+						? { reasoning_effort: thinkingEffort === 'max' ? 'max' : 'high' as const }
+						: {}),
 				}
 			: {}),
 	};

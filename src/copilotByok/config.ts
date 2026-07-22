@@ -3,6 +3,7 @@ import { CONFIG_SECTION } from './consts';
 
 export type DebugMode = 'minimal' | 'metadata' | 'verbose';
 export type MiMoAccessMode = 'tokenPlan' | 'payAsYouGo' | 'custom';
+export type MiMoThinkingEffort = 'none' | 'low' | 'medium' | 'high';
 
 /**
  * Get DeepSeek API base URL from settings.
@@ -27,6 +28,11 @@ export function getBaseUrl(endpoint: 'deepseek' | 'mimo' = 'deepseek'): string {
 export function getMiMoAccessMode(): MiMoAccessMode {
 	const mode = vscode.workspace.getConfiguration(CONFIG_SECTION).get<MiMoAccessMode>('mimoAccessMode', 'tokenPlan');
 	return mode === 'payAsYouGo' || mode === 'custom' ? mode : 'tokenPlan';
+}
+
+export function getMiMoThinkingEffort(): MiMoThinkingEffort {
+	const value = vscode.workspace.getConfiguration(CONFIG_SECTION).get<MiMoThinkingEffort>('mimoThinkingEffort', 'high');
+	return value === 'none' || value === 'low' || value === 'medium' ? value : 'high';
 }
 
 /**

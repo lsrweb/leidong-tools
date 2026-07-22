@@ -42,9 +42,9 @@ export class CssQuickIndexCompletionProvider implements vscode.CompletionItemPro
             return [];
         }
 
-        const linePrefix = document.lineAt(position).text.substring(0, position.character);
-        const classContext = getClassAttributeContext(linePrefix, position);
-        const styleContext = getStyleAttributeContext(linePrefix, position);
+        const tagPrefix = getOpenTagPrefix(document, position);
+        const classContext = tagPrefix ? getClassAttributeContext(tagPrefix, document, position) : undefined;
+        const styleContext = tagPrefix ? getStyleAttributeContext(tagPrefix, document, position) : undefined;
         if (!classContext && !styleContext) { return []; }
 
         const index = await buildCssQuickIndex(document);
@@ -419,39 +419,41 @@ interface StyleVariableContext extends AttributeContext {
     inVarFunction: boolean;
 }
 
-function getClassAttributeContext(linePrefix: string, position: vscode.Position): AttributeContext | undefined {
-    if (!isInsideTag(linePrefix)) { return undefined; }
-    const match = /\bclass\s*=\s*(['"])([^'"]*)$/i.exec(linePrefix);
+function getClassAttributeContext(tagPrefix: string, document: vscode.TextDocument, position: vscode.Position): AttributeContext | undefined {
+    const match = /\bclass\s*=\s*(['"])([^'"]*)$/i.exec(tagPrefix);
     if (!match) { return undefined; }
     const value = match[2] || '';
     const token = /[^\s]*$/.exec(value)?.[0] || '';
     return {
         prefix: token,
-        range: new vscode.Range(position.translate(0, -token.length), position),
+        range: new vscode.Range(document.positionAt(document.offsetAt(position) - token.length), position),
     };
 }
 
-function getStyleAttributeContext(linePrefix: string, position: vscode.Position): StyleVariableContext | undefined {
-    if (!isInsideTag(linePrefix)) { return undefined; }
-    const match = /\bstyle\s*=\s*(['"])([^'"]*)$/i.exec(linePrefix);
+function getStyleAttributeContext(tagPrefix: string, document: vscode.TextDocument, position: vscode.Position): StyleVariableContext | undefined {
+    const match = /\bstyle\s*=\s*(['"])([^'"]*)$/i.exec(tagPrefix);
     if (!match) { return undefined; }
     const value = match[2] || '';
     const varMatch = /var\(\s*(--[-_a-zA-Z0-9]*)?$/.exec(value);
     if (varMatch) {
         const prefix = varMatch[1] || '';
-        return { prefix, range: new vscode.Range(position.translate(0, -prefix.length), position), inVarFunction: true };
+        return { prefix, range: new vscode.Range(document.positionAt(document.offsetAt(position) - prefix.length), position), inVarFunction: true };
     }
     const token = /--[-_a-zA-Z0-9]*$/.exec(value)?.[0];
     if (!token) { return undefined; }
     return {
         prefix: token,
-        range: new vscode.Range(position.translate(0, -token.length), position),
+        range: new vscode.Range(document.positionAt(document.offsetAt(position) - token.length), position),
         inVarFunction: false,
     };
 }
 
-function isInsideTag(linePrefix: string): boolean {
-    return linePrefix.lastIndexOf('<') > linePrefix.lastIndexOf('>');
+function getOpenTagPrefix(document: vscode.TextDocument, position: vscode.Position): string | undefined {
+    const offset = document.offsetAt(position);
+    const text = document.getText(new vscode.Range(document.positionAt(Math.max(0, offset - 16000)), position));
+    const open = text.lastIndexOf('<');
+    if (open < 0 || text.lastIndexOf('>') > open) { return undefined; }
+    return text.slice(open);
 }
 
 function sourceLabel(uri: vscode.Uri, document: vscode.TextDocument): string {

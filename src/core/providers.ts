@@ -28,6 +28,8 @@ import { ToolboxWebviewProvider } from '../providers/toolboxWebview';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
 import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache, warmCssQuickIndexForDocument } from '../providers/cssIndexProvider';
+import { XTemplateHtmlCompletionProvider } from '../providers/xTemplateHtmlCompletionProvider';
+import { TodoHighlightProvider } from '../providers/todoHighlightProvider';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -89,6 +91,8 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         )
     );
 
+    context.subscriptions.push(new TodoHighlightProvider());
+
     // 注册 JavaScript 补全提供器
     context.subscriptions.push(
         vscode.languages.registerCompletionItemProvider(
@@ -113,6 +117,15 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             FILE_SELECTORS.HTML,
             new CssQuickIndexCompletionProvider(),
             '"', '\'', ' ', '-', '('
+        )
+    );
+
+    // text/x-template 中显式提供 HTML/Vue 标签与属性，避免被 script 语法作用域吞掉。
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(
+            FILE_SELECTORS.HTML,
+            new XTemplateHtmlCompletionProvider(),
+            '<', ' ', ':', '@', 'v'
         )
     );
 
@@ -307,7 +320,6 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             diagnosticsProvider
         )
     );
-
     // 2. 监听服务 TreeView
     const watchServiceProvider = new WatchServiceTreeDataProvider(fileWatchManager);
     const watchServiceTreeView = vscode.window.createTreeView('leidong-tools.watchServiceView', {

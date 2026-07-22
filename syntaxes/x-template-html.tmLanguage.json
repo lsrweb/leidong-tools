@@ -1,7 +1,7 @@
 {
     "fileTypes": [],
     "scopeName": "inline.x-template-html",
-    "injectionSelector": "L:text.html.basic -comment",
+    "injectionSelector": "L:text.html.basic -comment, L:meta.embedded.block.js -comment",
     "patterns": [
         {
             "begin": "(<script\\b(?=[^>]*\\btype\\s*=\\s*(?:\"text/x-template\"|'text/x-template'|text/x-template)(?=\\s|>|/))[^>]*>)",
@@ -13,6 +13,7 @@
                 "1": { "name": "meta.tag.script.end.html" }
             },
             "name": "meta.embedded.block.html.x-template",
+            "applyEndPatternLast": true,
             "contentName": "meta.embedded.block.html",
             "patterns": [
                 { "include": "text.html.basic" }

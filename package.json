@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.0.5",
+  "version": "3.1.0",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -186,11 +186,6 @@
       {
         "command": "leidong-tools.logSelectedVariable",
         "title": "Log Selected Variable in Next Line (Ctrl+Shift+L)",
-        "category": "雷动三千工具集"
-      },
-      {
-        "command": "leidong-tools.addVariableComment",
-        "title": "Add Variable Comment",
         "category": "雷动三千工具集"
       },
       {
@@ -450,6 +445,91 @@
     "configuration": {
       "title": "Leidong Tools",
       "properties": {
+        "leidong-tools.todoHighlightEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用 TODO/FEAT/FIX 等自定义前缀高亮。"
+        },
+        "leidong-tools.todoHighlightRules": {
+          "type": "array",
+          "default": [
+            {
+              "prefix": "TODO:",
+              "color": "#1f1f1f",
+              "backgroundColor": "#ffcc00",
+              "fontWeight": "bold",
+              "highlightMode": "prefix"
+            },
+            {
+              "prefix": "FEAT:",
+              "color": "#ffffff",
+              "backgroundColor": "#16825d",
+              "fontWeight": "bold",
+              "highlightMode": "prefix"
+            },
+            {
+              "prefix": "FIX:",
+              "color": "#ffffff",
+              "backgroundColor": "#d73a49",
+              "fontWeight": "bold",
+              "highlightMode": "prefix"
+            }
+          ],
+          "description": "TODO 高亮规则。每条规则可配置前缀、字体色、背景色、字体样式及高亮范围。",
+          "items": {
+            "type": "object",
+            "required": ["prefix"],
+            "additionalProperties": false,
+            "properties": {
+              "prefix": {
+                "type": "string",
+                "description": "匹配的文本前缀，例如 TODO:。按普通文本匹配，不是正则表达式。"
+              },
+              "color": {
+                "type": "string",
+                "description": "字体颜色，支持 #RGB、#RRGGBB、rgba() 等 CSS 颜色。"
+              },
+              "backgroundColor": {
+                "type": "string",
+                "description": "背景颜色。"
+              },
+              "fontWeight": {
+                "type": "string",
+                "description": "字体粗细，例如 bold、600。"
+              },
+              "fontStyle": {
+                "type": "string",
+                "enum": ["normal", "italic"],
+                "description": "字体样式。"
+              },
+              "textDecoration": {
+                "type": "string",
+                "description": "CSS 文本装饰，例如 underline 或 line-through。"
+              },
+              "borderRadius": {
+                "type": "string",
+                "default": "3px",
+                "description": "背景圆角，例如 3px。"
+              },
+              "overviewRulerColor": {
+                "type": "string",
+                "description": "编辑器右侧概览标尺颜色；未设置时使用背景色。"
+              },
+              "highlightMode": {
+                "type": "string",
+                "enum": ["prefix", "text", "line"],
+                "enumDescriptions": ["只高亮前缀。", "高亮前缀到本行末尾。", "高亮整行。"],
+                "default": "prefix",
+                "description": "高亮范围。"
+              },
+              "caseSensitive": {
+                "type": "boolean",
+                "default": false,
+                "description": "是否区分大小写。"
+              }
+            }
+          }
+        },
         "leidong-tools.enableDefinitionJump": {
           "type": "boolean",
           "default": true,
@@ -696,7 +776,11 @@
         "leidong-tools.copilot.mimoAccessMode": {
           "type": "string",
           "default": "tokenPlan",
-          "enum": ["tokenPlan", "payAsYouGo", "custom"],
+          "enum": [
+            "tokenPlan",
+            "payAsYouGo",
+            "custom"
+          ],
           "enumDescriptions": [
             "MiMo TokenPlan 订阅；使用 tp- 密钥和选择的 TokenPlan 区域端点。",
             "MiMo 按量计费；使用 sk- 密钥和官方 api.xiaomimimo.com 端点。",
@@ -707,20 +791,49 @@
         "leidong-tools.copilot.mimoTokenPlanRegion": {
           "type": "string",
           "default": "cn",
-          "enum": ["cn", "sgp", "ams"],
-          "enumDescriptions": ["中国集群", "新加坡集群", "欧洲集群"],
+          "enum": [
+            "cn",
+            "sgp",
+            "ams"
+          ],
+          "enumDescriptions": [
+            "中国集群",
+            "新加坡集群",
+            "欧洲集群"
+          ],
           "description": "MiMo TokenPlan OpenAI 兼容端点区域；以 TokenPlan 页面显示的专属地址为准。"
+        },
+        "leidong-tools.copilot.mimoThinkingEffort": {
+          "type": "string",
+          "default": "high",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ],
+          "enumDescriptions": [
+            "关闭 MiMo 深度思考。",
+            "开启 MiMo 深度思考。",
+            "开启 MiMo 深度思考。",
+            "开启 MiMo 深度思考（默认）。"
+          ],
+          "description": "MiMo V2.5 Pro 的默认思考强度。MiMo Chat Completions 当前把 low、medium、high 都映射为 thinking.enabled。"
         },
         "leidong-tools.copilot.deepseekModelIdOverrides": {
           "type": "object",
           "default": {},
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "将 Copilot 模型 ID 映射为 DeepSeek 或兼容端点实际模型 ID。"
         },
         "leidong-tools.copilot.mimoModelIdOverrides": {
           "type": "object",
           "default": {},
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "将 MiMo 模型 ID 映射为 MiMo API 实际模型 ID；适用于官方模型更新或兼容网关。"
         },
         "leidong-tools.copilot.maxTokens": {
@@ -761,12 +874,6 @@
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l",
         "when": "editorHasSelection"
-      },
-      {
-        "command": "leidong-tools.addVariableComment",
-        "key": "ctrl+alt+/",
-        "mac": "cmd+alt+/",
-        "when": "editorTextFocus"
       },
       {
         "command": "leidong-tools.buildCurrentVueIndex",
@@ -1045,7 +1152,8 @@
         "scopeName": "inline.x-template-html",
         "path": "./syntaxes/x-template-html.tmLanguage.json",
         "embeddedLanguages": {
-          "meta.embedded.block.html": "html"
+          "meta.embedded.block.html": "html",
+          "meta.embedded.block.html.x-template": "html"
         }
       },
       {

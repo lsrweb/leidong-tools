@@ -78,6 +78,31 @@ console.log('file.js:10 xxx:', xxx)
 
 ## 📦 功能速览
 
+### TODO / FEAT / FIX 自定义高亮
+
+默认高亮 `TODO:`、`FEAT:`、`FIX:`。可在设置中通过 `leidong-tools.todoHighlightRules` 添加任意前缀，并分别配置字体色、背景色、字体样式和高亮范围：
+
+```json
+"leidong-tools.todoHighlightRules": [
+  {
+    "prefix": "TODO:",
+    "color": "#1f1f1f",
+    "backgroundColor": "#ffcc00",
+    "fontWeight": "bold",
+    "highlightMode": "prefix"
+  },
+  {
+    "prefix": "IMPORTANT:",
+    "color": "#ffffff",
+    "backgroundColor": "#7c3aed",
+    "highlightMode": "text",
+    "caseSensitive": false
+  }
+]
+```
+
+`highlightMode` 支持 `prefix`（仅前缀）、`text`（前缀至行尾）和 `line`（整行）。
+
 ### 1. 🔍 Vue 2 智能跳转
 
 > 从 HTML 模板中的变量名，一键跳到 JS 中的定义。
@@ -198,7 +223,7 @@ my-project/
 
 ### Copilot Chat 自定义端点（DeepSeek / MiMo）
 
-需要 VS Code 1.116 或更高版本及 GitHub Copilot Chat。安装后，从命令面板运行“设置 MiMo API Key”或“设置 DeepSeek API Key”，密钥会保存在 VS Code 安全存储，不会写入项目的设置文件。随后在 Copilot Chat 的模型选择器中选择 `MiMo V2.5 Pro`、`MiMo V2.5` 或 DeepSeek V4 模型即可使用。
+需要 VS Code 1.116 或更高版本及 GitHub Copilot Chat。安装后，从命令面板运行“设置 MiMo API Key”或“设置 DeepSeek API Key”，密钥会保存在 VS Code 安全存储，不会写入项目的设置文件。随后在 Copilot Chat 的模型选择器中选择默认的 `MiMo V2.5 Pro` 或 DeepSeek V4 模型即可使用。MiMo 的思考强度可通过 `leidong-tools.copilot.mimoThinkingEffort` 设置；`none` 关闭，其他等级开启官方深度思考。
 
 MiMo 默认使用 **TokenPlan 中国区** OpenAI 兼容地址 `https://token-plan-cn.xiaomimimo.com/v1`。先运行“设置 MiMo TokenPlan API Key”保存以 `tp-` 开头的专属密钥；设置 `leidong-tools.copilot.mimoTokenPlanRegion` 可改为 `sgp`（新加坡）或 `ams`（欧洲）。如需按量计费，将 `leidong-tools.copilot.mimoAccessMode` 改为 `payAsYouGo`，然后保存 `sk-` 密钥。两类密钥独立，不能混用。代理或新模型名称可通过 `mimoModelIdOverrides` 覆盖，例如：
 

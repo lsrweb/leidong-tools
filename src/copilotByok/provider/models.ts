@@ -14,7 +14,7 @@ import { toModelCostInfo, type ModelCostInformation } from './pricing/costs';
  * metadata and per-model configuration controls.
  */
 
-export type ThinkingEffort = 'none' | 'high' | 'max';
+export type ThinkingEffort = 'none' | 'low' | 'medium' | 'high' | 'max';
 
 export type ModelConfigurationOptions = vscode.ProvideLanguageModelChatResponseOptions & {
 	readonly modelConfiguration?: Record<string, unknown>;
@@ -59,11 +59,14 @@ export function toChatInfo(
 			imageInput: m.capabilities.imageInput,
 		},
 		...toModelCostInfo(m, pricingCurrency),
-		...(m.capabilities.thinking ? { configurationSchema: buildThinkingEffortSchema() } : {}),
+		...(m.capabilities.thinking ? { configurationSchema: buildThinkingEffortSchema(m.endpoint) } : {}),
 	};
 }
 
-export function getConfiguredThinkingEffort(options: ModelConfigurationOptions): ThinkingEffort {
+export function getConfiguredThinkingEffort(
+	options: ModelConfigurationOptions,
+	fallback: ThinkingEffort = 'high',
+): ThinkingEffort {
 	const configuredEffort =
 		options.modelConfiguration?.reasoningEffort ?? options.configuration?.reasoningEffort;
 
@@ -71,26 +74,26 @@ export function getConfiguredThinkingEffort(options: ModelConfigurationOptions):
 		return 'none';
 	}
 
-	if (configuredEffort === 'high') {
-		return 'high';
-	}
-
-	return configuredEffort === 'max' ? 'max' : 'high';
+	return configuredEffort === 'low' || configuredEffort === 'medium' || configuredEffort === 'high' || configuredEffort === 'max'
+		? configuredEffort
+		: fallback;
 }
 
-function buildThinkingEffortSchema() {
+function buildThinkingEffortSchema(endpoint: ModelDefinition['endpoint']) {
+	const isMiMo = endpoint === 'mimo';
+	const values = isMiMo ? ['none', 'low', 'medium', 'high'] : ['none', 'high', 'max'];
+	const labels = isMiMo ? ['关闭', '低', '中', '高'] : [t('thinking.none'), t('thinking.high'), t('thinking.max')];
+	const descriptions = isMiMo
+		? ['关闭 MiMo 深度思考。', '开启 MiMo 深度思考。MiMo 当前将低/中/高映射为开启。', '开启 MiMo 深度思考。MiMo 当前将低/中/高映射为开启。', '开启 MiMo 深度思考。MiMo 当前将低/中/高映射为开启。']
+		: [t('thinking.none.desc'), t('thinking.high.desc'), t('thinking.max.desc')];
 	return {
 		properties: {
 			reasoningEffort: {
 				type: 'string',
 				title: t('status.thinking'),
-				enum: ['none', 'high', 'max'],
-				enumItemLabels: [t('thinking.none'), t('thinking.high'), t('thinking.max')],
-				enumDescriptions: [
-					t('thinking.none.desc'),
-					t('thinking.high.desc'),
-					t('thinking.max.desc'),
-				],
+				enum: values,
+				enumItemLabels: labels,
+				enumDescriptions: descriptions,
 				default: 'high',
 				group: 'navigation',
 			},
