@@ -13,6 +13,7 @@ interface TodoHighlightRule {
     overviewRulerColor?: string;
     highlightMode?: HighlightMode;
     caseSensitive?: boolean;
+    matchWholeToken?: boolean;
 }
 
 interface ActiveRule {
@@ -79,12 +80,12 @@ export class TodoHighlightProvider implements vscode.Disposable {
             borderRadius: config.borderRadius || '3px',
             overviewRulerColor: config.overviewRulerColor || config.backgroundColor,
             overviewRulerLane: vscode.OverviewRulerLane.Right,
-            rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+            rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
         });
         return {
             config,
             decoration,
-            expression: new RegExp(this.escapeRegExp(config.prefix), config.caseSensitive ? 'g' : 'gi'),
+            expression: this.createExpression(config),
         };
     }
 
@@ -141,5 +142,15 @@ export class TodoHighlightProvider implements vscode.Disposable {
 
     private escapeRegExp(value: string): string {
         return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    private createExpression(config: TodoHighlightRule): RegExp {
+        const escaped = this.escapeRegExp(config.prefix);
+        const wholeToken = config.matchWholeToken !== false;
+        const startsWithWord = /^[A-Za-z0-9_]/.test(config.prefix);
+        const endsWithWord = /[A-Za-z0-9_]$/.test(config.prefix);
+        const before = wholeToken && startsWithWord ? '(?<![A-Za-z0-9_])' : '';
+        const after = wholeToken && endsWithWord ? '(?![A-Za-z0-9_])' : '';
+        return new RegExp(`${before}${escaped}${after}`, config.caseSensitive === false ? 'gi' : 'g');
     }
 }

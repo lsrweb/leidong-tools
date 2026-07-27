@@ -102,6 +102,7 @@ console.log('file.js:10 xxx:', xxx)
 ```
 
 `highlightMode` 支持 `prefix`（仅前缀）、`text`（前缀至行尾）和 `line`（整行）。
+默认区分大小写并启用 `matchWholeToken`，因此 `FIX` 只匹配独立标记，不会命中 `fixed` 或 `prefix`；需要忽略大小写或允许子串时可在单条规则中显式关闭。
 
 ### 1. 🔍 Vue 2 智能跳转
 

@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.1.0",
+  "version": "3.1.2",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -331,6 +331,18 @@
         "icon": "$(folder)"
       },
       {
+        "command": "leidong-tools.sftp.uploadLocalFolder",
+        "title": "上传文件夹",
+        "category": "雷动远程",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.downloadLocalFolder",
+        "title": "下载文件夹",
+        "category": "雷动远程",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "leidong-tools.sftp.uploadCurrentFile",
         "title": "上传文件",
         "category": "雷动三千工具集",
@@ -458,21 +470,27 @@
               "color": "#1f1f1f",
               "backgroundColor": "#ffcc00",
               "fontWeight": "bold",
-              "highlightMode": "prefix"
+              "highlightMode": "prefix",
+              "caseSensitive": true,
+              "matchWholeToken": true
             },
             {
               "prefix": "FEAT:",
               "color": "#ffffff",
               "backgroundColor": "#16825d",
               "fontWeight": "bold",
-              "highlightMode": "prefix"
+              "highlightMode": "prefix",
+              "caseSensitive": true,
+              "matchWholeToken": true
             },
             {
               "prefix": "FIX:",
               "color": "#ffffff",
               "backgroundColor": "#d73a49",
               "fontWeight": "bold",
-              "highlightMode": "prefix"
+              "highlightMode": "prefix",
+              "caseSensitive": true,
+              "matchWholeToken": true
             }
           ],
           "description": "TODO 高亮规则。每条规则可配置前缀、字体色、背景色、字体样式及高亮范围。",
@@ -524,8 +542,13 @@
               },
               "caseSensitive": {
                 "type": "boolean",
-                "default": false,
+                "default": true,
                 "description": "是否区分大小写。"
+              },
+              "matchWholeToken": {
+                "type": "boolean",
+                "default": true,
+                "description": "只匹配独立标记，避免 FIX 命中 fixed、prefix 等单词内部文本。关闭后允许任意子串匹配。"
               }
             }
           }
@@ -978,9 +1001,14 @@
           "group": "leidong-tools@5"
         },
         {
-          "command": "leidong-tools.sftp.uploadFolder",
+          "command": "leidong-tools.sftp.uploadLocalFolder",
           "when": "resourceScheme == file && explorerResourceIsFolder",
-          "group": "leidong-tools@4"
+          "group": "leidong-tools@1"
+        },
+        {
+          "command": "leidong-tools.sftp.downloadLocalFolder",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "leidong-tools@2"
         },
         {
           "command": "leidong-tools.buildCurrentVueIndex",

@@ -1092,6 +1092,44 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             vscode.commands.executeCommand('leidong-tools.sftp.upload', argument, 'file')),
         vscode.commands.registerCommand('leidong-tools.sftp.uploadFolder', (argument?: SftpTreeItem | vscode.Uri) =>
             vscode.commands.executeCommand('leidong-tools.sftp.upload', argument, 'folder')),
+        vscode.commands.registerCommand('leidong-tools.sftp.uploadLocalFolder', async (resource?: vscode.Uri, selectedResources?: vscode.Uri[]) => {
+            const folders = await resolveExplorerFolders(resource, selectedResources);
+            for (const localUri of folders) {
+                const profile = await pickProfile(configs, localUri);
+                if (!profile) { return; }
+                const remotePath = mappedRemotePath(profile, localUri);
+                await run(`上传文件夹 ${path.basename(localUri.fsPath)} 到 ${profile.name}`, async () => {
+                    await service.uploadDirectory(profile, localUri, remotePath);
+                    remoteProvider.invalidateDirectory(profile, remotePath);
+                    remoteProvider.invalidateDirectory(profile, posixDirname(remotePath));
+                    void vscode.window.showInformationMessage(`已上传：${path.basename(localUri.fsPath)} → ${profile.name}`);
+                });
+            }
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.downloadLocalFolder', async (resource?: vscode.Uri, selectedResources?: vscode.Uri[]) => {
+            const folders = await resolveExplorerFolders(resource, selectedResources);
+            for (const localUri of folders) {
+                const profile = await pickProfile(configs, localUri);
+                if (!profile) { return; }
+                const remotePath = mappedRemotePath(profile, localUri);
+                const dirtyDocuments = vscode.workspace.textDocuments.filter(document => document.isDirty && isUriInside(localUri, document.uri));
+                if (dirtyDocuments.length) {
+                    const answer = await vscode.window.showWarningMessage(
+                        `“${path.basename(localUri.fsPath)}”中有 ${dirtyDocuments.length} 个未保存文件，继续下载将丢失这些修改并使用远端内容覆盖。是否继续？`,
+                        { modal: true },
+                        '覆盖并下载',
+                    );
+                    if (answer !== '覆盖并下载') { continue; }
+                    await revertDirtyDocuments(dirtyDocuments);
+                }
+                await run(`下载文件夹 ${path.basename(localUri.fsPath)} 自 ${profile.name}`, async () => {
+                    const remote = await service.stat(profile, remotePath);
+                    if (!remote.directory) { throw new Error(`远端同名路径不是目录：${remotePath}`); }
+                    await service.download(profile, remotePath, localUri, true);
+                    void vscode.window.showInformationMessage(`已下载：${profile.name} → ${path.basename(localUri.fsPath)}`);
+                });
+            }
+        }),
         vscode.commands.registerCommand('leidong-tools.sftp.uploadOverwrite', async (item?: SftpTreeItem) => {
             if (!item || item.kind !== 'file') { return; }
             const source = (await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, title: `选择文件覆盖 ${item.label}` }))?.[0];
@@ -1439,10 +1477,41 @@ async function openRemoteFile(preview: SftpPreviewProvider, item: SftpTreeItem, 
 
 function mappedRemotePath(profile: SftpProfile, localUri: vscode.Uri): string {
     const relative = path.relative(profile.workspaceFolder.uri.fsPath, localUri.fsPath);
-    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    if (!relative) { return normalizeRemote(profile.remotePath); }
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
         throw new Error('文件不在该配置所属的工作区中');
     }
     return joinRemote(profile.remotePath, relative.replace(/\\/g, '/'));
+}
+
+async function resolveExplorerFolders(resource?: vscode.Uri, selectedResources?: vscode.Uri[]): Promise<vscode.Uri[]> {
+    const candidates = selectedResources?.length ? selectedResources : resource ? [resource] : [];
+    const unique = [...new Map(candidates.filter(uri => uri.scheme === 'file').map(uri => [uri.toString(), uri])).values()];
+    const folders: vscode.Uri[] = [];
+    for (const uri of unique) {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if ((stat.type & vscode.FileType.Directory) !== 0) { folders.push(uri); }
+    }
+    if (!folders.length) { void vscode.window.showWarningMessage('请在资源管理器中选择本地文件夹'); }
+    return folders;
+}
+
+function isUriInside(folder: vscode.Uri, candidate: vscode.Uri): boolean {
+    if (folder.scheme !== candidate.scheme) { return false; }
+    const relative = path.relative(folder.fsPath, candidate.fsPath);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+async function revertDirtyDocuments(documents: vscode.TextDocument[]): Promise<void> {
+    const original = vscode.window.activeTextEditor?.document.uri;
+    for (const document of documents) {
+        await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+        await vscode.commands.executeCommand('workbench.action.files.revert');
+    }
+    if (original) {
+        const document = vscode.workspace.textDocuments.find(item => item.uri.toString() === original.toString());
+        if (document) { await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false }); }
+    }
 }
 
 async function pickProfile(configs: SftpConfigStore, localUri?: vscode.Uri): Promise<SftpProfile | undefined> {
