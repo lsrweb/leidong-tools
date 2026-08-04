@@ -1,0 +1,24 @@
+# 开发配置
+.vscode/**
+.gitignore
+**/tsconfig.json
+
+# 源码 (打包后只需要 webview 静态资源)
+src/**
+!src/webview/**
+!src/webview/**/*.js
+!schemas/**
+out/**
+node_modules/**
+
+# 构建配置
+webpack.config.js
+
+# 文档
+package-lock.json
+*.vsix
+
+# Source maps 和 TypeScript 源文件
+**/*.map
+**/*.ts
+!src/webview/**/*.js

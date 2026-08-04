@@ -10,46 +10,28 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 export class VueHoverProvider implements vscode.HoverProvider {
-    private hoverTimeout: NodeJS.Timeout | null = null;
-
     provideHover(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.Hover | null> {
         return new Promise((resolve) => {
-            // 清除之前的定时器
-            if (this.hoverTimeout) {
-                clearTimeout(this.hoverTimeout);
-                this.hoverTimeout = null;
-            }
-
-            // 如果已取消，直接返回
             if (token.isCancellationRequested) {
                 resolve(null);
                 return;
             }
-
-            // 读取配置的延迟时间
             const config = vscode.workspace.getConfiguration('leidong-tools');
             const delay = config.get<number>('hoverDelay', 300);
-
-            // 设置延迟
-            this.hoverTimeout = setTimeout(async () => {
-                this.hoverTimeout = null;
-                if (token.isCancellationRequested) {
-                    resolve(null);
-                    return;
-                }
-
-                const hover = await this.getHoverContent(document, position);
-                resolve(hover);
+            let settled = false;
+            let cancellation: vscode.Disposable | undefined;
+            const finish = (value: vscode.Hover | null) => {
+                if (settled) { return; }
+                settled = true;
+                clearTimeout(timer);
+                cancellation?.dispose();
+                resolve(value);
+            };
+            const timer = setTimeout(() => {
+                if (token.isCancellationRequested) { finish(null); return; }
+                void this.getHoverContent(document, position).then(finish, () => finish(null));
             }, delay);
-
-            // 监听取消事件，避免不必要的计算
-            token.onCancellationRequested(() => {
-                if (this.hoverTimeout) {
-                    clearTimeout(this.hoverTimeout);
-                    this.hoverTimeout = null;
-                }
-                resolve(null);
-            });
+            cancellation = token.onCancellationRequested(() => finish(null));
         });
     }
 

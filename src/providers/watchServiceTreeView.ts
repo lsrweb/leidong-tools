@@ -28,13 +28,15 @@ export class WatchServiceTreeItem extends vscode.TreeItem {
  * 监听服务 TreeDataProvider
  * 只负责显示文件监听列表
  */
-export class WatchServiceTreeDataProvider implements vscode.TreeDataProvider<WatchServiceTreeItem> {
+export class WatchServiceTreeDataProvider implements vscode.TreeDataProvider<WatchServiceTreeItem>, vscode.Disposable {
     private _onDidChangeTreeData: vscode.EventEmitter<WatchServiceTreeItem | undefined | null | void> = 
         new vscode.EventEmitter<WatchServiceTreeItem | undefined | null | void>();
     readonly onDidChangeTreeData: vscode.Event<WatchServiceTreeItem | undefined | null | void> = 
         this._onDidChangeTreeData.event;
     
     constructor(private fileWatchManager: FileWatchManager) {}
+
+    dispose(): void { this._onDidChangeTreeData.dispose(); }
     
     refresh(): void {
         this._onDidChangeTreeData.fire();

@@ -14,16 +14,14 @@ import { VueDocumentSymbolProvider } from '../providers/documentSymbolProvider';
 import { VueReferenceProvider } from '../providers/referenceProvider';
 import { VueCodeLensProvider, updateInlineRefDecorations, clearInlineRefDecorations } from '../providers/codeLensProvider';
 import { VueColorProvider } from '../providers/colorProvider';
-import { updateLaytplBracketHighlights } from '../providers/laytplBracketHighlighter';
+import { clearLaytplBracketCache, updateLaytplBracketHighlights } from '../providers/laytplBracketHighlighter';
 import { LaytplFoldingRangeProvider } from '../providers/laytplFoldingProvider';
 import { XTemplateFoldingRangeProvider } from '../providers/xTemplateFoldingProvider';
 import { XTemplateRangeFormattingProvider } from '../providers/xTemplateFormattingProvider';
 import { registerCopilotAnalyzer } from '../providers/copilotAnalyzer';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
-import { registerSftpManager } from '../sftp/sftpManager';
 import { DiagnosticsWebviewProvider } from '../providers/diagnosticsWebview';
 import { WatchServiceTreeDataProvider } from '../providers/watchServiceTreeView';
-import { GameSidebarProvider } from '../games/gameWebviewProvider';
 import { ToolboxWebviewProvider } from '../providers/toolboxWebview';
 import { FileWatchManager } from '../managers/fileWatchManager';
 import { FILE_SELECTORS } from './config';
@@ -236,6 +234,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             scheduleCssIndexWarm(editor?.document);
         }),
         vscode.workspace.onDidOpenTextDocument(scheduleCssIndexWarm),
+        vscode.workspace.onDidCloseTextDocument(clearLaytplBracketCache),
         vscode.workspace.onDidSaveTextDocument(document => {
             if (document.languageId === 'css' || document.languageId === 'html' || document.languageId === 'vue') {
                 invalidateCssIndexes();
@@ -304,14 +303,12 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     // 1. 变量索引 WebView（虚拟滚动，支持万级变量）
     const variableIndexProvider = new VariableIndexWebviewProvider(context.extensionUri);
     context.subscriptions.push(
+        variableIndexProvider,
         vscode.window.registerWebviewViewProvider(
             VariableIndexWebviewProvider.viewType,
             variableIndexProvider
         )
     );
-
-    // 远程资源 WebView（与变量索引使用相同的注册链路）
-    registerSftpManager(context);
 
     const diagnosticsProvider = new DiagnosticsWebviewProvider(context.extensionUri);
     context.subscriptions.push(
@@ -326,23 +323,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         treeDataProvider: watchServiceProvider,
         showCollapseAll: false
     });
-    context.subscriptions.push(watchServiceTreeView);
+    context.subscriptions.push(watchServiceProvider, watchServiceTreeView);
 
     // 将 TreeView 刷新方法注入到 FileWatchManager
-    fileWatchManager.onWatchItemsChanged(() => {
+    context.subscriptions.push(fileWatchManager.onWatchItemsChanged(() => {
         watchServiceProvider.refresh();
-    });
+    }));
 
-    // 3. 游戏面板 WebView
-    const gameSidebarProvider = new GameSidebarProvider(context.extensionUri);
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(
-            GameSidebarProvider.viewType,
-            gameSidebarProvider
-        )
-    );
-
-    // 4. 在线工具箱 WebView
+    // 3. 在线工具箱 WebView
     const toolboxProvider = new ToolboxWebviewProvider(context.extensionUri);
     context.subscriptions.push(
         vscode.commands.registerCommand('leidong-tools.toolbox.openExternal', () =>

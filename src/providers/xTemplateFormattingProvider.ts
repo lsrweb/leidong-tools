@@ -1,27 +1,20 @@
 import * as vscode from 'vscode';
 import type { Options as PrettierOptions } from 'prettier';
+import * as prettier from 'prettier/standalone';
+import * as babelPlugin from 'prettier/plugins/babel';
+import * as estreePlugin from 'prettier/plugins/estree';
+import * as htmlPlugin from 'prettier/plugins/html';
+import * as postcssPlugin from 'prettier/plugins/postcss';
 
+import { normalizeInvalidVoidEndTags } from '../parsers/htmlFormattingNormalizer';
 import { XTemplateBlock, scanXTemplateBlocks } from '../parsers/xTemplateParser';
 
-type PrettierApi = {
-    format: (source: string, options: PrettierOptions) => Promise<string> | string;
-    resolveConfig?: (
-        filePath: string,
-        options?: { editorconfig?: boolean }
-    ) => Promise<PrettierOptions | null> | PrettierOptions | null;
-};
-
-async function loadPrettier(): Promise<PrettierApi> {
-    const imported = await import('prettier');
-    const candidate = imported as unknown as PrettierApi & { default?: PrettierApi };
-    const prettier = typeof candidate.format === 'function' ? candidate : candidate.default;
-
-    if (!prettier || typeof prettier.format !== 'function') {
-        throw new Error('Prettier API 加载失败：未找到 format 方法');
-    }
-
-    return prettier;
-}
+const prettierPlugins: NonNullable<PrettierOptions['plugins']> = [
+    htmlPlugin,
+    babelPlugin,
+    estreePlugin,
+    postcssPlugin
+];
 
 function getContainingXTemplateBlock(document: vscode.TextDocument, range: vscode.Range): XTemplateBlock | null {
     const text = document.getText();
@@ -167,22 +160,20 @@ function createMinimalReplaceEdit(
     )];
 }
 
-async function resolvePrettierOptions(
+function resolvePrettierOptions(
     document: vscode.TextDocument,
     options: vscode.FormattingOptions
-): Promise<PrettierOptions> {
-    const prettier = await loadPrettier();
-    const config = await prettier.resolveConfig?.(document.uri.fsPath, {
-        editorconfig: true
-    });
-
+): PrettierOptions {
     return {
         ...getEditorFallbackOptions(options),
         ...getDefaultPrettierOptions(),
-        ...(config ?? {}),
         ...getConfiguredExtensionPrettierOptions(document.uri),
         filepath: document.uri.fsPath,
-        parser: 'html'
+        parser: 'html',
+        // Standalone requires parser plugins to be passed explicitly. Keeping the
+        // plugins local also prevents Webpack from bundling Prettier's Node config
+        // loader, whose dynamic built-in imports fail inside the extension bundle.
+        plugins: prettierPlugins
     };
 }
 
@@ -192,7 +183,6 @@ async function formatXTemplateSelectionWithPrettier(
     block: XTemplateBlock,
     options: vscode.FormattingOptions
 ): Promise<vscode.TextEdit[]> {
-    const prettier = await loadPrettier();
     const selectedText = document.getText(range);
 
     if (!selectedText.trim()) {
@@ -200,8 +190,8 @@ async function formatXTemplateSelectionWithPrettier(
     }
 
     const commonIndent = getCommonIndent(selectedText);
-    const normalizedText = stripCommonIndent(selectedText, commonIndent);
-    const prettierOptions = await resolvePrettierOptions(document, options);
+    const normalizedText = normalizeInvalidVoidEndTags(stripCommonIndent(selectedText, commonIndent));
+    const prettierOptions = resolvePrettierOptions(document, options);
     const formattedText = normalizePrettierOutput(
         normalizedText,
         await Promise.resolve(prettier.format(normalizedText, prettierOptions))

@@ -947,8 +947,12 @@ export class FileWatchManager {
     /**
      * 注册监听项变化回调
      */
-    public onWatchItemsChanged(callback: () => void): void {
+    public onWatchItemsChanged(callback: () => void): vscode.Disposable {
         this.watchItemsChangedCallbacks.push(callback);
+        return new vscode.Disposable(() => {
+            const index = this.watchItemsChangedCallbacks.indexOf(callback);
+            if (index >= 0) { this.watchItemsChangedCallbacks.splice(index, 1); }
+        });
     }
 
     /**
@@ -985,6 +989,7 @@ export class FileWatchManager {
      */
     public dispose() {
         this.stopAllWatches();
+        this.watchItemsChangedCallbacks.length = 0;
         this.statusBarItem.dispose();
     }
 }

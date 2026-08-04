@@ -1,5 +1,54 @@
 # 更新日志 (Changelog)
 
+## [3.3.2] - 2026-08-01
+
+### ⬇️ 最低兼容 VS Code 版本降至 1.100
+
+- 最低兼容版本由 1.116 降至 1.100（`@types/vscode` 同步锁定，编译期约束 API 使用）。
+
+## [3.3.0] - 2026-08-01
+
+### 🧩 远程资源拆分为独立扩展 + 移除小游戏
+
+- 远程资源管理器（SFTP / SSH / FTP / FTPS）与远程终端拆分为独立扩展 **雷动远程资源（leidong-sftp，仓库 `extensions/sftp/`）**，可单独打包发布。
+- 命令 ID 与配置键完全沿用（`leidong-tools.sftp.*` / `leidong-tools.remoteTerminal.*` / `leidong-tools.sftpConfigFiles` 等），`.vscode/sftp.json` 与已有设置无需迁移；自动上传目标与远程终端历史因扩展存储隔离需重新选择。
+- 主扩展移除小游戏功能（游戏大厅、昵称、服务器设置）及 `server/` 相关资源，并清理 ssh2 / basic-ftp / ssh2-sftp-client 依赖。
+
+## [3.2.0] - 2026-08-01
+
+### 🧩 Copilot 自定义端点拆分为独立扩展
+
+- BYOK 自定义端点（DeepSeek / MiMo）从本扩展拆分为独立扩展 **雷动模型配置（leidong-model-config，仓库 `extensions/model-config/`）**，可单独打包发布。
+- 新扩展提供 **可视化模型管理面板**：新增 / 编辑 / 删除模型、自定义模型显示名称、官方端点预设、API Key 安全存储（SecretStorage）。
+- Copilot Chat 模型选择器中的 vendor 分组与模型 ID 保持不变，无需重新选择模型。
+- 移除 7 个旧命令与 `leidong-tools.copilot.*` 设置项；旧设置会在新扩展首次激活时自动迁移，API Key 因 SecretStorage 按扩展隔离需在面板重新设置。
+
+## [3.1.5] - 2026-07-28
+
+### 🐛 旧模板 HTML 格式化兼容
+
+- `text/x-template` 格式化前自动将 `</br>` 等非法 void element 结束标签规范为合法的自闭合标签。
+- 兼容 `br`、`img`、`input`、`hr`、`meta`、`link` 等 HTML void element，避免单个旧标签导致整个选区格式化失败。
+- 规范化过程不会修改 HTML 注释或属性字符串中的标签文本。
+
+## [3.1.4] - 2026-07-28
+
+### 🐛 text/x-template 格式化修复
+
+- Prettier 改用可静态打包的 standalone API，并显式加载 HTML、CSS、JavaScript 所需解析插件。
+- 修复 VSIX 运行环境中格式化 `text/x-template` 时提示 `Cannot find module 'os'` 的问题。
+- 移除对 Prettier Node 配置加载器的运行时依赖，避免 Webpack 动态模块解析失败。
+
+## [3.1.3] - 2026-07-28
+
+### ⚡ 编辑器性能与生命周期修复
+
+- TODO 高亮由“每次输入扫描完整文档”改为增量更新：普通单行编辑只重新匹配变更行，插入或删除换行时才重建文档缓存。
+- TODO 高亮缓存只保留可见文档，关闭文件、切换不可见、修改配置或停用扩展时立即释放缓存和待执行定时器。
+- Laytpl 括号高亮不再在每次光标移动时解析完整 HTML；仅当光标紧邻括号且位于 `{{ ... }}` 范围内时解析，并限制配对缓存容量为 20 个文档。
+- 修复 Hover 请求切换时旧定时器被取消但 Promise 可能长期挂起的问题；取消、异常和完成路径现在都会释放监听器并结束请求。
+- 补齐文件监听管理器、变量索引和监听树的 Disposable 生命周期，扩展重载后不再残留保存监听、文件 watcher、回调或事件发射器。
+
 ## [3.1.2] - 2026-07-25
 
 ### 🐛 TODO 高亮匹配修复

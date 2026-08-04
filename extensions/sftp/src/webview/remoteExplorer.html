@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{nonce}}';">
+<style>
+body { margin:0; padding:8px; color:var(--vscode-foreground); background:var(--vscode-sideBar-background); font-family:var(--vscode-font-family); font-size:var(--vscode-font-size); }
+.toolbar { display:flex; gap:6px; margin-bottom:8px; }
+.toolbar button { flex:1; background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); border:none; border-radius:2px; padding:4px 6px; cursor:pointer; font-size:12px; }
+.toolbar button:hover { background:var(--vscode-button-secondaryHoverBackground); }
+.node { display:flex; align-items:center; gap:4px; padding:3px 6px; border-radius:3px; cursor:pointer; white-space:nowrap; }
+.node:hover { background:var(--vscode-list-hoverBackground); }
+.node.selected { background:var(--vscode-list-activeSelectionBackground); color:var(--vscode-list-activeSelectionForeground); }
+.node .chevron { width:12px; text-align:center; color:var(--vscode-descriptionForeground); flex:none; }
+.node .label { flex:1; overflow:hidden; text-overflow:ellipsis; }
+.node .meta { color:var(--vscode-descriptionForeground); font-size:11px; margin-left:6px; flex:none; }
+.node .actions { display:none; gap:2px; flex:none; }
+.node:hover .actions { display:flex; }
+.node .actions button { background:none; border:none; color:var(--vscode-descriptionForeground); cursor:pointer; padding:0 4px; font-size:11px; border-radius:2px; line-height:1.4; }
+.node .actions button:hover { color:var(--vscode-foreground); background:var(--vscode-toolbar-hoverBackground); }
+.children { margin-left:12px; }
+.empty { color:var(--vscode-descriptionForeground); padding:16px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button id="btnRefresh" title="刷新">↻ 刷新</button>
+  <button id="btnAutoUpload" title="切换保存自动上传">⤒ 自动上传</button>
+  <button id="btnConfig" title="打开远程连接配置">⚙ 配置</button>
+  <button id="btnLogs" title="显示远程资源日志">☰ 日志</button>
+</div>
+<div id="tree"></div>
+<div id="empty" class="empty" hidden>未找到远程配置</div>
+<script nonce="{{nonce}}">
+(function () {
+  'use strict';
+  const vscode = acquireVsCodeApi();
+  const treeEl = document.getElementById('tree');
+  const emptyEl = document.getElementById('empty');
+  const pending = new Map();
+  let roots = [];
+  let sequence = 0;
+  let selected = '';
+
+  function nodeKey(node) {
+    return node.nodeId || (node.profileId || '') + '|' + (node.remotePath || '');
+  }
+  function messageNode(node) {
+    return { nodeId: node.nodeId, profileId: node.profileId, remotePath: node.remotePath, kind: node.kind, label: node.label, workspaceUri: node.workspaceUri };
+  }
+  function request(type, data, dedupeKey) {
+    const requestId = String(++sequence);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { pending.delete(requestId); resolve([]); }, 20000);
+      pending.set(requestId, (value) => { clearTimeout(timer); resolve(value || []); });
+      vscode.postMessage({ type, requestId, ...data });
+    });
+  }
+  async function loadChildren(node) {
+    node.children = node.children || [];
+    node.loaded = true;
+    const items = await request('list', { profileId: node.profileId, remotePath: node.remotePath }, nodeKey(node));
+    node.children = items;
+    node.loaded = true;
+    return items;
+  }
+  async function toggle(node) {
+    if (node.kind === 'file') {
+      vscode.postMessage({ type: 'action', action: 'preview', node: messageNode(node) });
+      return;
+    }
+    if (node.expanded) { node.expanded = false; render(); return; }
+    node.expanded = true;
+    if (!node.loaded && node.kind !== 'workspace') {
+      await loadChildren(node);
+    }
+    render();
+  }
+  function invoke(node, action) {
+    vscode.postMessage({ type: 'action', action, node: messageNode(node) });
+  }
+
+  // 行内操作按钮（悬停显示）
+  function actionButtons(node) {
+    if (node.kind === 'file') {
+      return [['⬇', 'download', '下载'], ['⤒', 'uploadOverwrite', '上传覆盖'], ['✎', 'rename', '重命名'], ['🗑', 'delete', '删除']];
+    }
+    if (node.kind === 'directory') {
+      return [['↻', 'refreshNode', '刷新'], ['⤒', 'uploadFile', '上传文件'], ['＋', 'createDirectory', '新建目录'], ['🗑', 'delete', '删除']];
+    }
+    if (node.kind === 'profile') {
+      return [['⬇', 'download', '下载'], ['⤒', 'uploadFile', '上传'], ['✓', 'test', '测试连接'], ['✕', 'disconnect', '断开']];
+    }
+    return [];
+  }
+
+  function render() {
+    treeEl.textContent = '';
+    for (const root of roots) { renderRecursive(treeEl, root); }
+    emptyEl.hidden = roots.length > 0;
+  }
+
+  function renderRecursive(parentEl, node) {
+    const row = document.createElement('div');
+    row.className = 'node' + (node.key === selected ? ' selected' : '');
+    row.dataset.key = node.key;
+    const chevron = node.kind === 'file' ? '' : (node.expanded ? '▾' : '▸');
+    const kindIcon = node.kind === 'workspace' ? '📦' : node.kind === 'profile' ? '🔌' : node.kind === 'directory' ? '📁' : '📄';
+    const meta = node.meta || '';
+    row.innerHTML = '<span class="chevron">' + chevron + '</span>' +
+      '<span class="label">' + escapeHtml(kindIcon + ' ' + (node.label || '')) + '</span>' +
+      (meta ? '<span class="meta">' + escapeHtml(meta) + '</span>' : '') +
+      '<span class="actions"></span>';
+    const actions = row.querySelector('.actions');
+    for (const [icon, action, title] of actionButtons(node)) {
+      const btn = document.createElement('button');
+      btn.textContent = icon;
+      btn.title = title;
+      btn.onclick = (event) => { event.stopPropagation(); invoke(node, action); };
+      actions.append(btn);
+    }
+    row.onclick = () => { selected = node.key; void toggle(node); };
+    row.ondblclick = (event) => { if (node.kind === 'file') { event.preventDefault(); invoke(node, 'open'); } };
+    parentEl.append(row);
+    if (node.expanded && node.children) {
+      const childrenWrap = document.createElement('div');
+      childrenWrap.className = 'children';
+      for (const child of node.children) { renderRecursive(childrenWrap, child); }
+      parentEl.append(childrenWrap);
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  }
+  function posixDirname(p) {
+    if (p === '/' || p === '') { return p; }
+    return p.replace(/\/+$/, '').replace(/\/[^/]+$/, '') || '/';
+  }
+
+  // 终端 cd 联动：逐级展开到目标目录
+  let pendingReveal = null;
+  let revealInFlight = false;
+
+  function tryReveal() {
+    if (revealInFlight || !pendingReveal) { return; }
+    const target = pendingReveal;
+    revealInFlight = true;
+    void revealPath(target.profileId, target.remotePath).finally(() => {
+      revealInFlight = false;
+    });
+  }
+
+  function normalizePath(p) {
+    if (!p || p === '/') { return '/'; }
+    return p.replace(/\/+$/, '');
+  }
+
+  async function revealPath(profileId, remotePath) {
+    const normalized = normalizePath(remotePath);
+    const profile = (roots.flatMap((w) => w.children || [])).find((n) => n.profileId === profileId);
+    if (!profile) { return; } // profiles 尚未送达，等待 loadProfiles 后重试
+    const base = normalizePath(profile.remotePath) || '/';
+    const chain = [];
+    let cur = normalized;
+    while (cur && cur !== base && cur !== '/') {
+      chain.unshift(cur);
+      cur = posixDirname(cur);
+    }
+    if (cur !== base) { chain.unshift(base); }
+    let node = profile;
+    for (const dir of chain) {
+      if (!node.expanded) { node.expanded = true; }
+      if (node.kind !== 'workspace' && !node.loaded) { await loadChildren(node); }
+      const child = (node.children || []).find((c) => normalizePath(c.remotePath) === dir);
+      if (!child) { pendingReveal = null; render(); return; } // 目标不存在，停止重试
+      node = child;
+    }
+    if (node.kind === 'directory' && !node.loaded) {
+      node.expanded = true;
+      await loadChildren(node);
+    }
+    pendingReveal = null;
+    selected = node.key;
+    render();
+    scrollToNode(node.key);
+  }
+
+  function scrollToNode(key) {
+    const scroll = () => {
+      const el = treeEl.querySelector('[data-key="' + String(key).replaceAll('"', '\\"') + '"]');
+      if (el) { el.scrollIntoView({ block: 'center' }); }
+    };
+    scroll();
+    requestAnimationFrame(scroll);
+  }
+
+  // 合并 profiles：保留已展开节点的 expanded/loaded/children，避免刷新时整棵树重置
+  function mergeProfiles(incoming) {
+    const merge = (previous, fresh) => {
+      const byKey = new Map((previous || []).map((n) => [nodeKey(n), n]));
+      return (fresh || []).map((n) => {
+        const key = nodeKey(n);
+        const prev = byKey.get(key);
+        if (!prev) { return n; }
+        prev.label = n.label;
+        prev.meta = n.meta;
+        prev.profileId = n.profileId;
+        prev.remotePath = n.remotePath;
+        prev.workspaceUri = n.workspaceUri;
+        // 仅当刷新数据带 children 时才合并，避免清空已加载/已展开的子节点
+        if (n.children) { prev.children = merge(prev.children, n.children); }
+        return prev;
+      });
+    };
+    roots = merge(roots, incoming);
+    render();
+    void tryReveal();
+  }
+
+  function loadProfiles(items) {
+    mergeProfiles(items || []);
+  }
+
+  function refreshDirectory(message) {
+    const node = roots.length && findNode(message.profileId, message.remotePath);
+    if (!node || !node.loaded) { return; }
+    node.loaded = false;
+    void loadChildren(node).then(render);
+  }
+  function findNode(profileId, remotePath) {
+    const visit = (list) => {
+      for (const n of list) {
+        if (n.profileId === profileId && n.remotePath === remotePath) { return n; }
+        if (n.children) { const found = visit(n.children); if (found) { return found; } }
+      }
+      return undefined;
+    };
+    return visit(roots);
+  }
+
+  window.addEventListener('message', (event) => {
+    const message = event.data;
+    if (!message) { return; }
+    if (message.type === 'profiles') { loadProfiles(message.items || []); }
+    else if (message.type === 'response' && pending.has(message.requestId)) { pending.get(message.requestId)(message.items); pending.delete(message.requestId); }
+    else if (message.type === 'directoryChanged') { refreshDirectory(message); }
+    else if (message.type === 'reveal') {
+      pendingReveal = { profileId: message.profileId, remotePath: message.remotePath };
+      tryReveal();
+    }
+  });
+
+  document.getElementById('btnRefresh').onclick = () => vscode.postMessage({ type: 'refresh' });
+  document.getElementById('btnAutoUpload').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.toggleUploadOnSave' });
+  document.getElementById('btnConfig').onclick = () => vscode.postMessage({ type: 'openConfig' });
+  document.getElementById('btnLogs').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.showLogs' });
+
+  vscode.postMessage({ type: 'ready' });
+})();
+</script>
+</body>
+</html>

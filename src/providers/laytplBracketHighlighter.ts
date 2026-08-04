@@ -12,6 +12,7 @@ const laytplBracketMatchDecorationType = vscode.window.createTextEditorDecoratio
 let lastDecoratedEditor: vscode.TextEditor | undefined;
 
 const pairCache = new Map<string, { version: number; pairs: Map<number, number> }>();
+const MAX_PAIR_CACHE_ENTRIES = 20;
 
 function isBracketChar(char: string | undefined): boolean {
     return Boolean(char && BRACKET_CHARS.has(char));
@@ -26,7 +27,13 @@ function getBracketPairs(document: vscode.TextDocument): Map<number, number> {
     }
 
     const pairs = getLaytplBracketPairs(document.getText());
+    pairCache.delete(cacheKey);
     pairCache.set(cacheKey, { version: document.version, pairs });
+    while (pairCache.size > MAX_PAIR_CACHE_ENTRIES) {
+        const oldest = pairCache.keys().next().value as string | undefined;
+        if (!oldest) { break; }
+        pairCache.delete(oldest);
+    }
     return pairs;
 }
 
@@ -37,19 +44,25 @@ function createRangeFromOffset(document: vscode.TextDocument, offset: number): v
 }
 
 function findCandidateBracketOffsets(document: vscode.TextDocument, position: vscode.Position): number[] {
-    const text = document.getText();
+    const line = document.lineAt(position.line).text;
     const currentOffset = document.offsetAt(position);
     const offsets: number[] = [];
 
-    if (currentOffset < text.length && isBracketChar(text[currentOffset])) {
+    if (isBracketChar(line[position.character])) {
         offsets.push(currentOffset);
     }
 
-    if (currentOffset > 0 && isBracketChar(text[currentOffset - 1])) {
+    if (position.character > 0 && isBracketChar(line[position.character - 1])) {
         offsets.push(currentOffset - 1);
     }
 
     return offsets;
+}
+
+function isInsideLaytplTag(document: vscode.TextDocument, offset: number): boolean {
+    const windowStart = Math.max(0, offset - 16384);
+    const prefix = document.getText(new vscode.Range(document.positionAt(windowStart), document.positionAt(offset + 1)));
+    return prefix.lastIndexOf('{{') > prefix.lastIndexOf('}}');
 }
 
 export function clearLaytplBracketHighlights(editor: vscode.TextEditor | undefined): void {
@@ -75,8 +88,14 @@ export function updateLaytplBracketHighlights(editor: vscode.TextEditor | undefi
         return;
     }
 
+    const candidates = findCandidateBracketOffsets(editor.document, editor.selection.active)
+        .filter(offset => isInsideLaytplTag(editor.document, offset));
+    if (!candidates.length) {
+        clearLaytplBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
     const pairs = getBracketPairs(editor.document);
-    const candidates = findCandidateBracketOffsets(editor.document, editor.selection.active);
 
     for (const sourceOffset of candidates) {
         const targetOffset = pairs.get(sourceOffset);
@@ -94,4 +113,8 @@ export function updateLaytplBracketHighlights(editor: vscode.TextEditor | undefi
 
     clearLaytplBracketHighlights(editor);
     lastDecoratedEditor = editor;
+}
+
+export function clearLaytplBracketCache(document: vscode.TextDocument): void {
+    pairCache.delete(document.uri.toString());
 }

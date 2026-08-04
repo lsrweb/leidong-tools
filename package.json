@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.1.2",
+  "version": "3.3.2",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -32,7 +32,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "vscode": "^1.116.0"
+    "vscode": "^1.100.0"
   },
   "categories": [
     "Programming Languages",
@@ -49,29 +49,11 @@
     "onLanguage:javascriptreact",
     "onLanguage:typescriptreact",
     "onLanguage:vue",
-    "onView:leidong-tools.sftpView",
-    "onTerminalProfile:leidong-tools.remoteTerminal",
     "onCommand:leidong-tools.toolbox.openInEditor",
-    "onCommand:leidong-tools.remoteTerminal.open",
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "languageModelChatProviders": [
-      {
-        "vendor": "leidong-tools",
-        "displayName": "雷动自定义端点（DeepSeek / MiMo）"
-      }
-    ],
-    "jsonValidation": [
-      {
-        "fileMatch": [
-          ".vscode/sftp.json",
-          "**/.vscode/sftp.json"
-        ],
-        "url": "./schemas/sftp.schema.json"
-      }
-    ],
     "chatParticipants": [
       {
         "id": "leidong-tools.analyzer",
@@ -88,41 +70,6 @@
       }
     ],
     "commands": [
-      {
-        "command": "leidong-tools.copilot.setDeepSeekApiKey",
-        "title": "设置 DeepSeek API Key",
-        "category": "雷动三千工具集：自定义端点"
-      },
-      {
-        "command": "leidong-tools.copilot.setMiMoApiKey",
-        "title": "设置 MiMo 当前模式 API Key",
-        "category": "雷动三千工具集：自定义端点"
-      },
-      {
-        "command": "leidong-tools.copilot.setMiMoTokenPlanApiKey",
-        "title": "设置 MiMo TokenPlan API Key",
-        "category": "雷动三千工具集：自定义端点"
-      },
-      {
-        "command": "leidong-tools.copilot.setMiMoPayAsYouGoApiKey",
-        "title": "设置 MiMo 按量计费 API Key",
-        "category": "雷动三千工具集：自定义端点"
-      },
-      {
-        "command": "leidong-tools.copilot.clearDeepSeekApiKey",
-        "title": "清除 DeepSeek API Key",
-        "category": "雷动三千工具集：自定义端点"
-      },
-      {
-        "command": "leidong-tools.copilot.clearMiMoApiKey",
-        "title": "清除 MiMo API Key",
-        "category": "雷动三千工具集：自定义端点"
-      },
-      {
-        "command": "leidong-tools.copilot.showLogs",
-        "title": "显示自定义端点日志",
-        "category": "雷动三千工具集：自定义端点"
-      },
       {
         "command": "leidong-tools.toolbox.openExternal",
         "title": "打开在线工具箱",
@@ -261,22 +208,6 @@
         "icon": "$(debug-continue)"
       },
       {
-        "command": "leidong-tools.openGameLobby",
-        "title": "打开小游戏大厅",
-        "category": "雷动三千工具集",
-        "icon": "$(game)"
-      },
-      {
-        "command": "leidong-tools.setGameServerUrl",
-        "title": "设置游戏服务器地址",
-        "category": "雷动三千工具集"
-      },
-      {
-        "command": "leidong-tools.changeGameNickname",
-        "title": "修改游戏昵称",
-        "category": "雷动三千工具集"
-      },
-      {
         "command": "leidong-tools.analyzeWithCopilot",
         "title": "AI 分析变量/方法引用关系",
         "category": "雷动三千工具集",
@@ -287,173 +218,8 @@
         "title": "切换 AI 分析模型",
         "category": "雷动三千工具集",
         "icon": "$(symbol-misc)"
-      },
-      {
-        "command": "leidong-tools.sftp.refresh",
-        "title": "刷新远程资源",
-        "category": "雷动三千工具集",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "leidong-tools.sftp.openConfig",
-        "title": "打开远程连接配置",
-        "category": "雷动三千工具集",
-        "icon": "$(gear)"
-      },
-      {
-        "command": "leidong-tools.sftp.preview",
-        "title": "预览远程文件",
-        "category": "雷动三千工具集",
-        "icon": "$(open-preview)"
-      },
-      {
-        "command": "leidong-tools.sftp.download",
-        "title": "下载远程资源",
-        "category": "雷动三千工具集",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "leidong-tools.sftp.upload",
-        "title": "上传到远程目录",
-        "category": "雷动三千工具集",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "leidong-tools.sftp.uploadFile",
-        "title": "上传文件",
-        "category": "雷动三千工具集",
-        "icon": "$(file)"
-      },
-      {
-        "command": "leidong-tools.sftp.uploadFolder",
-        "title": "上传文件夹到远程",
-        "category": "雷动三千工具集",
-        "icon": "$(folder)"
-      },
-      {
-        "command": "leidong-tools.sftp.uploadLocalFolder",
-        "title": "上传文件夹",
-        "category": "雷动远程",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "leidong-tools.sftp.downloadLocalFolder",
-        "title": "下载文件夹",
-        "category": "雷动远程",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "leidong-tools.sftp.uploadCurrentFile",
-        "title": "上传文件",
-        "category": "雷动三千工具集",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "leidong-tools.sftp.backupUpload",
-        "title": "备份并上传文件",
-        "category": "雷动三千工具集",
-        "icon": "$(cloud-upload)"
-      },
-      {
-        "command": "leidong-tools.sftp.downloadCurrentFile",
-        "title": "下载文件",
-        "category": "雷动三千工具集",
-        "icon": "$(cloud-download)"
-      },
-      {
-        "command": "leidong-tools.sftp.selectAutoUploadProfile",
-        "title": "选择保存自动上传目标",
-        "category": "雷动三千工具集",
-        "icon": "$(target)"
-      },
-      {
-        "command": "leidong-tools.sftp.toggleProfileAutoUpload",
-        "title": "切换此连接自动上传",
-        "category": "雷动三千工具集",
-        "icon": "$(sync)"
-      },
-      {
-        "command": "leidong-tools.sftp.showLogs",
-        "title": "显示远程资源日志",
-        "category": "雷动三千工具集",
-        "icon": "$(output)"
-      },
-      {
-        "command": "leidong-tools.sftp.toggleUploadOnSave",
-        "title": "切换保存自动上传",
-        "category": "雷动三千工具集",
-        "icon": "$(sync)"
-      },
-      {
-        "command": "leidong-tools.sftp.testConnection",
-        "title": "测试远程连接",
-        "category": "雷动三千工具集",
-        "icon": "$(debug-start)"
-      },
-      {
-        "command": "leidong-tools.sftp.disconnect",
-        "title": "断开远程连接",
-        "category": "雷动三千工具集",
-        "icon": "$(debug-disconnect)"
-      },
-      {
-        "command": "leidong-tools.sftp.createDirectory",
-        "title": "新建远程目录",
-        "category": "雷动三千工具集",
-        "icon": "$(new-folder)"
-      },
-      {
-        "command": "leidong-tools.sftp.rename",
-        "title": "重命名远程资源",
-        "category": "雷动三千工具集",
-        "icon": "$(edit)"
-      },
-      {
-        "command": "leidong-tools.sftp.delete",
-        "title": "删除远程资源",
-        "category": "雷动三千工具集",
-        "icon": "$(trash)"
-      },
-      {
-        "command": "leidong-tools.remoteTerminal.open",
-        "title": "打开远程终端",
-        "category": "雷动三千工具集",
-        "icon": "$(terminal)"
-      },
-      {
-        "command": "leidong-tools.remoteTerminal.runSavedCommand",
-        "title": "在远程终端执行收藏/历史命令",
-        "category": "雷动三千工具集",
-        "icon": "$(history)"
-      },
-      {
-        "command": "leidong-tools.sftp.compareCurrentFile",
-        "title": "比较本地与远程文件",
-        "category": "雷动三千工具集",
-        "icon": "$(diff)"
-      },
-      {
-        "command": "leidong-tools.sftp.syncCurrentFile",
-        "title": "同步当前文件（比较后选择）",
-        "category": "雷动三千工具集",
-        "icon": "$(sync)"
-      },
-      {
-        "command": "leidong-tools.sftp.testAllConnections",
-        "title": "测试全部远程连接",
-        "category": "雷动三千工具集",
-        "icon": "$(debug-start)"
       }
     ],
-    "terminal": {
-      "profiles": [
-        {
-          "id": "leidong-tools.remoteTerminal",
-          "title": "雷动远程终端",
-          "icon": "terminal"
-        }
-      ]
-    },
     "configuration": {
       "title": "Leidong Tools",
       "properties": {
@@ -496,7 +262,9 @@
           "description": "TODO 高亮规则。每条规则可配置前缀、字体色、背景色、字体样式及高亮范围。",
           "items": {
             "type": "object",
-            "required": ["prefix"],
+            "required": [
+              "prefix"
+            ],
             "additionalProperties": false,
             "properties": {
               "prefix": {
@@ -517,7 +285,10 @@
               },
               "fontStyle": {
                 "type": "string",
-                "enum": ["normal", "italic"],
+                "enum": [
+                  "normal",
+                  "italic"
+                ],
                 "description": "字体样式。"
               },
               "textDecoration": {
@@ -535,8 +306,16 @@
               },
               "highlightMode": {
                 "type": "string",
-                "enum": ["prefix", "text", "line"],
-                "enumDescriptions": ["只高亮前缀。", "高亮前缀到本行末尾。", "高亮整行。"],
+                "enum": [
+                  "prefix",
+                  "text",
+                  "line"
+                ],
+                "enumDescriptions": [
+                  "只高亮前缀。",
+                  "高亮前缀到本行末尾。",
+                  "高亮整行。"
+                ],
                 "default": "prefix",
                 "description": "高亮范围。"
               },
@@ -654,11 +433,6 @@
           "default": 300,
           "description": "鼠标悬停在变量上后延迟多少毫秒开始检测（默认300ms）。"
         },
-        "leidong-tools.gameServerUrl": {
-          "type": "string",
-          "default": "http://gserver.srliforever.ltd",
-          "description": "小游戏服务器 HTTP 地址。所有游戏页面由服务端提供，更新游戏无需更新扩展。开发环境设为 http://localhost:8088"
-        },
         "leidong-tools.enableOutlineSymbols": {
           "type": "boolean",
           "default": false,
@@ -705,7 +479,7 @@
             "printWidth": 160,
             "singleAttributePerLine": false
           },
-          "description": "text/x-template 选区格式化使用的 Prettier 配置。会继承项目根目录 Prettier 配置，本设置中的字段优先级更高。默认属性不强制换行，printWidth 为 160。",
+          "description": "text/x-template 选区格式化使用的 Prettier 配置。默认属性不强制换行，printWidth 为 160。",
           "additionalProperties": true,
           "properties": {
             "printWidth": {
@@ -727,143 +501,6 @@
               "description": "Prettier useTabs。未设置时使用当前编辑器 insertSpaces 推导。"
             }
           }
-        },
-        "leidong-tools.sftpConfigFiles": {
-          "type": "array",
-          "default": [
-            ".vscode/sftp.json"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "旧配置：远程连接配置文件列表。建议改用 leidong-tools.remoteConfigFiles。"
-        },
-        "leidong-tools.remoteConfigFiles": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "远程连接配置文件列表，支持 SFTP、SSH、FTP、FTPS。留空时读取 .vscode/sftp.json。"
-        },
-        "leidong-tools.remoteConnectionIdleTimeout": {
-          "type": "number",
-          "default": 60,
-          "minimum": 10,
-          "description": "远程连接空闲多少秒后自动关闭。保存和连续操作会复用同一连接。"
-        },
-        "leidong-tools.remoteVerboseProtocolLogging": {
-          "type": "boolean",
-          "default": false,
-          "description": "输出 SSH/SFTP/FTP 底层协议通信日志。仅建议排查连接问题时启用。"
-        },
-        "leidong-tools.remoteUploadExcludedExtensions": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "上传时排除的文件扩展名，不区分大小写，例如 node_modules 构建产物可填写 map、log、tmp。"
-        },
-        "leidong-tools.remoteUploadOnSaveEnabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "是否启用保存文件后自动上传。关闭后所有配置的 uploadOnSave 暂停生效。"
-        },
-        "leidong-tools.remoteUploadExcludeRegex": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "高级上传排除正则列表，匹配工作区相对路径（统一使用 / 分隔符），例如 (^|/)node_modules/、\\.min\\.js$。"
-        },
-        "leidong-tools.remoteTerminalFavoriteCommands": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "description": "远程终端收藏命令。打开远程终端后，通过“在远程终端执行收藏/历史命令”选择执行。"
-        },
-        "leidong-tools.copilot.deepseekBaseUrl": {
-          "type": "string",
-          "default": "https://api.deepseek.com",
-          "description": "DeepSeek 或其兼容服务的 OpenAI Chat Completions 基础地址。"
-        },
-        "leidong-tools.copilot.mimoBaseUrl": {
-          "type": "string",
-          "default": "https://api.xiaomimimo.com/v1",
-          "description": "MiMo OpenAI 兼容 API 基础地址；按套餐需要可改为官方 Token Plan 地址。"
-        },
-        "leidong-tools.copilot.mimoAccessMode": {
-          "type": "string",
-          "default": "tokenPlan",
-          "enum": [
-            "tokenPlan",
-            "payAsYouGo",
-            "custom"
-          ],
-          "enumDescriptions": [
-            "MiMo TokenPlan 订阅；使用 tp- 密钥和选择的 TokenPlan 区域端点。",
-            "MiMo 按量计费；使用 sk- 密钥和官方 api.xiaomimimo.com 端点。",
-            "使用 mimoBaseUrl 中的自定义兼容端点。"
-          ],
-          "description": "MiMo 凭据和端点模式。TokenPlan 与按量计费密钥相互独立，不能混用。"
-        },
-        "leidong-tools.copilot.mimoTokenPlanRegion": {
-          "type": "string",
-          "default": "cn",
-          "enum": [
-            "cn",
-            "sgp",
-            "ams"
-          ],
-          "enumDescriptions": [
-            "中国集群",
-            "新加坡集群",
-            "欧洲集群"
-          ],
-          "description": "MiMo TokenPlan OpenAI 兼容端点区域；以 TokenPlan 页面显示的专属地址为准。"
-        },
-        "leidong-tools.copilot.mimoThinkingEffort": {
-          "type": "string",
-          "default": "high",
-          "enum": [
-            "none",
-            "low",
-            "medium",
-            "high"
-          ],
-          "enumDescriptions": [
-            "关闭 MiMo 深度思考。",
-            "开启 MiMo 深度思考。",
-            "开启 MiMo 深度思考。",
-            "开启 MiMo 深度思考（默认）。"
-          ],
-          "description": "MiMo V2.5 Pro 的默认思考强度。MiMo Chat Completions 当前把 low、medium、high 都映射为 thinking.enabled。"
-        },
-        "leidong-tools.copilot.deepseekModelIdOverrides": {
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "将 Copilot 模型 ID 映射为 DeepSeek 或兼容端点实际模型 ID。"
-        },
-        "leidong-tools.copilot.mimoModelIdOverrides": {
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "将 MiMo 模型 ID 映射为 MiMo API 实际模型 ID；适用于官方模型更新或兼容网关。"
-        },
-        "leidong-tools.copilot.maxTokens": {
-          "type": "number",
-          "default": 0,
-          "minimum": 0,
-          "description": "自定义端点单次最大输出 token；0 表示交由模型 API 决定。"
         }
       }
     },
@@ -956,60 +593,11 @@
           "name": "监听服务",
           "icon": "$(eye)",
           "contextualTitle": "文件监听服务"
-        },
-        {
-          "id": "leidong-tools.gameSidebar",
-          "name": "小游戏",
-          "type": "webview",
-          "icon": "$(game)",
-          "contextualTitle": "小游戏大厅"
-        },
-        {
-          "id": "leidong-tools.sftpView",
-          "name": "远程资源",
-          "type": "webview",
-          "icon": "$(remote-explorer)",
-          "contextualTitle": "远程资源管理器"
         }
       ]
     },
     "menus": {
       "explorer/context": [
-        {
-          "command": "leidong-tools.sftp.downloadCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "leidong-tools@1"
-        },
-        {
-          "command": "leidong-tools.sftp.uploadFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "leidong-tools@2"
-        },
-        {
-          "command": "leidong-tools.sftp.backupUpload",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "leidong-tools@3"
-        },
-        {
-          "command": "leidong-tools.sftp.compareCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "leidong-tools@4"
-        },
-        {
-          "command": "leidong-tools.sftp.syncCurrentFile",
-          "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "leidong-tools@5"
-        },
-        {
-          "command": "leidong-tools.sftp.uploadLocalFolder",
-          "when": "resourceScheme == file && explorerResourceIsFolder",
-          "group": "leidong-tools@1"
-        },
-        {
-          "command": "leidong-tools.sftp.downloadLocalFolder",
-          "when": "resourceScheme == file && explorerResourceIsFolder",
-          "group": "leidong-tools@2"
-        },
         {
           "command": "leidong-tools.buildCurrentVueIndex",
           "when": "resourceExtname == .html || resourceExtname == .js || resourceExtname == .ts || resourceExtname == .jsx || resourceExtname == .tsx || resourceExtname == .vue",
@@ -1026,31 +614,6 @@
           "command": "leidong-tools.toolbox.sendSelection",
           "when": "editorHasSelection",
           "group": "leidong-tools@1"
-        },
-        {
-          "command": "leidong-tools.sftp.downloadCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "leidong-tools@1"
-        },
-        {
-          "command": "leidong-tools.sftp.uploadCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "leidong-tools@2"
-        },
-        {
-          "command": "leidong-tools.sftp.backupUpload",
-          "when": "resourceScheme == file",
-          "group": "leidong-tools@3"
-        },
-        {
-          "command": "leidong-tools.sftp.compareCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "leidong-tools@4"
-        },
-        {
-          "command": "leidong-tools.sftp.syncCurrentFile",
-          "when": "resourceScheme == file",
-          "group": "leidong-tools@5"
         },
         {
           "command": "leidong-tools.buildCurrentVueIndex",
@@ -1070,46 +633,6 @@
       ],
       "view/item/context": [
         {
-          "command": "leidong-tools.sftp.preview",
-          "when": "view == leidong-tools.sftpView && viewItem == remote-file",
-          "group": "inline@1"
-        },
-        {
-          "command": "leidong-tools.sftp.download",
-          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-profile)",
-          "group": "inline@2"
-        },
-        {
-          "command": "leidong-tools.sftp.upload",
-          "when": "view == leidong-tools.sftpView && (viewItem == remote-directory || viewItem == remote-profile)",
-          "group": "inline@3"
-        },
-        {
-          "command": "leidong-tools.sftp.backupUpload",
-          "when": "view == leidong-tools.sftpView && viewItem == remote-file",
-          "group": "inline@4"
-        },
-        {
-          "command": "leidong-tools.sftp.selectAutoUploadProfile",
-          "when": "view == leidong-tools.sftpView && viewItem == remote-profile",
-          "group": "2_workspace@1"
-        },
-        {
-          "command": "leidong-tools.sftp.createDirectory",
-          "when": "view == leidong-tools.sftpView && (viewItem == remote-directory || viewItem == remote-profile)",
-          "group": "1_modification@1"
-        },
-        {
-          "command": "leidong-tools.sftp.rename",
-          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory)",
-          "group": "1_modification@2"
-        },
-        {
-          "command": "leidong-tools.sftp.delete",
-          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory)",
-          "group": "1_modification@3"
-        },
-        {
           "command": "leidong-tools.pauseWatch",
           "when": "viewItem == watch-running",
           "group": "inline@1"
@@ -1130,23 +653,7 @@
           "group": "1_modification@1"
         }
       ],
-      "view/title": [
-        {
-          "command": "leidong-tools.sftp.refresh",
-          "when": "view == leidong-tools.sftpView",
-          "group": "navigation@1"
-        },
-        {
-          "command": "leidong-tools.sftp.openConfig",
-          "when": "view == leidong-tools.sftpView",
-          "group": "navigation@2"
-        },
-        {
-          "command": "leidong-tools.sftp.showLogs",
-          "when": "view == leidong-tools.sftpView",
-          "group": "navigation@3"
-        }
-      ]
+      "view/title": []
     },
     "semanticTokenScopes": [
       {
@@ -1247,11 +754,8 @@
     "acorn": "^8.17.0",
     "acorn-walk": "^8.3.5",
     "axios": "^1.18.1",
-    "basic-ftp": "^6.0.1",
     "cheerio": "^1.2.0",
     "prettier": "^3.9.5",
-    "ssh2": "^1.17.0",
-    "ssh2-sftp-client": "^12.1.1",
     "vue-template-compiler": "^2.7.15"
   },
   "devDependencies": {
@@ -1261,8 +765,7 @@
     "@types/babel__traverse": "^7.20.7",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.19.43",
-    "@types/ssh2-sftp-client": "^9.0.6",
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "1.100.0",
     "@typescript-eslint/eslint-plugin": "^8.64.0",
     "@typescript-eslint/parser": "^8.64.0",
     "@vscode/test-cli": "^0.0.10",

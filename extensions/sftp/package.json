@@ -1,0 +1,434 @@
+{
+  "name": "leidong-sftp",
+  "displayName": "雷动远程资源（SFTP / FTP）",
+  "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
+  "version": "0.1.7",
+  "publisher": "KuCai",
+  "icon": "logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lsrweb/leidong-tools.git",
+    "directory": "extensions/sftp"
+  },
+  "bugs": {
+    "url": "https://github.com/lsrweb/leidong-tools/issues"
+  },
+  "homepage": "https://github.com/lsrweb/leidong-tools#readme",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "sftp",
+    "ftp",
+    "ssh",
+    "远程",
+    "remote",
+    "部署"
+  ],
+  "activationEvents": [
+    "onView:leidong-tools.sftpView",
+    "onTerminalProfile:leidong-tools.remoteTerminal",
+    "onCommand:leidong-tools.remoteTerminal.open",
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          ".vscode/sftp.json",
+          "**/.vscode/sftp.json"
+        ],
+        "url": "./schemas/sftp.schema.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "leidong-tools.sftp.refresh",
+        "title": "刷新远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "leidong-tools.sftp.openConfig",
+        "title": "打开远程连接配置",
+        "category": "雷动三千工具集",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "leidong-tools.sftp.preview",
+        "title": "预览远程文件",
+        "category": "雷动三千工具集",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "leidong-tools.sftp.download",
+        "title": "下载远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "leidong-tools.sftp.upload",
+        "title": "上传到远程目录",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadFile",
+        "title": "上传文件",
+        "category": "雷动三千工具集",
+        "icon": "$(file)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadFolder",
+        "title": "上传文件夹到远程",
+        "category": "雷动三千工具集",
+        "icon": "$(folder)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadLocalFolder",
+        "title": "上传文件夹",
+        "category": "雷动远程",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.downloadLocalFolder",
+        "title": "下载文件夹",
+        "category": "雷动远程",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadCurrentFile",
+        "title": "上传文件",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.backupUpload",
+        "title": "备份并上传文件",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.downloadCurrentFile",
+        "title": "下载文件",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "leidong-tools.sftp.selectAutoUploadProfile",
+        "title": "选择保存自动上传目标",
+        "category": "雷动三千工具集",
+        "icon": "$(target)"
+      },
+      {
+        "command": "leidong-tools.sftp.toggleProfileAutoUpload",
+        "title": "切换此连接自动上传",
+        "category": "雷动三千工具集",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "leidong-tools.sftp.showLogs",
+        "title": "显示远程资源日志",
+        "category": "雷动三千工具集",
+        "icon": "$(output)"
+      },
+      {
+        "command": "leidong-tools.sftp.toggleUploadOnSave",
+        "title": "切换保存自动上传",
+        "category": "雷动三千工具集",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "leidong-tools.sftp.testConnection",
+        "title": "测试远程连接",
+        "category": "雷动三千工具集",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "leidong-tools.sftp.disconnect",
+        "title": "断开远程连接",
+        "category": "雷动三千工具集",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "leidong-tools.sftp.createDirectory",
+        "title": "新建远程目录",
+        "category": "雷动三千工具集",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "leidong-tools.sftp.rename",
+        "title": "重命名远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "leidong-tools.sftp.delete",
+        "title": "删除远程资源",
+        "category": "雷动三千工具集",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "leidong-tools.remoteTerminal.open",
+        "title": "打开远程终端",
+        "category": "雷动三千工具集",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "leidong-tools.remoteTerminal.runSavedCommand",
+        "title": "在远程终端执行收藏/历史命令",
+        "category": "雷动三千工具集",
+        "icon": "$(history)"
+      },
+      {
+        "command": "leidong-tools.sftp.compareCurrentFile",
+        "title": "比较本地与远程文件",
+        "category": "雷动三千工具集",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "leidong-tools.sftp.syncCurrentFile",
+        "title": "同步当前文件（比较后选择）",
+        "category": "雷动三千工具集",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "leidong-tools.sftp.testAllConnections",
+        "title": "测试全部远程连接",
+        "category": "雷动三千工具集",
+        "icon": "$(debug-start)"
+      }
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "leidong-tools.remoteTerminal",
+          "title": "雷动远程终端",
+          "icon": "terminal"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "雷动远程资源",
+      "properties": {
+        "leidong-tools.sftpConfigFiles": {
+          "type": "array",
+          "default": [
+            ".vscode/sftp.json"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "相对工作区的远程连接配置文件路径。"
+        },
+        "leidong-tools.remoteConfigFiles": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "远程连接配置文件路径（额外）"
+        },
+        "leidong-tools.remoteConnectionIdleTimeout": {
+          "type": "number",
+          "default": 30,
+          "description": "远程连接空闲自动断开时间（分钟）。"
+        },
+        "leidong-tools.remoteVerboseProtocolLogging": {
+          "type": "boolean",
+          "default": false,
+          "description": "输出远程协议详细日志。"
+        },
+        "leidong-tools.remoteUploadExcludedExtensions": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "自动上传排除的扩展名（如 .map）。"
+        },
+        "leidong-tools.remoteUploadOnSaveEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "保存后自动上传到远程。"
+        },
+        "leidong-tools.remoteUploadExcludeRegex": {
+          "type": "string",
+          "default": "",
+          "description": "自动上传排除路径正则。"
+        },
+        "leidong-tools.remoteTerminalFavoriteCommands": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "远程终端收藏命令。打开远程终端后，通过“在远程终端执行收藏/历史命令”选择执行。"
+        }
+      }
+    },
+    "views": {
+      "leidong-sidebar": [
+        {
+          "id": "leidong-tools.sftpView",
+          "name": "远程资源",
+          "type": "webview",
+          "icon": "$(remote-explorer)",
+          "contextualTitle": "远程资源管理器"
+        }
+      ]
+    },
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "leidong-tools.sftp.downloadCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@1"
+        },
+        {
+          "command": "leidong-tools.sftp.uploadFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@2"
+        },
+        {
+          "command": "leidong-tools.sftp.backupUpload",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@3"
+        },
+        {
+          "command": "leidong-tools.sftp.compareCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@4"
+        },
+        {
+          "command": "leidong-tools.sftp.syncCurrentFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "leidong-tools@5"
+        },
+        {
+          "command": "leidong-tools.sftp.uploadLocalFolder",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "leidong-tools@1"
+        },
+        {
+          "command": "leidong-tools.sftp.downloadLocalFolder",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "leidong-tools@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "leidong-tools.sftp.downloadCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@1"
+        },
+        {
+          "command": "leidong-tools.sftp.uploadCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@2"
+        },
+        {
+          "command": "leidong-tools.sftp.backupUpload",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@3"
+        },
+        {
+          "command": "leidong-tools.sftp.compareCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@4"
+        },
+        {
+          "command": "leidong-tools.sftp.syncCurrentFile",
+          "when": "resourceScheme == file",
+          "group": "leidong-tools@5"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "leidong-tools.sftp.preview",
+          "when": "view == leidong-tools.sftpView && viewItem == remote-file",
+          "group": "inline@1"
+        },
+        {
+          "command": "leidong-tools.sftp.download",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory || viewItem == remote-profile)",
+          "group": "inline@2"
+        },
+        {
+          "command": "leidong-tools.sftp.upload",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-directory || viewItem == remote-profile)",
+          "group": "inline@3"
+        },
+        {
+          "command": "leidong-tools.sftp.backupUpload",
+          "when": "view == leidong-tools.sftpView && viewItem == remote-file",
+          "group": "inline@4"
+        },
+        {
+          "command": "leidong-tools.sftp.selectAutoUploadProfile",
+          "when": "view == leidong-tools.sftpView && viewItem == remote-profile",
+          "group": "2_workspace@1"
+        },
+        {
+          "command": "leidong-tools.sftp.createDirectory",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-directory || viewItem == remote-profile)",
+          "group": "1_modification@1"
+        },
+        {
+          "command": "leidong-tools.sftp.rename",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory)",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "leidong-tools.sftp.delete",
+          "when": "view == leidong-tools.sftpView && (viewItem == remote-file || viewItem == remote-directory)",
+          "group": "1_modification@3"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "leidong-tools.sftp.refresh",
+          "when": "view == leidong-tools.sftpView",
+          "group": "navigation@1"
+        },
+        {
+          "command": "leidong-tools.sftp.openConfig",
+          "when": "view == leidong-tools.sftpView",
+          "group": "navigation@2"
+        },
+        {
+          "command": "leidong-tools.sftp.showLogs",
+          "when": "view == leidong-tools.sftpView",
+          "group": "navigation@3"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "vsix": "vsce package"
+  },
+  "dependencies": {
+    "basic-ftp": "^6.0.1",
+    "ssh2": "^1.17.0",
+    "ssh2-sftp-client": "^12.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ssh2-sftp-client": "^9.0.6",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.9.2",
+    "ts-loader": "^9.6.2",
+    "typescript": "^5.8.2",
+    "webpack": "^5.108.4",
+    "webpack-cli": "^6.0.1"
+  }
+}

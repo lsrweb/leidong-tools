@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"module": "Node16",
+		"target": "ES2022",
+		"lib": [
+			"ES2022"
+		],
+		"sourceMap": true,
+		"esModuleInterop": true,
+		"rootDir": "src",
+		"strict": true,
+		"experimentalDecorators": true,
+		"useDefineForClassFields": false,
+		"types": [
+			"node"
+		]
+	},
+	"include": [
+		"src/**/*.ts"
+	]
+}

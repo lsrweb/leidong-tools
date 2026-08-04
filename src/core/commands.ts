@@ -36,6 +36,7 @@ interface LogConfigItem {
  */
 export function registerCommands(context: vscode.ExtensionContext): FileWatchManager {
     const fileWatchManager = new FileWatchManager(context);
+    context.subscriptions.push(fileWatchManager);
     
     // 注册跳转到定义命令（供 TreeView 使用）
     context.subscriptions.push(
@@ -340,52 +341,5 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
         })
     );
 
-    // =================== 游戏相关命令 ===================
-    const { GamePanel } = require('../games/gameWebviewProvider');
-    const { GameManager } = require('../games/gameManager');
-    const { initPlayerIdentity, ensurePlayerNickname, changePlayerNickname } = require('../games/playerIdentity');
-
-    // 初始化玩家身份（注入 context 以使用 globalState 缓存昵称）
-    initPlayerIdentity(context);
-
-    // 打开游戏大厅（加载服务端页面）
-    context.subscriptions.push(
-        vscode.commands.registerCommand('leidong-tools.openGameLobby', async () => {
-            // 确保玩家有昵称（首次使用会弹窗输入）
-            const nickname = await ensurePlayerNickname();
-            if (!nickname) { return; } // 用户取消了
-            const gm = GameManager.getInstance();
-            GamePanel.createOrShow(context.extensionUri, gm.httpUrl);
-        })
-    );
-
-    // 修改游戏昵称
-    context.subscriptions.push(
-        vscode.commands.registerCommand('leidong-tools.changeGameNickname', async () => {
-            await changePlayerNickname();
-        })
-    );
-
-    // 设置游戏服务器地址
-    context.subscriptions.push(
-        vscode.commands.registerCommand('leidong-tools.setGameServerUrl', async () => {
-            const gm = GameManager.getInstance();
-            const url = await vscode.window.showInputBox({
-                prompt: '输入游戏服务器 HTTP 地址',
-                value: gm.httpUrl,
-                placeHolder: 'http://your-server:8088',
-            });
-            if (url) {
-                gm.setServerUrl(url);
-                const online = await gm.checkServer(url);
-                if (online) {
-                    vscode.window.showInformationMessage('🎮 服务器在线，可以开始游戏！');
-                } else {
-                    vscode.window.showWarningMessage('🎮 服务器暂时无法连接，请确认已启动');
-                }
-            }
-        })
-    );
-    
     return fileWatchManager;
 }

@@ -35,21 +35,29 @@ interface RefreshMessage {
  * 变量索引 WebView 提供器
  * 支持虚拟滚动，轻松处理万级变量
  */
-export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider {
+export class VariableIndexWebviewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
     public static readonly viewType = 'leidong-tools.variableIndexWebview';
     
     private _view?: vscode.WebviewView;
     private _extensionUri: vscode.Uri;
     private _lastParsedUri: string = '';
     private _lastVariables: VariableItem[] = [];
+    private readonly saveListener: vscode.Disposable;
 
     constructor(private readonly extensionUri: vscode.Uri) {
         this._extensionUri = extensionUri;
 
         // 保存时只清空本视图的派生缓存，不触发索引构建。
-        vscode.workspace.onDidSaveTextDocument((document) => {
+        this.saveListener = vscode.workspace.onDidSaveTextDocument((document) => {
             this.invalidateCacheForDocument(document);
         });
+    }
+
+    dispose(): void {
+        this.saveListener.dispose();
+        this._view = undefined;
+        this._lastParsedUri = '';
+        this._lastVariables = [];
     }
 
     public resolveWebviewView(

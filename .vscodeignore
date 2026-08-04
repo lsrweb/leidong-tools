@@ -10,7 +10,9 @@
 # 源码 (打包后不需要)
 src/**
 !src/webview/**
-!schemas/**
+
+# 独立扩展 (单独打包)
+extensions/**
 out/**
 node_modules/**
 tests/**
