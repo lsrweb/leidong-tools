@@ -121,6 +121,18 @@ function sanitizeContent(raw: string, fileUri?: vscode.Uri): string {
 /**
  * 解析一个 JS 源（外部或内联）生成 VueIndex
  */
+/**
+ * VueIndex 构建 schema 版本：解析器逻辑升级后递增，强制旧缓存失效。
+ * v1: Vue2 Options API；v2: Vue3 Composition API（createApp/setup/ref/reactive/computed）。
+ */
+const VUE_INDEX_SCHEMA_VERSION = 2;
+
+/** Vue3 setup 生命周期钩子调用（onMounted 等，收入 index.lifecycle）。 */
+const ON_SETUP_LIFECYCLE_HOOKS = new Set([
+    'onMounted', 'onBeforeMount', 'onBeforeUnmount', 'onUnmounted', 'onUpdated',
+    'onBeforeUpdate', 'onActivated', 'onDeactivated', 'onErrorCaptured',
+]);
+
 function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueIndex {
     const clean = sanitizeContent(jsContent, uri);
     const ast = resilientParse(clean, { sourceType: 'module', plugins: ['jsx', 'typescript'] });
@@ -150,6 +162,9 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     const objectVarDecls: Record<string, t.ObjectExpression> = {};
     const functionVarReturns: Record<string, t.ObjectExpression> = {}; // 变量 = 函数() { return {...} }
     const functionDeclarations: Record<string, t.ObjectExpression> = {}; // function mixin() { return {...} }
+    // Vue3 Composition API：const x = ref(...) / reactive / computed 等声明（setup 返回项跳转落点）
+    const constVarDecls: Record<string, t.Identifier> = {};
+    const constVarInits: Record<string, t.Node> = {};
 
     // 收集顶层变量对象（可能用作 mixin）
     traverse(ast, {
@@ -157,6 +172,9 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             const id = p.node.id;
             const init = p.node.init;
             if (t.isIdentifier(id) && init) {
+                // Vue3 setup 内声明的变量（含 ref/reactive/computed 等 CallExpression 初始化）
+                if (id.loc) { constVarDecls[id.name] = id; }
+                constVarInits[id.name] = init;
                 if (t.isObjectExpression(init)) {
                     objectVarDecls[id.name] = init;
                 } else if (t.isFunctionExpression(init) || t.isArrowFunctionExpression(init)) {
@@ -177,6 +195,9 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         },
         FunctionDeclaration(p) {
             if (t.isIdentifier(p.node.id)) {
+                // Vue3 setup 内 function 声明（return { fn } 跳转落点）
+                if (p.node.id.loc) { constVarDecls[p.node.id.name] = p.node.id; }
+                constVarInits[p.node.id.name] = p.node;
                 // 查找 return { ... }
                 for (const st of p.node.body.body) {
                     if (t.isReturnStatement(st) && st.argument && t.isObjectExpression(st.argument)) {
@@ -209,7 +230,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         propsMeta: new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>(),
         watchMeta: new Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>(),
         filtersMeta: new Map<string, { params: string[]; doc?: string }>(),
-        version: 0,
+        version: VUE_INDEX_SCHEMA_VERSION,
         hash: contentHash,
         builtAt: Date.now()
     });
@@ -251,14 +272,147 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         if (t.isNewExpression(valueNode) && t.isIdentifier(valueNode.callee)) { return { initType: valueNode.callee.name, initValue: `new ${valueNode.callee.name}()` }; }
         if (t.isUnaryExpression(valueNode) && valueNode.operator === '-' && t.isNumericLiteral(valueNode.argument)) { return { initType: 'number', initValue: `-${valueNode.argument.value}` }; }
         if (t.isIdentifier(valueNode) && valueNode.name === 'undefined') { return { initType: 'undefined', initValue: 'undefined' }; }
+        // Vue3 Composition API：ref/reactive/computed 等调用
+        if (t.isCallExpression(valueNode) && t.isIdentifier(valueNode.callee)) {
+            const calleeName = valueNode.callee.name;
+            if (calleeName === 'ref') { return { initType: 'Ref', initValue: 'ref(...)' }; }
+            if (calleeName === 'reactive') {
+                // 对象类型：展示结构（{ keyword, online }）
+                const arg = valueNode.arguments[0];
+                const keys = arg && t.isObjectExpression(arg)
+                    ? arg.properties
+                        .filter(p => t.isObjectProperty(p))
+                        .map(p => getPropertyName((p as t.ObjectProperty).key))
+                        .filter(Boolean)
+                    : [];
+                if (keys.length === 0) { return { initType: 'Object', initValue: 'reactive({})' }; }
+                if (keys.length <= 8) { return { initType: 'Object', initValue: `reactive({ ${keys.join(', ')} })` }; }
+                return { initType: 'Object', initValue: `reactive({ ${keys.slice(0, 8).join(', ')}, ... })` };
+            }
+            if (calleeName === 'computed') { return { initType: 'ComputedRef', initValue: 'computed(...)' }; }
+            return { initType: calleeName, initValue: `${calleeName}(...)` };
+        }
+        // 变量引用：展开一次到其初始化（const x = ref(0) 被 return { x } 引用）
+        if (t.isIdentifier(valueNode)) {
+            const init = constVarInits[valueNode.name];
+            if (init && !t.isIdentifier(init)) { return inferDataType(init); }
+        }
         return {};
+    };
+
+    /**
+     * Vue3 setup 值分类：函数 → methods；computed(...) → computed；其余（ref/reactive/常量）→ data。
+     * 解引用最多两层（const fn = handleX; return { fn }）。
+     */
+    const classifySetupValue = (value: t.Node | null | undefined): 'methods' | 'computed' | 'data' => {
+        if (!value) { return 'data'; }
+        if (t.isArrowFunctionExpression(value) || t.isFunctionExpression(value) || t.isObjectMethod(value)) {
+            return 'methods';
+        }
+        let init: t.Node | undefined = t.isIdentifier(value) ? constVarInits[value.name] : undefined;
+        if (init && t.isIdentifier(init)) { init = constVarInits[init.name]; }
+        if (init) {
+            if (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init) || t.isFunctionDeclaration(init)) {
+                return 'methods';
+            }
+            if (t.isCallExpression(init) && t.isIdentifier(init.callee, { name: 'computed' })) {
+                return 'computed';
+            }
+            return 'data';
+        }
+        if (t.isCallExpression(value) && t.isIdentifier(value.callee, { name: 'computed' })) {
+            return 'computed';
+        }
+        return 'data';
+    };
+
+    const classifySetupProperty = (prop: t.ObjectProperty): 'methods' | 'computed' | 'data' => classifySetupValue(prop.value);
+
+    /**
+     * 收集 setup 函数体内所有顶层声明（含未 return 的常量/函数，如 DEVICE_TYPE），
+     * 使变量索引面板可搜索/跳转。return 项已由 extractData 处理（同名跳过）。
+     */
+    const collectSetupDeclarations = (setupNode: t.Node | null | undefined, lineOffset: number, index: VueIndex): void => {
+        let body: t.Statement[] | null = null;
+        if (t.isObjectMethod(setupNode)) {
+            body = setupNode.body.body;
+        } else if (t.isFunctionExpression(setupNode) || t.isArrowFunctionExpression(setupNode)) {
+            if (t.isBlockStatement(setupNode.body)) { body = setupNode.body.body; }
+        }
+        if (!body) { return; }
+        const makeLoc = (loc: t.SourceLocation): vscode.Location => new vscode.Location(uri, new vscode.Range(
+            new vscode.Position(lineOffset + loc.start.line - 1, loc.start.column),
+            new vscode.Position(lineOffset + loc.end.line - 1, loc.end.column)
+        ));
+        // 行尾注释（const x = ref(true) // 说明）
+        const docForLine = (loc: t.SourceLocation | null | undefined): string | undefined => {
+            if (!loc) { return undefined; }
+            return getInlineLineComment(sourceLines[loc.start.line - 1] || '', loc.start.column);
+        };
+        for (const statement of body) {
+            if (t.isVariableDeclaration(statement)) {
+                for (const declarator of statement.declarations) {
+                    if (!t.isIdentifier(declarator.id) || !declarator.id.loc) { continue; }
+                    const name = declarator.id.name;
+                    const kind = classifySetupValue(declarator.init);
+                    const map = kind === 'methods' ? index.methods : kind === 'computed' ? index.computed : index.data;
+                    const doc = docForLine(declarator.id.loc);
+                    if (!map.has(name)) {
+                        map.set(name, makeLoc(declarator.id.loc!));
+                    }
+                    // 声明行注释补充：return 项已进索引但 meta 可能缺失 doc（extractData 从 return 行取不到声明注释）
+                    if (doc) {
+                        if (kind === 'methods') {
+                            const existing = index.methodMeta?.get(name);
+                            if (index.methodMeta && !existing?.doc) { index.methodMeta.set(name, { params: existing?.params ?? [], doc }); }
+                        } else if (kind === 'computed') {
+                            const existing = index.computedMeta?.get(name);
+                            if (index.computedMeta && !existing?.doc) { index.computedMeta.set(name, { params: existing?.params ?? [], doc }); }
+                        } else {
+                            const existing = index.dataMeta?.get(name);
+                            if (index.dataMeta && !existing?.doc) { index.dataMeta.set(name, { ...(existing || {}), doc }); }
+                        }
+                    }
+                    // reactive({...}) 对象属性：注册 name.propKey，模板 searchForm.online 可跳转
+                    if (declarator.init && t.isCallExpression(declarator.init)
+                        && t.isIdentifier(declarator.init.callee, { name: 'reactive' })) {
+                        const arg = declarator.init.arguments[0];
+                        if (arg && t.isObjectExpression(arg)) {
+                            for (const prop of arg.properties) {
+                                if (!t.isObjectProperty(prop) || !prop.loc) { continue; }
+                                const key = getPropertyName(prop.key);
+                                if (!key) { continue; }
+                                const fullName = `${name}.${key}`;
+                                if (!index.data.has(fullName)) {
+                                    index.data.set(fullName, makeLoc(prop.loc));
+                                    const propDoc = getDocForDataProperty(prop) || docForLine(prop.loc);
+                                    if (propDoc && index.dataMeta && !index.dataMeta.has(fullName)) {
+                                        index.dataMeta.set(fullName, { doc: propDoc });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (t.isFunctionDeclaration(statement) && t.isIdentifier(statement.id) && statement.id.loc) {
+                if (!index.methods.has(statement.id.name)) {
+                    index.methods.set(statement.id.name, makeLoc(statement.id.loc!));
+                    const doc = docForLine(statement.id.loc);
+                    if (doc && index.methodMeta && !index.methodMeta.has(statement.id.name)) {
+                        index.methodMeta.set(statement.id.name, { params: [], doc });
+                    }
+                }
+            }
+        }
     };
 
     const extractData = (
         node: t.Node | null | undefined,
         lineOffset: number,
         target: Map<string, vscode.Location>,
-        metaTarget?: Map<string, { doc?: string; initType?: string; initValue?: string }>
+        metaTarget?: Map<string, { doc?: string; initType?: string; initValue?: string }>,
+        methodTarget?: Map<string, vscode.Location>,
+        computedTarget?: Map<string, vscode.Location>
     ) => {
         if (!node) { return; }
         let obj: t.ObjectExpression | null = null;
@@ -295,15 +449,28 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             if (t.isObjectProperty(prop) && prop.loc) {
                 const name = getPropertyName(prop.key);
                 if (!name) { continue; }
+                // Vue3 setup 返回分流：函数 → methods、computed → computed、其余 → data
+                let dest = target;
+                let destMeta = metaTarget;
+                if (methodTarget || computedTarget) {
+                    const kind = classifySetupProperty(prop);
+                    if (kind === 'methods' && methodTarget) { dest = methodTarget; destMeta = undefined; }
+                    else if (kind === 'computed' && computedTarget) { dest = computedTarget; destMeta = undefined; }
+                }
+                // Vue3 setup 返回：return { x }（shorthand）→ 跳转落点定位到 const x = ref() 声明处
+                let propLoc = prop.loc;
+                if (t.isIdentifier(prop.value) && constVarDecls[prop.value.name]?.loc) {
+                    propLoc = constVarDecls[prop.value.name].loc!;
+                }
                 const loc = new vscode.Location(uri, new vscode.Range(
-                    new vscode.Position(lineOffset + prop.loc.start.line - 1, prop.loc.start.column),
-                    new vscode.Position(lineOffset + prop.loc.end.line - 1, prop.loc.end.column)
+                    new vscode.Position(lineOffset + propLoc.start.line - 1, propLoc.start.column),
+                    new vscode.Position(lineOffset + propLoc.end.line - 1, propLoc.end.column)
                 ));
-                target.set(name, loc);
+                dest.set(name, loc);
                 const doc = getDocForDataProperty(prop);
                 const initInfo = inferDataType(prop.value);
-                if (metaTarget && !metaTarget.has(name)) {
-                    metaTarget.set(name, { doc: doc || undefined, ...initInfo });
+                if (destMeta && !destMeta.has(name)) {
+                    destMeta.set(name, { doc: doc || undefined, ...initInfo });
                 }
             }
         }
@@ -952,6 +1119,13 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             if (!name) { continue; }
             if (name === 'data') {
                 extractData((prop as any).value ?? (t.isObjectMethod(prop) ? prop : (prop as any).value), lineOffset, index.data, index.dataMeta);
+            } else if (name === 'setup') {
+                // Vue3 Composition API：setup() { const x = ref(); const fn = () => {}; return {x, fn} }
+                // 按初始化类型分流：函数 → methods、computed(...) → computed、其余 → data
+                const setupNode = (prop as any).value ?? prop;
+                extractData(setupNode, lineOffset, index.data, index.dataMeta, index.methods, index.computed);
+                // 收集 setup 内未 return 的顶层声明（常量/函数），保证面板可搜索
+                collectSetupDeclarations(setupNode, lineOffset, index);
             } else if (name === 'methods') {
                 extractMethods((prop as any).value ?? prop, lineOffset, index.methods, index.methodMeta);
             } else if (name === 'computed') {
@@ -1031,7 +1205,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         propsMeta,
         watchMeta,
         filtersMeta,
-        version: 0,
+        version: VUE_INDEX_SCHEMA_VERSION,
         hash: contentHash,
         builtAt: Date.now()
     };
@@ -1046,6 +1220,33 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     collectComponentsFromOptions(first, baseLine);
                 }
             }
+        }
+    });
+
+    // 解析 Vue3 createApp({ setup() {...} }).mount('#app') 结构（CDN 场景：Vue3.createApp / Vue.createApp / createApp）
+    // 同时收集 setup 内的 onMounted/onBeforeUnmount 等生命周期调用
+    traverse(ast, {
+        CallExpression(p) {
+            const callee = p.node.callee;
+            const isCreateApp = t.isIdentifier(callee, { name: 'createApp' })
+                || (t.isMemberExpression(callee) && t.isIdentifier(callee.property, { name: 'createApp' }));
+            if (!isCreateApp) { return; }
+            const first = p.node.arguments[0];
+            if (first && t.isObjectExpression(first)) {
+                populateIndexFromOptions(rootIndex, first, baseLine);
+                collectComponentsFromOptions(first, baseLine);
+            }
+        },
+        Identifier(path) {
+            // setup 内的 onMounted(...) 等生命周期调用（在 createApp options 内时才有意义）
+            if (!path.parentPath || !t.isCallExpression(path.parentPath.node) || path.parentPath.node.callee !== path.node) { return; }
+            const hookName = path.node.name;
+            if (!ON_SETUP_LIFECYCLE_HOOKS.has(hookName) || !path.node.loc) { return; }
+            const loc = new vscode.Location(uri, new vscode.Range(
+                new vscode.Position(baseLine + path.node.loc.start.line - 1, path.node.loc.start.column),
+                new vscode.Position(baseLine + path.node.loc.end.line - 1, path.node.loc.end.column)
+            ));
+            if (!lifecycle.has(hookName)) { lifecycle.set(hookName, loc); }
         }
     });
 
@@ -1081,7 +1282,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
     // 或：window.comp = { props: {}, data() {}, ... }
     // 仅在 rootIndex 为空时生效
     if (rootIndex.data.size === 0 && rootIndex.methods.size === 0 && rootIndex.computed.size === 0) {
-        const vueOptionKeys = new Set(['data', 'methods', 'computed', 'watch', 'template', 'props', 'mixins', 'components', 'mounted', 'created', 'beforeCreate', 'beforeMount', 'beforeDestroy', 'destroyed', 'beforeUpdate', 'updated', 'filters', 'directives']);
+        const vueOptionKeys = new Set(['data', 'methods', 'computed', 'watch', 'template', 'props', 'mixins', 'components', 'mounted', 'created', 'beforeCreate', 'beforeMount', 'beforeDestroy', 'destroyed', 'beforeUpdate', 'updated', 'filters', 'directives', 'setup']);
 
         const isVueLikeObject = (obj: t.ObjectExpression): boolean => {
             let score = 0;
@@ -1167,7 +1368,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
         propsMeta,
         watchMeta,
         filtersMeta,
-        version: 0,
+        version: VUE_INDEX_SCHEMA_VERSION,
         hash: contentHash,
         builtAt: Date.now(),
         componentsByTemplateId: componentsByTemplateId.size > 0 ? componentsByTemplateId : undefined
@@ -1179,7 +1380,7 @@ export function getCachedVueIndexForContent(content: string, uri: vscode.Uri, ba
     const key = uri.toString();
     const hash = fastHash(content);
     const cached = indexCache.get(key);
-    if (cached && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
+    if (cached && cached.index.version === VUE_INDEX_SCHEMA_VERSION && cached.index.hash === hash && (cached.baseLine ?? 0) === baseLine) {
         if (loggingEnabled()) { console.log(`[vue-index][hit] ${uri.fsPath} hash=${hash} baseLine=${baseLine} data=${cached.index.data.size} computed=${cached.index.computed.size} methods=${cached.index.methods.size} mixinData=${cached.index.mixinData.size} mixinComputed=${cached.index.mixinComputed.size} mixinMethods=${cached.index.mixinMethods.size}`); }
         return cached.index;
     }
@@ -1445,7 +1646,7 @@ function createEmptyVueIndex(): VueIndex {
         propsMeta: new Map<string, { type?: string; default?: string; required?: boolean; doc?: string }>(),
         watchMeta: new Map<string, { handler?: string; deep?: boolean; immediate?: boolean; doc?: string }>(),
         filtersMeta: new Map<string, { params: string[]; doc?: string }>(),
-        version: 0,
+        version: VUE_INDEX_SCHEMA_VERSION,
         hash: '',
         builtAt: 0,
         componentsByTemplateId: undefined
@@ -1533,7 +1734,7 @@ export function resolveVueIndexForHtml(document: vscode.TextDocument, force = fa
     let foundAny = false;
     while ((match = scriptRegex.exec(text)) !== null) {
         const content = match[1];
-        if (!/(?:new\s+Vue\s*\(|Vue\.component\s*\(|export\s+default\s+\{|\bdata\s*:\s*|\bmethods\s*:\s*\{|\bcomputed\s*:\s*\{|\bprops\s*:\s*\[|\bprops\s*:\s*\{)/.test(content)) {
+        if (!/(?:new\s+Vue\s*\(|Vue\.component\s*\(|export\s+default\s+\{|\bdata\s*:\s*|\bmethods\s*:\s*\{|\bcomputed\s*:\s*\{|\bprops\s*:\s*\[|\bprops\s*:\s*\{|createApp\s*\(|Vue3\s*\.|setup\s*\(\s*\)\s*\{)/.test(content)) {
             continue;
         }
         const startPos = document.positionAt(match.index + match[0].indexOf('>') + 1);

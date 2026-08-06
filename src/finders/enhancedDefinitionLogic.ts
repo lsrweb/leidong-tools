@@ -215,7 +215,11 @@ export class EnhancedDefinitionLogic {
         if (!target) {
             target = findDefinitionInIndex(word, index);
         }
-        
+
+        if (!target && fullChain) {
+            // 完整链优先：reactive 对象属性（searchForm.online → 属性定义处）
+            target = findDefinitionInIndex(fullChain, index);
+        }
         if (!target && fullChain) {
             target = findChainedRootDefinition(fullChain, index);
         }

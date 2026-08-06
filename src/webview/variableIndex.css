@@ -1,468 +1,201 @@
+/* 变量索引面板 —— 简洁紧凑版 */
 :root {
     --ui-bg: var(--vscode-sideBar-background);
-    --ui-panel: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
-    --ui-panel-2: var(--vscode-sideBar-background);
-    --ui-border: var(--vscode-panel-border);
-    --ui-accent: var(--vscode-focusBorder);
-    --ui-accent-2: var(--vscode-button-background);
+    --ui-border: var(--vscode-panel-border, #3c3c3c);
+    --ui-accent: var(--vscode-focusBorder, #007fd4);
     --ui-text: var(--vscode-sideBar-foreground);
     --ui-muted: var(--vscode-descriptionForeground);
     --ui-hover: var(--vscode-list-hoverBackground);
     --ui-active: var(--vscode-list-activeSelectionBackground);
     --ui-active-text: var(--vscode-list-activeSelectionForeground);
     --ui-badge-bg: var(--vscode-badge-background);
-    --ui-badge-text: var(--vscode-badge-foreground, var(--vscode-sideBar-foreground));
-    --ui-radius: 10px;
-    --ui-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
-    --ui-font: "Space Grotesk", "IBM Plex Sans", "Noto Sans", "Segoe UI", sans-serif;
-    --ui-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+    --ui-badge-text: var(--vscode-badge-foreground);
 }
 
+* { box-sizing: border-box; }
+
 body {
-    font-family: var(--ui-font);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
     margin: 0;
     padding: 0;
     background: var(--ui-bg);
     color: var(--ui-text);
-    overflow: hidden;
-    position: relative;
-    letter-spacing: 0.1px;
     height: 100vh;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 }
 
-body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: -1;
-    background:
-        radial-gradient(520px 320px at 85% -10%, color-mix(in srgb, var(--ui-accent) 22%, transparent), transparent 70%),
-        radial-gradient(420px 260px at 10% 0%, color-mix(in srgb, var(--ui-accent-2) 18%, transparent), transparent 65%),
-        linear-gradient(180deg, color-mix(in srgb, var(--ui-panel) 90%, transparent), transparent 60%);
-}
-
-/* ========== 头部区域 ========== */
+/* ========== 头部 ========== */
 .header {
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    background: linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--ui-panel) 92%, transparent),
-        color-mix(in srgb, var(--ui-panel-2) 98%, transparent)
-    );
-    padding: 14px 12px 10px;
-    border-bottom: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-    backdrop-filter: blur(10px);
+    flex: none;
+    padding: 6px 8px 4px;
+    border-bottom: 1px solid var(--ui-border);
 }
-
 .search-box {
     display: flex;
-    gap: 10px;
+    gap: 4px;
     align-items: center;
-    margin-bottom: 8px;
 }
-
-#searchInput {
+.search-box input {
     flex: 1;
-    padding: 8px 14px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
-    background: color-mix(in srgb, var(--ui-panel) 88%, transparent);
-    color: var(--ui-text);
-    font-size: 12px;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-    outline: none;
+    min-width: 0;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border, var(--ui-border));
+    border-radius: 2px;
+    padding: 3px 6px;
+    font-size: var(--vscode-font-size);
 }
-
-#searchInput:focus {
-    border-color: var(--ui-accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ui-accent) 25%, transparent);
-    background: color-mix(in srgb, var(--ui-panel) 96%, transparent);
-}
-
-#searchInput::placeholder {
-    color: var(--ui-muted);
-    opacity: 0.7;
-}
-
-#refreshBtn {
-    background: linear-gradient(135deg, var(--ui-accent-2), color-mix(in srgb, var(--ui-accent) 35%, var(--ui-accent-2)));
-    color: var(--vscode-button-foreground, #fff);
+.search-box input:focus { outline: 1px solid var(--ui-accent); outline-offset: -1px; }
+.search-box button {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
     border: none;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    font-size: 16px;
+    border-radius: 2px;
+    padding: 3px 8px;
     cursor: pointer;
-    transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
+    font-size: var(--vscode-font-size);
 }
-
-#refreshBtn:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.05);
-}
-
-#refreshBtn:active {
-    transform: translateY(0);
-}
-
+.search-box button:hover { background: var(--vscode-button-secondaryHoverBackground); }
 .stats {
+    margin-top: 3px;
     font-size: 11px;
     color: var(--ui-muted);
-    padding: 4px 0;
-    font-weight: 600;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-/* ========== 分类按钮 ========== */
+/* ========== 分类 ========== */
 .categories {
+    flex: none;
     display: flex;
-    gap: 8px;
-    padding: 10px 12px 12px;
-    border-bottom: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
-    background: color-mix(in srgb, var(--ui-panel-2) 92%, transparent);
+    gap: 2px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--ui-border);
+}
+.category-btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    color: var(--ui-muted);
+    padding: 2px 10px;
+    cursor: pointer;
+    font-size: var(--vscode-font-size);
+}
+.category-btn:hover { color: var(--ui-text); background: var(--ui-hover); }
+.category-btn.active {
+    color: var(--ui-active-text);
+    background: var(--ui-active);
 }
 
-/* ========== Pin 区域 ========== */
+/* ========== Pinned ========== */
 .pinned-section {
-    padding: 10px 12px 6px;
-    border-bottom: 1px solid color-mix(in srgb, var(--ui-border) 70%, transparent);
-    background: color-mix(in srgb, var(--ui-panel) 84%, transparent);
+    flex: none;
+    border-bottom: 1px solid var(--ui-border);
 }
-
 .pinned-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    padding: 3px 8px;
     font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
     color: var(--ui-muted);
-    margin-bottom: 8px;
 }
-
-#clearPins {
+.pinned-header button {
+    background: none;
     border: none;
-    background: color-mix(in srgb, var(--ui-border) 45%, transparent);
     color: var(--ui-muted);
-    font-size: 10px;
-    font-weight: 700;
-    padding: 4px 10px;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-#clearPins:hover {
-    color: var(--ui-text);
-    background: color-mix(in srgb, var(--ui-accent) 35%, transparent);
-}
-
-.pinned-list {
-    display: grid;
-    gap: 6px;
-}
-
-.pinned-item {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto auto;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--ui-panel) 90%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ui-border) 60%, transparent);
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.pinned-item:hover {
-    background: color-mix(in srgb, var(--ui-panel) 98%, transparent);
-}
-
-.pinned-name {
-    font-size: 12px;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.pinned-file {
-    font-size: 10px;
-    color: var(--ui-muted);
-    font-family: var(--ui-mono);
-    white-space: nowrap;
-    opacity: 0.7;
-}
-
-.category-btn {
-    flex: 1;
-    background: color-mix(in srgb, var(--ui-panel) 75%, transparent);
-    color: var(--ui-muted);
-    border: 1px solid color-mix(in srgb, var(--ui-border) 60%, transparent);
-    padding: 8px 12px;
-    border-radius: 999px;
     cursor: pointer;
     font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
-    position: relative;
-    overflow: hidden;
+    padding: 0 4px;
 }
-
-.category-btn::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ui-accent) 18%, transparent), transparent);
-    transform: translateX(-100%);
-    transition: transform 0.5s ease;
+.pinned-header button:hover { color: var(--ui-text); }
+.pinned-list { padding-bottom: 2px; }
+.pinned-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    cursor: pointer;
+    font-size: var(--vscode-font-size);
 }
+.pinned-item:hover { background: var(--ui-hover); }
 
-.category-btn:hover::before {
-    transform: translateX(100%);
-}
-
-.category-btn:hover {
-    color: var(--ui-text);
-    transform: translateY(-1px);
-}
-
-.category-btn.active {
-    background: linear-gradient(135deg, var(--ui-accent-2), color-mix(in srgb, var(--ui-accent) 35%, var(--ui-accent-2)));
-    color: var(--vscode-button-foreground, #fff);
-    border-color: transparent;
-    box-shadow: 0 10px 20px rgba(0, 0, 0, 0.24);
-}
-
-.category-btn:active {
-    transform: translateY(0);
-}
-
-/* ========== 变量列表区域 ========== */
+/* ========== 变量列表 ========== */
 .variable-list {
     flex: 1;
     min-height: 0;
-    overflow: hidden;
     position: relative;
-    display: flex;
 }
-
 .scroll-container {
-    height: 100%;
-    flex: 1;
-    min-height: 0;
+    position: absolute;
+    inset: 0;
     overflow-y: auto;
-    overflow-x: hidden;
-    position: relative;
-    scroll-behavior: smooth;
-    padding: 6px 6px 10px;
 }
-
-/* 自定义滚动条 */
-.scroll-container::-webkit-scrollbar {
-    width: 8px;
-}
-
-.scroll-container::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.scroll-container::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--ui-border) 70%, transparent);
-    border-radius: 10px;
-}
-
-.scroll-container::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--ui-accent) 40%, var(--ui-border));
-}
-
 .scroll-content {
     position: relative;
-    min-height: 100%;
-}
-
-/* ========== 变量项 ========== */
-.variable-item {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto;
-    align-items: center;
-    gap: 8px;
     width: 100%;
-    height: 36px;
-    padding: 6px 12px;
-    border-radius: 12px;
-    cursor: pointer;
-    position: relative;
-    background: color-mix(in srgb, var(--ui-panel) 70%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ui-border) 65%, transparent);
-    box-sizing: border-box;
-    animation: riseIn 0.2s ease;
 }
-
-.variable-item::before {
-    content: '';
+.variable-item {
     position: absolute;
-    left: 6px;
-    top: 6px;
-    width: 3px;
-    height: calc(100% - 12px);
-    background: linear-gradient(180deg, var(--ui-accent), transparent);
-    border-radius: 999px;
-    opacity: 0;
-    transition: opacity 0.15s ease;
+    left: 0;
+    right: 0;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    cursor: pointer;
+    font-size: var(--vscode-font-size);
 }
-
-.variable-item:hover::before {
-    opacity: 1;
-}
-
-.variable-item:hover {
-    background: color-mix(in srgb, var(--ui-panel) 86%, transparent);
-    box-shadow: 0 10px 18px rgba(0, 0, 0, 0.2);
-}
-
-.variable-item:active {
-    background: var(--ui-active);
-    color: var(--ui-active-text);
-}
-
+.variable-item:hover { background: var(--ui-hover); }
 .variable-name {
-    font-weight: 600;
-    font-size: 13px;
-    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    padding-left: 8px;
+    white-space: nowrap;
+    font-weight: 500;
 }
-
 .variable-type {
+    flex: none;
     font-size: 10px;
+    padding: 0 5px;
+    border-radius: 2px;
+    background: var(--ui-badge-bg);
     color: var(--ui-badge-text);
-    background: color-mix(in srgb, var(--ui-badge-bg) 82%, transparent);
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
-
 .variable-line {
+    flex: none;
     font-size: 11px;
     color: var(--ui-muted);
-    min-width: 52px;
-    text-align: right;
-    font-family: var(--ui-mono);
-    font-weight: 600;
-    opacity: 0.75;
+    font-variant-numeric: tabular-nums;
 }
-
 .pin-btn {
+    flex: none;
+    background: none;
     border: none;
-    background: color-mix(in srgb, var(--ui-border) 55%, transparent);
     color: var(--ui-muted);
-    font-size: 12px;
-    width: 24px;
-    height: 24px;
-    border-radius: 8px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    font-size: 12px;
+    padding: 0 4px;
+    line-height: 1;
 }
-
-.pin-btn:hover {
-    color: var(--ui-text);
-    background: color-mix(in srgb, var(--ui-accent) 35%, transparent);
-}
-
-.pin-btn.pinned {
-    background: color-mix(in srgb, var(--ui-accent) 55%, transparent);
-    color: var(--ui-text);
-}
+.pin-btn:hover { color: var(--ui-text); }
+.pin-btn.pinned { color: var(--ui-accent); }
 
 /* ========== 空状态 ========== */
 .empty-state {
+    padding: 24px 12px;
     text-align: center;
-    padding: 60px 20px;
     color: var(--ui-muted);
-    animation: fadeIn 0.3s ease;
+    font-size: var(--vscode-font-size);
 }
-
-.empty-state p:first-child {
-    font-size: 46px;
-    margin: 0 0 12px 0;
-}
-
-.empty-state p:last-child {
-    font-size: 12px;
-    margin: 0;
-    opacity: 0.8;
-}
-
-.hint {
-    font-size: 12px;
-    color: var(--ui-muted);
-    opacity: 0.7;
-    margin-top: 8px;
-}
-
-/* ========== 响应式优化 ========== */
-@media (max-width: 300px) {
-    .category-btn {
-        font-size: 10px;
-        padding: 6px 8px;
-    }
-    
-    .variable-item {
-        padding: 6px 10px;
-    }
-    
-    .variable-name {
-        font-size: 12px;
-    }
-}
-
-/* ========== 动画效果 ========== */
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes riseIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-/* ========== 加载状态 ========== */
-.loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 40px;
-    color: var(--ui-muted);
-    opacity: 0.8;
-}
-
-.loading::after {
-    content: '...';
-    animation: dots 1.5s steps(4, end) infinite;
-}
-
-@keyframes dots {
-    0%, 20% { content: '.'; }
-    40% { content: '..'; }
-    60%, 100% { content: '...'; }
+.empty-state .hint {
+    margin-top: 6px;
+    font-size: 11px;
 }

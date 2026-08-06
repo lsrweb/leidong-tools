@@ -2,7 +2,7 @@
   "name": "leidong-sftp",
   "displayName": "雷动远程资源（SFTP / FTP）",
   "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
-  "version": "0.1.7",
+  "version": "0.1.14",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -236,8 +236,9 @@
         },
         "leidong-tools.remoteConnectionIdleTimeout": {
           "type": "number",
-          "default": 30,
-          "description": "远程连接空闲自动断开时间（分钟）。"
+          "default": 0,
+          "minimum": 0,
+          "description": "远程连接空闲自动断开时间（秒）；0 表示一直保持连接。"
         },
         "leidong-tools.remoteVerboseProtocolLogging": {
           "type": "boolean",

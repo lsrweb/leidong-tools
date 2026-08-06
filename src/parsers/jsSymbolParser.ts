@@ -557,9 +557,16 @@ export class JSSymbolParser {
             const node = current.node;
             
             // 检查 new Vue({...})
-            if (t.isNewExpression(node) && 
-                t.isIdentifier(node.callee) && 
+            if (t.isNewExpression(node) &&
+                t.isIdentifier(node.callee) &&
                 node.callee.name === 'Vue') {
+                return true;
+            }
+
+            // 检查 Vue3 createApp({...})（CDN 场景）
+            if (t.isCallExpression(node) &&
+                (t.isIdentifier(node.callee, { name: 'createApp' }) ||
+                    (t.isMemberExpression(node.callee) && t.isIdentifier(node.callee.property, { name: 'createApp' })))) {
                 return true;
             }
 

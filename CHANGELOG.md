@@ -1,5 +1,37 @@
 # 更新日志 (Changelog)
 
+## [3.4.3] - 2026-08-06
+
+### ✨ reactive 对象属性跳转 + 注释显示 + 测试体系
+
+- `const searchForm = reactive({ keyword: '', online: '' })`：对象属性注册为完整链（`searchForm.keyword`），模板 `searchForm.online` 可跳转到属性定义处；面板/悬停中类型显示为对象结构（`reactive({ keyword, online })`）。
+- 变量/方法悬停显示**行尾注释**（`const isTipsExpand = ref(true) // 功能须知展开状态`），无注释不显示。
+- 新增 VueIndex 解析器测试套件（Vue2 Options API / Vue3 setup / reactive 属性 / 注释 / 三种 createApp 形式 / 混合页面），`npm test` 全量通过；**发布流程固定为：测试通过 → 打包 → 发布（测试失败不允许发布）**。
+
+## [3.4.2] - 2026-08-06
+
+### ✨ 变量索引面板优化 + setup 常量收录
+
+- 变量索引面板样式精简：去掉渐变/阴影/模糊/大圆角等花哨样式，间距与行高收紧（28px），保持原生 VS Code 观感。
+- Vue3 `setup()` 内**未 return 的顶层常量/函数**（如 `DEVICE_TYPE`）也纳入索引，变量面板可搜索、可跳转。
+
+## [3.4.1] - 2026-08-06
+
+### 🐛 Vue3 setup 返回项分类修复
+
+- 修复 setup() 返回的函数被识别为 data 的问题：返回项按初始化类型分流——函数（箭头/普通/函数声明引用）→ methods、`computed(...)` → computed、ref/reactive/常量 → data。
+- setup 内 `function 声明` 纳入索引（return 中引用的函数跳转落点正确）。
+- 已用真实项目文件验证：27 个函数正确进入 methods，ref/reactive 常量进入 data，`onMounted` 等生命周期正常收集。
+
+## [3.4.0] - 2026-08-06
+
+### ✨ Vue3 Composition API 支持
+
+- 变量索引 / 跳转 / 补全 / 引用计数 / Hover 支持 Vue3 CDN 写法：`const { createApp, ref, reactive, computed, onMounted } = Vue3; createApp({ setup() {...} }).mount('#app')`。
+- `setup()` 内声明的 ref / reactive / computed / 函数 / 常量自动纳入索引；模板中直接引用（ref 自动解包）可跳转到 `const x = ref(...)` 声明处。
+- 识别 `Vue3.createApp` / `Vue.createApp` / `createApp` 三种调用形式，并收集 `onMounted` 等 setup 生命周期钩子。
+- 索引缓存 schema 版本升级，旧缓存自动失效重建；模板侧扫描（{{}}/v- 指令）Vue2/Vue3 通用无需改动。
+
 ## [3.3.2] - 2026-08-01
 
 ### ⬇️ 最低兼容 VS Code 版本降至 1.100

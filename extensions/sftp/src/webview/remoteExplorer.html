@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{nonce}}';">
 <style>
-body { margin:0; padding:8px; color:var(--vscode-foreground); background:var(--vscode-sideBar-background); font-family:var(--vscode-font-family); font-size:var(--vscode-font-size); }
-.toolbar { display:flex; gap:6px; margin-bottom:8px; }
+body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; color:var(--vscode-foreground); background:var(--vscode-sideBar-background); font-family:var(--vscode-font-family); font-size:var(--vscode-font-size); }
+.toolbar { display:flex; gap:6px; margin-bottom:8px; flex:none; }
+#tree { flex:1; overflow-y:auto; min-height:0; }
 .toolbar button { flex:1; background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); border:none; border-radius:2px; padding:4px 6px; cursor:pointer; font-size:12px; }
 .toolbar button:hover { background:var(--vscode-button-secondaryHoverBackground); }
 .node { display:flex; align-items:center; gap:4px; padding:3px 6px; border-radius:3px; cursor:pointer; white-space:nowrap; }
@@ -160,7 +161,10 @@ body { margin:0; padding:8px; color:var(--vscode-foreground); background:var(--v
   async function revealPath(profileId, remotePath) {
     const normalized = normalizePath(remotePath);
     const profile = (roots.flatMap((w) => w.children || [])).find((n) => n.profileId === profileId);
-    if (!profile) { return; } // profiles 尚未送达，等待 loadProfiles 后重试
+    if (!profile) {
+      vscode.postMessage({ type: 'revealResult', ok: false, reason: 'no-profile', path: normalized });
+      return; // profiles 尚未送达，等待 loadProfiles 后重试
+    }
     const base = normalizePath(profile.remotePath) || '/';
     const chain = [];
     let cur = normalized;
@@ -174,7 +178,12 @@ body { margin:0; padding:8px; color:var(--vscode-foreground); background:var(--v
       if (!node.expanded) { node.expanded = true; }
       if (node.kind !== 'workspace' && !node.loaded) { await loadChildren(node); }
       const child = (node.children || []).find((c) => normalizePath(c.remotePath) === dir);
-      if (!child) { pendingReveal = null; render(); return; } // 目标不存在，停止重试
+      if (!child) {
+        pendingReveal = null;
+        render();
+        vscode.postMessage({ type: 'revealResult', ok: false, reason: 'child-missing', path: dir });
+        return; // 目标不存在，停止重试
+      }
       node = child;
     }
     if (node.kind === 'directory' && !node.loaded) {
@@ -185,15 +194,25 @@ body { margin:0; padding:8px; color:var(--vscode-foreground); background:var(--v
     selected = node.key;
     render();
     scrollToNode(node.key);
+    vscode.postMessage({ type: 'revealResult', ok: true, path: normalized, key: node.key });
   }
 
+  // 滚动定位：scrollIntoView 与手动 scrollTop 双保险，多段重试防御布局时序
   function scrollToNode(key) {
+    const attempts = [0, 100, 300, 700, 1500];
+    let index = 0;
     const scroll = () => {
       const el = treeEl.querySelector('[data-key="' + String(key).replaceAll('"', '\\"') + '"]');
-      if (el) { el.scrollIntoView({ block: 'center' }); }
+      if (el) {
+        try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch { /* 忽略 */ }
+        const rect = el.getBoundingClientRect();
+        const containerRect = treeEl.getBoundingClientRect();
+        treeEl.scrollTop = Math.max(0, rect.top - containerRect.top + treeEl.scrollTop - treeEl.clientHeight / 2);
+      }
+      index += 1;
+      if (index < attempts.length) { setTimeout(scroll, attempts[index]); }
     };
     scroll();
-    requestAnimationFrame(scroll);
   }
 
   // 合并 profiles：保留已展开节点的 expanded/loaded/children，避免刷新时整棵树重置

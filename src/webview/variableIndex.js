@@ -16,7 +16,7 @@
     const clearPins = document.getElementById('clearPins');
 
     // 虚拟滚动参数
-    const ITEM_HEIGHT = 36;
+    const ITEM_HEIGHT = 28;
     let visibleStart = 0;
     let visibleEnd = 0;
     let visibleCount = 0;

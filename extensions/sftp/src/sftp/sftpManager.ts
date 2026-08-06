@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { Readable, Writable } from 'stream';
 import { Client as FtpClient, FileType as FtpFileType } from 'basic-ftp';
-import { registerRemoteTerminal, BUILTIN_COMMANDS, type RemoteTerminalBuiltins } from './remoteTerminal';
+import { registerRemoteTerminal, BUILTIN_COMMANDS, type RemoteTerminalBuiltins, type TerminalCandidate } from './remoteTerminal';
 
 // ssh2-sftp-client does not ship first-party TypeScript declarations.
 const SftpClient = require('ssh2-sftp-client');
@@ -258,7 +258,12 @@ class SftpService implements vscode.Disposable {
     private readonly ftpConnections = new Map<string, FtpConnectionEntry>();
     private readonly uploadFilterCache = new Map<string, { signature: string; extensions: Set<string>; regexes: RegExp[] }>();
 
-    constructor(private readonly logger: RemoteLogger, private readonly progress?: (transferred: number, total?: number) => void) {}
+    constructor(
+        private readonly logger: RemoteLogger,
+        private readonly progress?: (transferred: number, total?: number) => void,
+        /** 连接建立/断开时通知（用于刷新面板连接状态显示）。 */
+        private readonly onStateChange?: () => void,
+    ) {}
 
     dispose(): void {
         void this.closeAll();
@@ -516,9 +521,16 @@ class SftpService implements vscode.Disposable {
             error: (error: Error) => {
                 entry.connected = false;
                 this.logger.error(profile, error.message);
+                this.onStateChange?.();
             },
-            end: () => { entry.connected = false; },
-            close: () => { entry.connected = false; },
+            end: () => {
+                entry.connected = false;
+                this.onStateChange?.();
+            },
+            close: () => {
+                entry.connected = false;
+                this.onStateChange?.();
+            },
         });
         entry = { client, connected: false, signature, queue: Promise.resolve() };
         this.sftpConnections.set(profile.id, entry);
@@ -545,15 +557,18 @@ class SftpService implements vscode.Disposable {
         await entry.client.connect(connectConfig);
         entry.connected = true;
         this.logger.info(profile, '连接成功，后续操作将复用此连接');
+        this.onStateChange?.();
     }
 
     private scheduleSftpIdle(profile: SftpProfile, entry: SftpConnectionEntry): void {
+        const timeout = this.idleTimeoutMs(profile);
+        if (timeout <= 0) { return; } // 0 = 一直保持连接
         entry.idleTimer = setTimeout(() => {
             void this.enqueue(entry, async () => {
                 await this.closeSftp(profile, entry, '空闲超时，连接已关闭');
                 this.sftpConnections.delete(profile.id);
             });
-        }, this.idleTimeoutMs(profile));
+        }, timeout);
     }
 
     private async closeSftp(profile: SftpProfile, entry: SftpConnectionEntry, reason: string): Promise<void> {
@@ -562,6 +577,7 @@ class SftpService implements vscode.Disposable {
         entry.connected = false;
         try { await entry.client.end(); } catch { /* Connection may already be closed. */ }
         this.logger.info(profile, reason);
+        this.onStateChange?.();
     }
 
     private async withFtpClient<T>(profile: SftpProfile, action: (client: FtpClient) => Promise<T>): Promise<T> {
@@ -608,15 +624,18 @@ class SftpService implements vscode.Disposable {
             secureOptions: { rejectUnauthorized: profile.rejectUnauthorized },
         });
         this.logger.info(profile, '连接成功，后续操作将复用此连接');
+        this.onStateChange?.();
     }
 
     private scheduleFtpIdle(profile: SftpProfile, entry: FtpConnectionEntry): void {
+        const timeout = this.idleTimeoutMs(profile);
+        if (timeout <= 0) { return; } // 0 = 一直保持连接
         entry.idleTimer = setTimeout(() => {
             void this.enqueue(entry, async () => {
                 this.closeFtp(profile, entry, '空闲超时，连接已关闭');
                 this.ftpConnections.delete(profile.id);
             });
-        }, this.idleTimeoutMs(profile));
+        }, timeout);
     }
 
     private closeFtp(profile: SftpProfile, entry: FtpConnectionEntry, reason: string): void {
@@ -624,6 +643,7 @@ class SftpService implements vscode.Disposable {
         if (entry.client.closed) { return; }
         entry.client.close();
         this.logger.info(profile, reason);
+        this.onStateChange?.();
     }
 
     private async enqueue<T>(entry: { queue: Promise<void> }, action: () => Promise<T>): Promise<T> {
@@ -638,10 +658,11 @@ class SftpService implements vscode.Disposable {
         if (entry.idleTimer) { clearTimeout(entry.idleTimer); entry.idleTimer = undefined; }
     }
 
+    /** 空闲断连超时（毫秒）：0 = 一直保持连接；>0 = 空闲指定秒数后断连。 */
     private idleTimeoutMs(profile: SftpProfile): number {
         const seconds = vscode.workspace.getConfiguration('leidong-tools', profile.workspaceFolder.uri)
-            .get<number>('remoteConnectionIdleTimeout', 60);
-        return Math.max(10, seconds) * 1000;
+            .get<number>('remoteConnectionIdleTimeout', 0);
+        return seconds > 0 ? seconds * 1000 : 0;
     }
 
     private verboseProtocolLogging(profile: SftpProfile): boolean {
@@ -740,8 +761,9 @@ class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
     private view?: vscode.WebviewView;
     private readonly cache = new Map<string, any[]>();
     private readonly inFlight = new Map<string, Promise<any[]>>();
-    /** 面板未加载时暂存的终端联动请求，面板就绪后补发。 */
+    /** 面板未加载/未就绪时暂存的终端联动请求，前端 ready 后补发。 */
     private pendingReveals: Array<{ profileId: string; remotePath: string }> = [];
+    private viewReady = false;
     /** 已通知过“连接建立”的 profile，避免每次浏览都刷新面板。 */
     private readonly connectedNotified = new Set<string>();
 
@@ -750,6 +772,7 @@ class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
         private readonly extensionUri: vscode.Uri,
         private readonly configs: SftpConfigStore,
         private readonly service: SftpService,
+        private readonly logger: RemoteLogger,
     ) {}
 
     async resolveWebviewView(view: vscode.WebviewView): Promise<void> {
@@ -762,28 +785,32 @@ class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
             .replaceAll('{{cspSource}}', view.webview.cspSource)
             .replaceAll('{{nonce}}', nonce);
         view.webview.onDidReceiveMessage(message => {
+            // 前端就绪后补发暂存的终端联动请求（postMessage 在 webview 加载完成前会丢失）
+            if (message && typeof message === 'object' && (message as any).type === 'ready') {
+                this.viewReady = true;
+                const pending = this.pendingReveals;
+                this.pendingReveals = [];
+                for (const reveal of pending) {
+                    void view.webview.postMessage({ type: 'reveal', profileId: reveal.profileId, remotePath: reveal.remotePath });
+                }
+            }
             void this.handleMessage(message).catch(error => {
                 void vscode.window.showErrorMessage(`远程操作失败：${messageOf(error)}`);
             });
         });
-        // 面板就绪后补发暂存的终端联动请求（等 profiles 送达前端后再 reveal）
-        const pending = this.pendingReveals;
-        this.pendingReveals = [];
-        if (pending.length > 0) {
-            await this.postProfiles(false);
-            for (const reveal of pending) {
-                void view.webview.postMessage({ type: 'reveal', profileId: reveal.profileId, remotePath: reveal.remotePath });
-            }
-        }
     }
 
     /** 终端 cd 联动：让面板展开到指定远程目录。 */
     revealDirectory(profile: SftpProfile, remotePath: string): void {
         const reveal = { profileId: profile.id, remotePath };
+        // 尽力发送（即使前端未 ready 也尝试，消息重复无害）
         if (this.view) {
             void this.view.webview.postMessage({ type: 'reveal', profileId: reveal.profileId, remotePath: reveal.remotePath });
-        } else {
+        }
+        // 前端未就绪时缓存（ready 后补发）；有界避免无限堆积
+        if (!this.viewReady) {
             this.pendingReveals.push(reveal);
+            if (this.pendingReveals.length > 5) { this.pendingReveals.shift(); }
         }
     }
 
@@ -802,6 +829,13 @@ class RemoteExplorerWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     private async handleMessage(message: any): Promise<void> {
+        if (message.type === 'revealResult') {
+            // 终端联动诊断：查看“远程资源”日志可定位 reveal 链路
+            this.logger.info(undefined, message.ok
+                ? `面板联动定位成功: ${message.path}`
+                : `面板联动定位失败(${message.reason}): ${message.path ?? ''}`);
+            return;
+        }
         if (message.type === 'ready') { await this.postProfiles(false); return; }
         if (message.type === 'refresh') { this.cache.clear(); await this.postProfiles(true); return; }
         if (message.type === 'command') { await vscode.commands.executeCommand(message.command); return; }
@@ -908,8 +942,14 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     const configs = new SftpConfigStore();
     const logger = new RemoteLogger();
     const activity = new RemoteActivity();
-    const service = new SftpService(logger, (transferred, total) => activity.report(transferred, total));
-    const remoteProvider = new RemoteExplorerWebviewProvider(context, context.extensionUri, configs, service);
+    // 连接建立/断开时刷新面板，保证“已连接/未连接”状态与实际一致
+    let remoteProvider!: RemoteExplorerWebviewProvider;
+    const service = new SftpService(
+        logger,
+        (transferred, total) => activity.report(transferred, total),
+        () => remoteProvider.refreshProfiles(),
+    );
+    remoteProvider = new RemoteExplorerWebviewProvider(context, context.extensionUri, configs, service, logger);
     const preview = new SftpPreviewProvider(service, configs, activity, (profile, remotePath, size) => remoteProvider.updateFile(profile, remotePath, size));
     const viewRegistration = vscode.window.registerWebviewViewProvider(RemoteExplorerWebviewProvider.viewType, remoteProvider);
     registerRemoteTerminal(
@@ -1619,6 +1659,11 @@ function createTerminalBuiltins(
         '  /mkdir <目录>            远端新建目录',
         '  /rm <路径>               删除远端文件或目录',
         '  /mv <源> <目标>          移动/重命名远端路径',
+        '',
+        '文件选择器：路径参数以 @ 开头时打开文件选择器，可输入过滤、多选：',
+        '  /upload @[过滤词]        选择本地文件上传（/upload-dir 选目录）',
+        '  /download @[过滤词]      选择远端文件下载（/open /cat /tail /rm 同样支持）',
+        '  示例：/upload @app/js    选择工作区 app/js 下的文件',
     ];
 
     const requireArg = (args: string[], label: string): string => {
@@ -1649,6 +1694,113 @@ function createTerminalBuiltins(
         }
     };
 
+    /**
+     * 候选列表数据源（@ 内联选择器）：本地文件 / 远端文件（目录）的扁平列表 + 过滤。
+     * 一次拉取全量（本地 findFiles、远端递归 walk），之后由终端前端纯客户端过滤。
+     */
+    const listCandidates = async (
+        profile: SftpProfile,
+        command: string,
+        cwd: string,
+    ): Promise<TerminalCandidate[]> => {
+        if (command === 'upload' || command === 'upload-dir') {
+            const root = profile.workspaceFolder.uri;
+            const files = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,out}/**', 20000);
+            let entries = files.map(uri => {
+                const rel = path.relative(root.fsPath, uri.fsPath).replace(/\\/g, '/');
+                return { uri, rel };
+            });
+            if (command === 'upload-dir') {
+                // 目录模式：汇总文件所属的 1-2 层父目录供选择
+                const dirs = new Map<string, vscode.Uri>();
+                for (const entry of entries) {
+                    const parts = entry.rel.split('/');
+                    for (let i = 1; i <= Math.min(2, parts.length - 1); i++) {
+                        const dirRel = parts.slice(0, i).join('/');
+                        if (!dirs.has(dirRel)) { dirs.set(dirRel, vscode.Uri.joinPath(root, ...parts.slice(0, i))); }
+                    }
+                }
+                entries = [...dirs].map(([rel, uri]) => ({ uri, rel }));
+            }
+            const candidates = entries.map(entry => ({
+                label: path.posix.basename(entry.rel),
+                description: entry.rel,
+                value: entry.uri.fsPath,
+            }));
+            if (files.length >= 20000) {
+                // 结果被截断：追加提示项（value 为空，提交时自动忽略）
+                candidates.push({
+                    label: '…',
+                    description: `结果过多，仅显示前 20000 项，请继续输入过滤`,
+                    value: '',
+                });
+            }
+            return candidates;
+        }
+        // 远端：递归列出当前目录（深度 4、上限 800 项）
+        const entries: Array<{ path: string; directory: boolean }> = [];
+        const walk = async (dir: string, depth: number): Promise<void> => {
+            if (depth > 4 || entries.length >= 800) { return; }
+            let items: RemoteEntry[];
+            try { items = await service.list(profile, dir); } catch { return; }
+            for (const item of items) {
+                const entryPath = joinRemote(dir, item.name);
+                if (item.type === 'd') {
+                    entries.push({ path: `${entryPath}/`, directory: true });
+                    await walk(entryPath, depth + 1);
+                } else {
+                    entries.push({ path: entryPath, directory: false });
+                }
+            }
+        };
+        await walk(cwd, 0);
+        return entries.map(entry => ({
+            label: path.posix.basename(entry.path.replace(/\/$/, '')),
+            description: entry.path,
+            value: entry.path,
+        }));
+    };
+
+    /** 解析路径参数：以 @ 开头表示选择器模式（@ 后内容为初始过滤词）。 */
+    const isPickerArg = (arg: string | undefined): arg is string => typeof arg === 'string' && arg.startsWith('@');
+
+    /**
+     * 统一解析 run 的目标列表（支持多路径批量）：
+     * - args[0] 以 @ 开头 → 打开选择器（undefined = 用户取消）
+     * - 否则 args 全部视为目标路径（upload 系列为本地路径，其余为远端路径）
+     */
+    const resolveRunTargets = async (
+        profile: SftpProfile,
+        cwd: string,
+        command: string,
+        args: string[],
+        requireArgFn: (args: string[], label: string) => string,
+    ): Promise<string[] | undefined> => {
+        const isLocal = command === 'upload' || command === 'upload-dir';
+        if (args.length === 0) {
+            requireArgFn(args, command);
+            return undefined;
+        }
+        if (isPickerArg(args[0])) {
+            // 手动回车兜底（内联选择器未打开时）：quickPick 选择
+            const candidates = await listCandidates(profile, command, cwd);
+            const query = args[0].slice(1).trim().toLowerCase();
+            const filtered = query ? candidates.filter(candidate => candidate.description.toLowerCase().includes(query) || candidate.label.toLowerCase().includes(query)) : candidates;
+            const picked = await vscode.window.showQuickPick(
+                filtered.map(candidate => ({ label: candidate.label, description: candidate.description, value: candidate.value })),
+                {
+                    placeHolder: isLocal ? '选择本地文件（可多选）' : '选择远端文件（可多选）',
+                    matchOnDescription: true,
+                    canPickMany: true,
+                },
+            );
+            return picked?.map(item => item.value);
+        }
+        return args.map(arg => isLocal
+            ? resolveLocalPath(profile.workspaceFolder.uri, arg).fsPath
+            : resolveRemote(cwd, arg));
+    };
+
     return {
         isBuiltin: (command: string) => BUILTIN_COMMANDS.has(command),
         async run(profile: SftpProfile, command: string, args: string[], cwd: string): Promise<string[] | undefined> {
@@ -1669,11 +1821,17 @@ function createTerminalBuiltins(
                     return [`已创建目录 ${directory}`];
                 }
                 case 'rm': {
-                    const target = resolveRemote(cwd, requireArg(args, 'rm'));
-                    const stat = await service.stat(profile, target);
-                    await service.delete(profile, target, stat.directory);
-                    remoteProvider.invalidateDirectory(profile, posixDirname(target));
-                    return [`已删除 ${target}`];
+                    const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
+                    if (!targets) { return ['已取消']; }
+                    const results: string[] = [];
+                    for (const picked of targets) {
+                        const target = picked.replace(/\/$/, '');
+                        const stat = await service.stat(profile, target);
+                        await service.delete(profile, target, stat.directory);
+                        remoteProvider.invalidateDirectory(profile, posixDirname(target));
+                        results.push(`已删除 ${target}`);
+                    }
+                    return results;
                 }
                 case 'mv': {
                     const source = resolveRemote(cwd, requireArg(args, 'mv'));
@@ -1686,61 +1844,85 @@ function createTerminalBuiltins(
                 }
                 case 'download':
                 case 'download-dir': {
-                    const remote = resolveRemote(cwd, requireArg(args, command));
                     const directory = command === 'download-dir';
-                    const local = localForRemote(profile, remote);
-                    await service.download(profile, remote, local, directory);
-                    if (directory) {
-                        remoteProvider.invalidateDirectory(profile, posixDirname(remote));
-                    } else {
-                        const size = (await vscode.workspace.fs.stat(local)).size;
-                        remoteProvider.updateFile(profile, remote, size);
+                    const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
+                    if (!targets) { return ['已取消']; }
+                    const results: string[] = [];
+                    for (const picked of targets) {
+                        const remote = picked.replace(/\/$/, '');
+                        const local = localForRemote(profile, remote);
+                        await service.download(profile, remote, local, directory);
+                        if (directory) {
+                            remoteProvider.invalidateDirectory(profile, posixDirname(remote));
+                        } else {
+                            remoteProvider.updateFile(profile, remote, (await vscode.workspace.fs.stat(local)).size);
+                        }
+                        results.push(`已下载 ${remote} -> ${local.fsPath}`);
                     }
-                    return [`已下载 ${remote} -> ${local.fsPath}`];
+                    return results;
                 }
                 case 'upload':
                 case 'upload-dir': {
-                    const name = requireArg(args, command);
-                    const local = resolveLocalPath(profile.workspaceFolder.uri, name);
-                    let size = 0;
-                    try {
-                        size = (await vscode.workspace.fs.stat(local)).size;
-                    } catch {
-                        return [`本地文件不存在，已跳过：${local.fsPath}`];
+                    const directory = command === 'upload-dir';
+                    const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
+                    if (!targets) { return ['已取消']; }
+                    const results: string[] = [];
+                    for (const picked of targets) {
+                        const local = vscode.Uri.file(picked);
+                        let size = 0;
+                        try {
+                            size = (await vscode.workspace.fs.stat(local)).size;
+                        } catch {
+                            results.push(`本地文件不存在，已跳过：${local.fsPath}`);
+                            continue;
+                        }
+                        const remote = joinRemote(cwd, path.posix.basename(local.fsPath));
+                        if (directory) {
+                            await service.uploadDirectory(profile, local, remote);
+                            remoteProvider.invalidateDirectory(profile, cwd);
+                        } else {
+                            await service.upload(profile, local, remote);
+                            remoteProvider.updateFile(profile, remote, size);
+                        }
+                        results.push(`已上传 ${local.fsPath} -> ${remote}`);
                     }
-                    const remote = joinRemote(cwd, path.posix.basename(local.fsPath));
-                    if (command === 'upload-dir') {
-                        await service.uploadDirectory(profile, local, remote);
-                        remoteProvider.invalidateDirectory(profile, cwd);
-                    } else {
-                        await service.upload(profile, local, remote);
-                        remoteProvider.updateFile(profile, remote, size);
-                    }
-                    return [`已上传 ${local.fsPath} -> ${remote}`];
+                    return results;
                 }
                 case 'open': {
-                    const remote = resolveRemote(cwd, requireArg(args, 'open'));
-                    const local = localForRemote(profile, remote);
-                    await service.download(profile, remote, local, false);
-                    remoteProvider.updateFile(profile, remote, (await vscode.workspace.fs.stat(local)).size);
-                    await vscode.window.showTextDocument(local);
-                    return [`已下载并打开 ${local.fsPath}`];
+                    const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
+                    if (!targets) { return ['已取消']; }
+                    const results: string[] = [];
+                    for (const picked of targets) {
+                        const remote = picked.replace(/\/$/, '');
+                        const local = localForRemote(profile, remote);
+                        await service.download(profile, remote, local, false);
+                        remoteProvider.updateFile(profile, remote, (await vscode.workspace.fs.stat(local)).size);
+                        await vscode.window.showTextDocument(local);
+                        results.push(`已下载并打开 ${local.fsPath}`);
+                    }
+                    return results;
                 }
                 case 'cat': {
-                    const remote = resolveRemote(cwd, requireArg(args, 'cat'));
-                    const text = await readRemoteText(profile, remote, 200 * 1024);
+                    const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
+                    if (!targets) { return ['已取消']; }
+                    if (targets.length > 1) { return ['/cat 一次只能查看一个文件']; }
+                    const text = await readRemoteText(profile, targets[0].replace(/\/$/, ''), 200 * 1024);
                     return text.split(/\r?\n/);
                 }
                 case 'tail': {
-                    const remote = resolveRemote(cwd, requireArg(args, 'tail'));
+                    const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
+                    if (!targets) { return ['已取消']; }
+                    if (targets.length > 1) { return ['/tail 一次只能查看一个文件']; }
                     const lines = args[1] ? Math.max(1, Math.min(1000, Number.parseInt(args[1], 10) || 50)) : 50;
-                    const text = await readRemoteText(profile, remote, 2 * 1024 * 1024, lines);
+                    const text = await readRemoteText(profile, targets[0].replace(/\/$/, ''), 2 * 1024 * 1024, lines);
                     return text.split(/\r?\n/);
                 }
                 default:
                     return undefined;
             }
         },
+        // 内联选择器候选数据（一次拉全量，前端实时过滤）
+        listCandidates: (profile: SftpProfile, command: string, cwd: string) => listCandidates(profile, command, cwd),
     };
 }
 

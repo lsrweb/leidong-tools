@@ -33,6 +33,15 @@
 | `/rm <路径>` | 删除远端文件或目录 |
 | `/mv <源> <目标>` | 移动/重命名远端路径 |
 
+**文件选择器**：路径参数以 `@` 开头时在终端内联弹出候选列表（Claude Code 式交互）：
+
+| 输入 | 效果 |
+|---|---|
+| `/upload @` 或 `/upload @app/js` | 内联列出工作区本地文件（`/upload-dir @` 选目录） |
+| `/download @` | 内联列出远端文件（`/open` `/cat` `/tail` `/rm` 同样支持） |
+
+交互：继续输入过滤 → 方向键选择 → **Space 多选**（✓ 标记）→ Tab/回车确认执行；Esc 关闭。输入 `/` 停顿即可弹出指令列表选择内置指令。
+
 示例：终端 `cd /var/www/html` 后输入 `/download index.html`，即可把远端文件下载到工作区对应位置。
 
 ## 使用
@@ -62,7 +71,7 @@
 |---|---|
 | `leidong-tools.sftpConfigFiles` | 相对工作区的远程连接配置文件路径（默认 `.vscode/sftp.json`） |
 | `leidong-tools.remoteConfigFiles` | 额外远程连接配置文件路径 |
-| `leidong-tools.remoteConnectionIdleTimeout` | 连接空闲自动断开时间（分钟） |
+| `leidong-tools.remoteConnectionIdleTimeout` | 连接空闲自动断开时间（秒）；`0` 表示一直保持连接（默认） |
 | `leidong-tools.remoteVerboseProtocolLogging` | 输出远程协议详细日志 |
 | `leidong-tools.remoteUploadExcludedExtensions` | 自动上传排除的扩展名 |
 | `leidong-tools.remoteUploadOnSaveEnabled` | 保存后自动上传开关 |
