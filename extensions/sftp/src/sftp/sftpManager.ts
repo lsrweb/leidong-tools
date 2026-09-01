@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { Readable, Writable } from 'stream';
 import { Client as FtpClient, FileType as FtpFileType } from 'basic-ftp';
-import { registerRemoteTerminal, BUILTIN_COMMANDS, type RemoteTerminalBuiltins, type TerminalCandidate } from './remoteTerminal';
+import { registerRemoteTerminal, BUILTIN_COMMANDS, type RemoteTerminalBuiltins } from './remoteTerminal';
 
 // ssh2-sftp-client does not ship first-party TypeScript declarations.
 const SftpClient = require('ssh2-sftp-client');
@@ -51,6 +51,29 @@ interface RemoteStat {
     size: number;
     mtime: number;
     directory: boolean;
+}
+
+/** vscode.git 扩展 API 的最小类型声明（避免引入额外依赖）。 */
+interface GitExtensionExports {
+    getAPI(version: number): GitApi;
+}
+interface GitApi {
+    repositories: GitRepository[];
+}
+interface GitRepository {
+    rootUri: vscode.Uri;
+    state: GitRepositoryState;
+}
+interface GitRepositoryState {
+    HEAD?: unknown;
+    indexChanges: GitChange[];
+    workingTreeChanges: GitChange[];
+    mergeChanges: GitChange[];
+    onDidChange: vscode.Event<void>;
+}
+interface GitChange {
+    uri: vscode.Uri;
+    renameUri?: vscode.Uri;
 }
 
 class RemoteLogger implements vscode.Disposable {
@@ -956,7 +979,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         context,
         configs,
         (profile, directory) => remoteProvider.revealDirectory(profile, directory),
-        createTerminalBuiltins(context, service, remoteProvider),
+        createTerminalBuiltins(context, service, remoteProvider, activity),
     );
 
     const run = async (label: string, action: () => Promise<void>) => {
@@ -1132,10 +1155,30 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('leidong-tools.sftp.upload', async (argument?: SftpTreeItem | vscode.Uri, selectionMode?: 'file' | 'folder') => {
             const item = argument instanceof SftpTreeItem ? argument : undefined;
             const resource = argument instanceof vscode.Uri ? argument : undefined;
+
+            // 本地资源管理器触发（无远端目标节点）：按工作区映射路径上传（与保存自动上传一致）。
+            // 此前走 joinRemote(remotePath, 文件名) 固定传到 remotePath 根目录，丢失子路径。
+            if (!item && resource) {
+                const profile = await pickProfile(configs, resource);
+                if (!profile) { return; }
+                await run(`上传 ${path.basename(resource.fsPath)} 到 ${profile.name}`, async () => {
+                    const remotePath = mappedRemotePath(profile, resource);
+                    const stat = await vscode.workspace.fs.stat(resource);
+                    if ((stat.type & vscode.FileType.Directory) !== 0) {
+                        await service.uploadDirectory(profile, resource, remotePath);
+                    } else {
+                        await service.upload(profile, resource, remotePath);
+                    }
+                    remoteProvider.invalidateDirectory(profile, posixDirname(remotePath));
+                    void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${remotePath}`);
+                });
+                return;
+            }
+
             const profile = item?.profile ?? await pickProfile(configs);
             if (!profile) { return; }
             const targetDirectory = item?.kind === 'directory' ? item.remotePath : item?.kind === 'profile' ? item.profile.remotePath : item?.kind === 'file' ? posixDirname(item.remotePath) : profile.remotePath;
-            const sources = resource ? [resource] : await vscode.window.showOpenDialog({
+            const sources = await vscode.window.showOpenDialog({
                 canSelectFiles: selectionMode !== 'folder',
                 canSelectFolders: selectionMode !== 'file',
                 canSelectMany: selectionMode !== 'folder',
@@ -1205,6 +1248,33 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             await run('上传覆盖远程文件', async () => {
                 await service.upload(item.profile, source, item.remotePath);
                 remoteProvider.invalidateDirectory(item.profile, posixDirname(item.remotePath));
+            });
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.uploadGitChanges', async () => {
+            const folder = await chooseWorkspaceFolder('选择要上传 Git 变动的工作区');
+            if (!folder) { return; }
+            const profile = await pickProfile(configs, folder.uri);
+            if (!profile) { return; }
+            const collection = await collectGitChangedFiles(folder).catch(error => {
+                void vscode.window.showErrorMessage(messageOf(error));
+                return undefined;
+            });
+            if (!collection) { return; }
+            if (!collection.files.length) {
+                void vscode.window.showInformationMessage(`没有可上传的 Git 变动文件${collection.deletedCount ? `（${collection.deletedCount} 个已删除文件已跳过）` : ''}`);
+                return;
+            }
+            await run(`一键上传 Git 变动到 ${profile.name}（${collection.files.length} 个文件）`, async () => {
+                const result = await uploadGitChangeFiles(service, profile, collection.files);
+                for (const remote of result.uploaded) { remoteProvider.invalidateDirectory(profile, posixDirname(remote)); }
+                if (result.failures.length) {
+                    throw new Error(`成功 ${result.uploaded.length} 个，失败 ${result.failures.length} 个：${result.failures.join('；')}`);
+                }
+                void vscode.window.showInformationMessage(
+                    `已上传 ${result.uploaded.length} 个 Git 变动文件到 ${profile.name}` +
+                    (result.skippedFilter ? `；${result.skippedFilter} 个被过滤规则跳过` : '') +
+                    (collection.deletedCount ? `；${collection.deletedCount} 个已删除文件已跳过` : ''),
+                );
             });
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.uploadCurrentFile', async (resource?: vscode.Uri) => {
@@ -1602,10 +1672,10 @@ async function pickProfile(configs: SftpConfigStore, localUri?: vscode.Uri): Pro
     return picked?.profile;
 }
 
-async function chooseWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {
+async function chooseWorkspaceFolder(placeHolder = '选择要创建 SFTP 配置的工作区'): Promise<vscode.WorkspaceFolder | undefined> {
     const folders = vscode.workspace.workspaceFolders ?? [];
     if (folders.length === 1) { return folders[0]; }
-    const picked = await vscode.window.showWorkspaceFolderPick({ placeHolder: '选择要创建 SFTP 配置的工作区' });
+    const picked = await vscode.window.showWorkspaceFolderPick({ placeHolder });
     return picked;
 }
 
@@ -1633,6 +1703,70 @@ function profileSignature(profile: SftpProfile): string {
     });
 }
 
+async function getGitApi(): Promise<GitApi | undefined> {
+    const extension = vscode.extensions.getExtension<GitExtensionExports>('vscode.git');
+    if (!extension) { return undefined; }
+    try {
+        const exports = await extension.activate();
+        return exports?.getAPI?.(1);
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * 收集工作区 Git 变动文件（暂存 + 未暂存 + 合并冲突，含未跟踪新增）。
+ * 已删除/目录（子模块）条目自动跳过；删除数量单独返回用于提示。
+ */
+async function collectGitChangedFiles(folder: vscode.WorkspaceFolder): Promise<{ files: vscode.Uri[]; deletedCount: number }> {
+    const git = await getGitApi();
+    if (!git) { throw new Error('未找到 VS Code Git 扩展，无法读取 Git 变动'); }
+    const repo = git.repositories
+        .filter(item => isUriInside(folder.uri, item.rootUri) || isUriInside(item.rootUri, folder.uri))
+        .sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length)[0];
+    if (!repo) { throw new Error('当前工作区不是 Git 仓库'); }
+    if (repo.state.HEAD === undefined) {
+        // 仓库初始扫描未完成时 changes 为空，等待状态刷新（最多 3 秒）
+        await new Promise<void>(resolve => {
+            const subscription = repo.state.onDidChange(() => { clearTimeout(timer); subscription.dispose(); resolve(); });
+            const timer = setTimeout(() => { subscription.dispose(); resolve(); }, 3000);
+        });
+    }
+    const seen = new Set<string>();
+    const files: vscode.Uri[] = [];
+    let deletedCount = 0;
+    const changes = [...repo.state.indexChanges, ...repo.state.workingTreeChanges, ...repo.state.mergeChanges];
+    for (const change of changes) {
+        const uri = change.renameUri ?? change.uri;
+        const key = uri.toString();
+        if (seen.has(key)) { continue; }
+        seen.add(key);
+        if (!isUriInside(folder.uri, uri)) { continue; }
+        let stat: vscode.FileStat;
+        try { stat = await vscode.workspace.fs.stat(uri); } catch { deletedCount++; continue; }
+        if ((stat.type & vscode.FileType.File) === 0) { continue; }
+        files.push(uri);
+    }
+    return { files, deletedCount };
+}
+
+/** 批量上传 Git 变动文件（复用 mappedRemotePath 映射与上传过滤规则），逐文件容错。 */
+async function uploadGitChangeFiles(service: SftpService, profile: SftpProfile, files: vscode.Uri[]): Promise<{ uploaded: string[]; skippedFilter: number; failures: string[] }> {
+    const uploaded: string[] = [];
+    const failures: string[] = [];
+    let skippedFilter = 0;
+    for (const file of files) {
+        if (!service.isUploadAllowed(profile, file)) { skippedFilter++; continue; }
+        try {
+            const remote = await uploadMappedFile(service, profile, file, false);
+            if (remote) { uploaded.push(remote); }
+        } catch (error) {
+            failures.push(`${path.basename(file.fsPath)}: ${messageOf(error)}`);
+        }
+    }
+    return { uploaded, skippedFilter, failures };
+}
+
 /**
  * 远程终端内置指令处理器（/download、/upload、/ls、/cat 等）。
  * 本地路径按“远端相对 remotePath 的差值 → 工作区对应路径”映射，
@@ -1642,6 +1776,7 @@ function createTerminalBuiltins(
     context: vscode.ExtensionContext,
     service: SftpService,
     remoteProvider: RemoteExplorerWebviewProvider,
+    activity: RemoteActivity,
 ): RemoteTerminalBuiltins {
     const tmpDir = vscode.Uri.joinPath(context.globalStorageUri, 'terminal-tmp');
     const helpText = [
@@ -1653,17 +1788,13 @@ function createTerminalBuiltins(
         '  /download-dir <目录>     下载远端目录到本地对应目录',
         '  /upload <文件>           上传本地文件到远端当前目录（本地不存在则跳过）',
         '  /upload-dir <目录>       上传本地目录到远端当前目录',
+        '  /upgitchange             上传工作区 Git 变动（新增/修改）文件到远端对应路径',
         '  /open <文件>             下载远端文件并用编辑器打开',
         '  /cat <文件>              显示远端文件内容（上限 200KB）',
         '  /tail <文件> [行数]      显示远端文件末尾（默认 50 行，上限 2MB）',
         '  /mkdir <目录>            远端新建目录',
         '  /rm <路径>               删除远端文件或目录',
         '  /mv <源> <目标>          移动/重命名远端路径',
-        '',
-        '文件选择器：路径参数以 @ 开头时打开文件选择器，可输入过滤、多选：',
-        '  /upload @[过滤词]        选择本地文件上传（/upload-dir 选目录）',
-        '  /download @[过滤词]      选择远端文件下载（/open /cat /tail /rm 同样支持）',
-        '  示例：/upload @app/js    选择工作区 app/js 下的文件',
     ];
 
     const requireArg = (args: string[], label: string): string => {
@@ -1695,79 +1826,8 @@ function createTerminalBuiltins(
     };
 
     /**
-     * 候选列表数据源（@ 内联选择器）：本地文件 / 远端文件（目录）的扁平列表 + 过滤。
-     * 一次拉取全量（本地 findFiles、远端递归 walk），之后由终端前端纯客户端过滤。
-     */
-    const listCandidates = async (
-        profile: SftpProfile,
-        command: string,
-        cwd: string,
-    ): Promise<TerminalCandidate[]> => {
-        if (command === 'upload' || command === 'upload-dir') {
-            const root = profile.workspaceFolder.uri;
-            const files = await vscode.workspace.findFiles('**/*', '**/{node_modules,.git,dist,out}/**', 20000);
-            let entries = files.map(uri => {
-                const rel = path.relative(root.fsPath, uri.fsPath).replace(/\\/g, '/');
-                return { uri, rel };
-            });
-            if (command === 'upload-dir') {
-                // 目录模式：汇总文件所属的 1-2 层父目录供选择
-                const dirs = new Map<string, vscode.Uri>();
-                for (const entry of entries) {
-                    const parts = entry.rel.split('/');
-                    for (let i = 1; i <= Math.min(2, parts.length - 1); i++) {
-                        const dirRel = parts.slice(0, i).join('/');
-                        if (!dirs.has(dirRel)) { dirs.set(dirRel, vscode.Uri.joinPath(root, ...parts.slice(0, i))); }
-                    }
-                }
-                entries = [...dirs].map(([rel, uri]) => ({ uri, rel }));
-            }
-            const candidates = entries.map(entry => ({
-                label: path.posix.basename(entry.rel),
-                description: entry.rel,
-                value: entry.uri.fsPath,
-            }));
-            if (files.length >= 20000) {
-                // 结果被截断：追加提示项（value 为空，提交时自动忽略）
-                candidates.push({
-                    label: '…',
-                    description: `结果过多，仅显示前 20000 项，请继续输入过滤`,
-                    value: '',
-                });
-            }
-            return candidates;
-        }
-        // 远端：递归列出当前目录（深度 4、上限 800 项）
-        const entries: Array<{ path: string; directory: boolean }> = [];
-        const walk = async (dir: string, depth: number): Promise<void> => {
-            if (depth > 4 || entries.length >= 800) { return; }
-            let items: RemoteEntry[];
-            try { items = await service.list(profile, dir); } catch { return; }
-            for (const item of items) {
-                const entryPath = joinRemote(dir, item.name);
-                if (item.type === 'd') {
-                    entries.push({ path: `${entryPath}/`, directory: true });
-                    await walk(entryPath, depth + 1);
-                } else {
-                    entries.push({ path: entryPath, directory: false });
-                }
-            }
-        };
-        await walk(cwd, 0);
-        return entries.map(entry => ({
-            label: path.posix.basename(entry.path.replace(/\/$/, '')),
-            description: entry.path,
-            value: entry.path,
-        }));
-    };
-
-    /** 解析路径参数：以 @ 开头表示选择器模式（@ 后内容为初始过滤词）。 */
-    const isPickerArg = (arg: string | undefined): arg is string => typeof arg === 'string' && arg.startsWith('@');
-
-    /**
      * 统一解析 run 的目标列表（支持多路径批量）：
-     * - args[0] 以 @ 开头 → 打开选择器（undefined = 用户取消）
-     * - 否则 args 全部视为目标路径（upload 系列为本地路径，其余为远端路径）
+     * args 全部视为目标路径（upload 系列为本地路径，其余为远端路径）
      */
     const resolveRunTargets = async (
         profile: SftpProfile,
@@ -1775,26 +1835,11 @@ function createTerminalBuiltins(
         command: string,
         args: string[],
         requireArgFn: (args: string[], label: string) => string,
-    ): Promise<string[] | undefined> => {
+    ): Promise<string[]> => {
         const isLocal = command === 'upload' || command === 'upload-dir';
         if (args.length === 0) {
             requireArgFn(args, command);
-            return undefined;
-        }
-        if (isPickerArg(args[0])) {
-            // 手动回车兜底（内联选择器未打开时）：quickPick 选择
-            const candidates = await listCandidates(profile, command, cwd);
-            const query = args[0].slice(1).trim().toLowerCase();
-            const filtered = query ? candidates.filter(candidate => candidate.description.toLowerCase().includes(query) || candidate.label.toLowerCase().includes(query)) : candidates;
-            const picked = await vscode.window.showQuickPick(
-                filtered.map(candidate => ({ label: candidate.label, description: candidate.description, value: candidate.value })),
-                {
-                    placeHolder: isLocal ? '选择本地文件（可多选）' : '选择远端文件（可多选）',
-                    matchOnDescription: true,
-                    canPickMany: true,
-                },
-            );
-            return picked?.map(item => item.value);
+            return [];
         }
         return args.map(arg => isLocal
             ? resolveLocalPath(profile.workspaceFolder.uri, arg).fsPath
@@ -1822,7 +1867,7 @@ function createTerminalBuiltins(
                 }
                 case 'rm': {
                     const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
-                    if (!targets) { return ['已取消']; }
+
                     const results: string[] = [];
                     for (const picked of targets) {
                         const target = picked.replace(/\/$/, '');
@@ -1846,7 +1891,7 @@ function createTerminalBuiltins(
                 case 'download-dir': {
                     const directory = command === 'download-dir';
                     const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
-                    if (!targets) { return ['已取消']; }
+
                     const results: string[] = [];
                     for (const picked of targets) {
                         const remote = picked.replace(/\/$/, '');
@@ -1865,7 +1910,7 @@ function createTerminalBuiltins(
                 case 'upload-dir': {
                     const directory = command === 'upload-dir';
                     const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
-                    if (!targets) { return ['已取消']; }
+
                     const results: string[] = [];
                     for (const picked of targets) {
                         const local = vscode.Uri.file(picked);
@@ -1888,9 +1933,30 @@ function createTerminalBuiltins(
                     }
                     return results;
                 }
+                case 'upgitchange': {
+                    const collection = await collectGitChangedFiles(profile.workspaceFolder);
+                    const deletedNote = collection.deletedCount ? `；${collection.deletedCount} 个已删除文件已跳过` : '';
+                    if (!collection.files.length) { return [`没有可上传的 Git 变动文件${deletedNote}`]; }
+                    const finish = activity.begin(`Git 变动上传到 ${profile.name}（${collection.files.length} 个）`);
+                    try {
+                        const result = await uploadGitChangeFiles(service, profile, collection.files);
+                        for (const remote of result.uploaded) { remoteProvider.invalidateDirectory(profile, posixDirname(remote)); }
+                        finish(result.failures.length === 0);
+                        return [
+                            `Git 变动文件 ${collection.files.length} 个：`,
+                            ...result.uploaded.map(remote => `  已上传 -> ${remote}`),
+                            ...result.failures.map(item => `  失败 ${item}`),
+                            ...(result.skippedFilter ? [`  ${result.skippedFilter} 个文件被上传过滤规则跳过`] : []),
+                            `完成：成功 ${result.uploaded.length}，失败 ${result.failures.length}${deletedNote}`,
+                        ];
+                    } catch (error) {
+                        finish(false);
+                        throw error;
+                    }
+                }
                 case 'open': {
                     const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
-                    if (!targets) { return ['已取消']; }
+
                     const results: string[] = [];
                     for (const picked of targets) {
                         const remote = picked.replace(/\/$/, '');
@@ -1904,14 +1970,14 @@ function createTerminalBuiltins(
                 }
                 case 'cat': {
                     const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
-                    if (!targets) { return ['已取消']; }
+
                     if (targets.length > 1) { return ['/cat 一次只能查看一个文件']; }
                     const text = await readRemoteText(profile, targets[0].replace(/\/$/, ''), 200 * 1024);
                     return text.split(/\r?\n/);
                 }
                 case 'tail': {
                     const targets = await resolveRunTargets(profile, cwd, command, args, requireArg);
-                    if (!targets) { return ['已取消']; }
+
                     if (targets.length > 1) { return ['/tail 一次只能查看一个文件']; }
                     const lines = args[1] ? Math.max(1, Math.min(1000, Number.parseInt(args[1], 10) || 50)) : 50;
                     const text = await readRemoteText(profile, targets[0].replace(/\/$/, ''), 2 * 1024 * 1024, lines);
@@ -1921,8 +1987,6 @@ function createTerminalBuiltins(
                     return undefined;
             }
         },
-        // 内联选择器候选数据（一次拉全量，前端实时过滤）
-        listCandidates: (profile: SftpProfile, command: string, cwd: string) => listCandidates(profile, command, cwd),
     };
 }
 

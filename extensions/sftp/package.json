@@ -2,7 +2,7 @@
   "name": "leidong-sftp",
   "displayName": "雷动远程资源（SFTP / FTP）",
   "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
-  "version": "0.1.14",
+  "version": "0.1.17",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -104,6 +104,12 @@
       {
         "command": "leidong-tools.sftp.uploadCurrentFile",
         "title": "上传文件",
+        "category": "雷动三千工具集",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadGitChanges",
+        "title": "一键上传 Git 变动文件",
         "category": "雷动三千工具集",
         "icon": "$(cloud-upload)"
       },

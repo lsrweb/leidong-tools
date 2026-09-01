@@ -13,7 +13,7 @@ const pathCommands = new Set(['cd', 'ls', 'cat', 'less', 'head', 'tail', 'grep',
 
 /** 内置斜杠指令（不发送给远端 shell，由扩展本地执行）。 */
 export const BUILTIN_COMMANDS = new Set([
-    'help', 'ls', 'pwd', 'download', 'download-dir', 'upload', 'upload-dir',
+    'help', 'ls', 'pwd', 'download', 'download-dir', 'upload', 'upload-dir', 'upgitchange',
     'mkdir', 'rm', 'mv', 'cat', 'tail', 'open',
 ]);
 
@@ -26,6 +26,7 @@ const BUILTIN_DESCRIPTIONS: Record<string, string> = {
     'download-dir': '下载远端目录到本地对应目录',
     'upload': '上传本地文件到远端当前目录',
     'upload-dir': '上传本地目录到远端当前目录',
+    'upgitchange': '上传工作区 Git 变动（新增/修改）文件到远端对应路径',
     'open': '下载远端文件并用编辑器打开',
     'cat': '显示远端文件内容',
     'tail': '显示远端文件末尾',
@@ -37,19 +38,10 @@ const BUILTIN_DESCRIPTIONS: Record<string, string> = {
 /** 需要参数的内置指令（选择器选中后注入命令等待输入参数）。 */
 const BUILTIN_NEEDS_ARG = new Set(['download', 'download-dir', 'upload', 'upload-dir', 'open', 'cat', 'tail', 'mkdir', 'rm', 'mv']);
 
-/** 内联选择器候选：value 为提交值（本地绝对路径 / 远端路径）。 */
-export interface TerminalCandidate {
-    label: string;
-    description: string;
-    value: string;
-}
-
 /** 内置指令处理器：返回输出行；命令不存在时返回 undefined（按普通命令发送）。 */
 export interface RemoteTerminalBuiltins {
     isBuiltin(command: string): boolean;
     run(profile: SftpProfile, command: string, args: string[], currentDirectory: string): Promise<string[] | undefined>;
-    /** 内联选择器候选数据（一次拉全量，终端前端实时过滤）。 */
-    listCandidates(profile: SftpProfile, command: string, currentDirectory: string): Promise<TerminalCandidate[]>;
 }
 
 /** Interactive shells use a dedicated SSH client and never block SFTP transfers. */
@@ -73,7 +65,6 @@ export function registerRemoteTerminal(
         recordHistory,
         onDirectoryChange ? (directory: string) => onDirectoryChange(profile, directory) : undefined,
         builtins ? (command: string, args: string[], cwd: string) => builtins.run(profile, command, args, cwd) : undefined,
-        builtins ? (command: string, cwd: string) => builtins.listCandidates(profile, command, cwd) : undefined,
     );
     const provider: vscode.TerminalProfileProvider = {
         provideTerminalProfile: async (token) => {
@@ -113,9 +104,8 @@ function createTerminalProfile(
     onCommandSubmitted: (profile: SftpProfile, command: string) => void,
     onDirectoryChange?: (directory: string) => void,
     runBuiltin?: (command: string, args: string[], currentDirectory: string) => Promise<string[] | undefined>,
-    listCandidatesBuiltin?: (command: string, currentDirectory: string) => Promise<TerminalCandidate[]>,
 ): vscode.TerminalProfile {
-    const terminal = new RemoteSshTerminal(profile, onCommandSubmitted, onDirectoryChange, runBuiltin, listCandidatesBuiltin);
+    const terminal = new RemoteSshTerminal(profile, onCommandSubmitted, onDirectoryChange, runBuiltin);
     onCreated(terminal);
     return new vscode.TerminalProfile({
         name: `远程终端: ${profile.name}`,
@@ -163,25 +153,8 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
     private ghostText = '';
     private completionTimer?: NodeJS.Timeout;
     private completionGeneration = 0;
-    private pickerTimer?: NodeJS.Timeout;
-    private pickerGeneration = 0;
-    private pickerActive = false;
     /** 输入行处于内置指令模式（以 / 开头）时缓冲字符，回车统一决策，避免脏字符透传远端。 */
     private builtinBuffered = false;
-    // ---- 内联选择器状态（Claude Code 式：输入行下方候选列表）----
-    private pickerKind: 'command' | 'file' = 'command';
-    private pickerCommand = '';
-    private pickerQuery = '';
-    private pickerAll: TerminalCandidate[] = [];
-    private pickerItems: TerminalCandidate[] = [];
-    private pickerSelected = 0;
-    private pickerMultiSelected = new Set<number>();
-    private pickerListHeight = 0;
-    private pickerFetchGeneration = 0;
-    /** Esc 关闭后本次触发会话不再弹，直到用户再输入 / 或 @。 */
-    private pickerDismissed = false;
-    /** 选择器打开期间远端输出缓冲，关闭后统一输出（避免插入自绘帧破坏行对齐）。 */
-    private pendingRemoteOutput = '';
     private readonly directoryCache = new Map<string, { entries: string[]; expiresAt: number }>();
     private closed = false;
 
@@ -194,7 +167,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
         private readonly onCommandSubmitted: (profile: SftpProfile, command: string) => void,
         private readonly onDirectoryChange?: (directory: string) => void,
         private readonly runBuiltin?: (command: string, args: string[], currentDirectory: string) => Promise<string[] | undefined>,
-        private readonly listCandidatesBuiltin?: (command: string, currentDirectory: string) => Promise<TerminalCandidate[]>,
     ) {
         this.currentDirectory = profile.remotePath;
     }
@@ -218,10 +190,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
     close(): void { this.shutdown(); }
 
     handleInput(data: string): void {
-        if (this.pickerActive) {
-            this.handlePickerInput(data);
-            return;
-        }
         if (data === '\t' && this.ghostText) {
             const accepted = this.ghostText;
             this.clearGhost();
@@ -231,6 +199,23 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
             return;
         }
         this.clearGhost();
+
+        // 本地内置指令没有远端进程可中断。之前 Ctrl+C 会先经过 trackInput 清空
+        // inputLine，再落入 builtinBuffered 分支，留下一个“半截”输入状态，下一
+        // 次输入时就可能把选择器重绘到错误的光标位置。先在这里一次性清理本地行。
+        if (data === '\x03' || data === '\x15') {
+            if (this.builtinBuffered || this.inputLine.trim().startsWith('/')) {
+                this.inputLine = '';
+                this.builtinBuffered = false;
+                this.clearCompletionTimer();
+                this.write('\r\x1b[2K');
+            } else {
+                // 普通远端命令仍需把中断键发送给远端 Shell。
+                this.trackInput(data);
+                this.sendInput(data);
+            }
+            return;
+        }
 
         const containsEnter = data.includes('\r') || data.includes('\n');
         if (containsEnter) {
@@ -251,10 +236,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
 
         // 非回车：内置指令模式缓冲字符并本地回显，其余实时发送（保持远端 shell 交互）
         this.trackInput(data);
-        // Esc 关闭选择器后，用户再次输入 / 或 @ 时恢复选择器触发
-        if (this.pickerDismissed && (data.includes('/') || data.includes('@'))) {
-            this.pickerDismissed = false;
-        }
         const isBuiltinMode = this.isBuiltinMode(this.inputLine);
         if (isBuiltinMode) {
             this.builtinBuffered = true;
@@ -267,7 +248,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
         } else {
             this.sendInput(data);
         }
-        this.schedulePickerCheck();
     }
 
     /** 内置指令模式的本地回显：缓冲的字符不发送远端，需要自行显示（远端 TTY 不会回显）。 */
@@ -293,254 +273,13 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
         return BUILTIN_COMMANDS.has(firstToken);
     }
 
-    // ---- 输入中实时选择器（/ 指令列表、@ 文件选择器）----
-
-    /** 输入停顿后检测当前行：/ 开头弹指令选择器；@ 参数弹文件选择器。 */
-    private schedulePickerCheck(): void {
-        if (!this.runBuiltin || !this.listCandidatesBuiltin || this.pickerActive || this.closed) { return; }
-        this.clearPickerTimer();
-        const line = this.inputLine;
-        const generation = ++this.pickerGeneration;
-        this.pickerTimer = setTimeout(() => {
-            if (generation !== this.pickerGeneration || this.pickerActive || this.closed || this.inputLine !== line) { return; }
-            void this.tryOpenPicker(line);
-        }, 200);
-    }
-
-    private clearPickerTimer(): void {
-        this.pickerGeneration++;
-        if (this.pickerTimer) { clearTimeout(this.pickerTimer); this.pickerTimer = undefined; }
-    }
-
-    private async tryOpenPicker(line: string): Promise<void> {
-        if (this.pickerDismissed) { return; }
-        // 指令选择器：行 = /命令名（无空格）
-        const commandMatch = line.match(/^\/(\w*)$/);
-        if (commandMatch) {
-            this.openCommandPicker(commandMatch[1]);
-            return;
-        }
-        // 文件选择器：/cmd @过滤词
-        const fileMatch = line.match(/^\/(download|download-dir|upload|upload-dir|open|cat|tail|rm)\s+@(.*)$/);
-        if (fileMatch && this.listCandidatesBuiltin) {
-            void this.openFilePicker(fileMatch[1], fileMatch[2]);
-        }
-    }
-
-    /** 打开指令选择器（本地过滤，无需拉取）。 */
-    private openCommandPicker(prefix: string): void {
-        const commands = [...BUILTIN_COMMANDS].filter(command => command.startsWith(prefix));
-        if (commands.length === 0) { return; }
-        this.pickerActive = true;
-        this.pickerKind = 'command';
-        this.pickerCommand = '';
-        this.pickerQuery = prefix;
-        this.pickerAll = [];
-        this.pickerItems = commands.map(command => ({
-            label: command,
-            description: BUILTIN_DESCRIPTIONS[command] ?? '',
-            value: command,
-        }));
-        this.pickerSelected = 0;
-        this.pickerMultiSelected.clear();
-        this.renderPicker();
-    }
-
-    /** 打开文件选择器：拉取一次全量候选，之后客户端实时过滤。 */
-    private async openFilePicker(command: string, query: string): Promise<void> {
-        this.pickerActive = true;
-        this.pickerKind = 'file';
-        this.pickerCommand = command;
-        this.pickerQuery = query;
-        this.pickerAll = [];
-        this.pickerItems = [];
-        this.pickerSelected = 0;
-        this.pickerMultiSelected.clear();
-        this.renderPicker();
-        try {
-            const generation = ++this.pickerFetchGeneration;
-            const all = await this.listCandidatesBuiltin?.(command, this.currentDirectory);
-            if (generation !== this.pickerFetchGeneration || !this.pickerActive) { return; }
-            this.pickerAll = all ?? [];
-            this.filterPicker();
-        } catch {
-            this.closePicker();
-        }
-    }
-
-    /** 按当前过滤词过滤候选并重绘。 */
-    private filterPicker(): void {
-        if (this.pickerKind === 'command') {
-            this.pickerItems = [...BUILTIN_COMMANDS]
-                .filter(command => command.startsWith(this.pickerQuery))
-                .map(command => ({ label: command, description: BUILTIN_DESCRIPTIONS[command] ?? '', value: command }));
-        } else {
-            const query = this.pickerQuery.trim().toLowerCase();
-            this.pickerItems = query
-                ? this.pickerAll.filter(candidate =>
-                    candidate.description.toLowerCase().includes(query) || candidate.label.toLowerCase().includes(query))
-                : this.pickerAll;
-        }
-        this.pickerSelected = Math.min(this.pickerSelected, Math.max(0, this.pickerItems.length - 1));
-        this.renderPicker();
-    }
-
-    /** 渲染输入行 + 下方候选列表（Claude Code 式内联）。 */
-    private renderPicker(): void {
-        const columns = Math.max(20, this.dimensions.columns);
-        const width = Math.max(20, columns - 1);
-        const maxHeight = 8;
-        const height = Math.min(this.pickerItems.length, maxHeight);
-        const display = this.pickerDisplayLine();
-        const truncated = display.length > columns - 2 ? `${display.slice(0, columns - 3)}…` : display;
-
-        let frame = `\r\x1b[2K${truncated}`;
-        const rows = Math.max(this.pickerListHeight, height);
-        for (let i = 0; i < rows; i++) {
-            frame += '\x1b[1B\x1b[G';
-            frame += i < height ? this.formatPickerItem(i, width) : '\x1b[2K';
-        }
-        if (rows > 0) { frame += `\x1b[${rows}A`; }
-        frame += `\x1b[${truncated.length}C`;
-        this.pickerListHeight = height;
-        this.write(frame);
-    }
-
-    private pickerDisplayLine(): string {
-        return this.pickerKind === 'command'
-            ? `/${this.pickerQuery}`
-            : `/${this.pickerCommand} @${this.pickerQuery}`;
-    }
-
-    private formatPickerItem(index: number, width: number): string {
-        const item = this.pickerItems[index];
-        const selected = this.pickerSelected === index;
-        const multi = this.pickerKind === 'file' && this.pickerMultiSelected.has(index);
-        const label = this.pickerKind === 'command'
-            ? `/${item.label}`
-            : `${multi ? '✓ ' : '  '}${item.label}`;
-        // 分栏：label 占前 40%，description 灰色接续，整体占满终端宽度
-        const labelWidth = Math.max(14, Math.floor(width * 0.4));
-        const labelPart = label.slice(0, labelWidth).padEnd(labelWidth, ' ');
-        const descPart = item.description
-            ? item.description.slice(0, Math.max(8, width - labelWidth - 1))
-            : '';
-        const full = `${labelPart} ${descPart}`.padEnd(width, ' ');
-        return selected ? `\x1b[7m${full}\x1b[0m` : `\x1b[90m${full}\x1b[0m`;
-    }
-
-    /** 关闭选择器：清除列表帧、缓冲输出 flush。 */
-    private closePicker(): void {
-        if (!this.pickerActive) { return; }
-        this.pickerActive = false;
-        this.pickerFetchGeneration++;
-        if (this.pickerListHeight > 0) {
-            let frame = '\r\x1b[2K';
-            for (let i = 0; i < this.pickerListHeight; i++) { frame += '\x1b[1B\x1b[G\x1b[2K'; }
-            frame += `\x1b[${this.pickerListHeight}A`;
-            this.write(frame);
-        }
-        this.pickerListHeight = 0;
-        this.pickerItems = [];
-        this.pickerAll = [];
-        this.pickerMultiSelected.clear();
-        if (this.pendingRemoteOutput) {
-            const buffered = this.pendingRemoteOutput;
-            this.pendingRemoteOutput = '';
-            this.write(buffered);
-        }
-    }
-
-    /** 提交选择：命令模式执行/注入；文件模式多选批量执行。 */
-    private async acceptPicker(): Promise<void> {
-        const kind = this.pickerKind;
-        const command = kind === 'file' ? this.pickerCommand : (this.pickerItems[this.pickerSelected]?.value ?? '');
-        const values: string[] = [];
-        if (kind === 'file') {
-            const multi = [...this.pickerMultiSelected]
-                .map(index => this.pickerItems[index]?.value)
-                .filter((value): value is string => Boolean(value));
-            const highlighted = this.pickerItems[this.pickerSelected]?.value;
-            if (multi.length > 0) { values.push(...multi); }
-            else if (highlighted) { values.push(highlighted); }
-        }
-        this.closePicker();
-        if (kind === 'command') {
-            if (BUILTIN_NEEDS_ARG.has(command)) {
-                this.injectCommandLine(`/${command} `);
-            } else {
-                this.injectCommandLine('');
-                await this.executeBuiltin(command, [], this.currentDirectory);
-            }
-        } else if (command) {
-            this.injectCommandLine('');
-            await this.executeBuiltin(command, values, this.currentDirectory);
-        }
-    }
-
-    /** 选择器活动期间的按键处理（全部不转发远端）。 */
-    private handlePickerInput(data: string): void {
-        if (data === '\x1b[A' || data === '\x1bOA') {
-            if (this.pickerItems.length > 0) {
-                this.pickerSelected = (this.pickerSelected - 1 + this.pickerItems.length) % this.pickerItems.length;
-                this.renderPicker();
-            }
-            return;
-        }
-        if (data === '\x1b[B' || data === '\x1bOB') {
-            if (this.pickerItems.length > 0) {
-                this.pickerSelected = (this.pickerSelected + 1) % this.pickerItems.length;
-                this.renderPicker();
-            }
-            return;
-        }
-        if (data === '\x1b') {
-            // Esc：关闭且本次触发不再弹
-            this.closePicker();
-            this.pickerDismissed = true;
-            const display = this.pickerDisplayLine();
-            this.write(`\r\x1b[2K${display}\x1b[${display.length}C`);
-            return;
-        }
-        if (data === '\t' || data.includes('\r') || data.includes('\n')) {
-            void this.acceptPicker();
-            return;
-        }
-        if (data === ' ' && this.pickerKind === 'file') {
-            if (this.pickerItems.length > 0) {
-                const index = this.pickerSelected;
-                if (this.pickerMultiSelected.has(index)) { this.pickerMultiSelected.delete(index); }
-                else { this.pickerMultiSelected.add(index); }
-                this.pickerSelected = Math.min(this.pickerSelected + 1, this.pickerItems.length - 1);
-                this.renderPicker();
-            }
-            return;
-        }
-        if (data === '\x7f' || data === '\b') {
-            this.pickerQuery = this.pickerQuery.slice(0, -1);
-            this.filterPicker();
-            return;
-        }
-        if (data === '\x03' || data === '\x15') {
-            this.closePicker();
-            this.pickerDismissed = true;
-            this.inputLine = '';
-            this.write('\r\x1b[2K');
-            return;
-        }
-        if (/^[\x20-\x7e]+$/.test(data) && !data.includes('\x1b')) {
-            this.pickerQuery += data;
-            this.filterPicker();
-        }
-    }
-
     /** 清空当前终端行并注入文本（不发送远端）。 */
     private injectCommandLine(text: string): void {
         this.clearGhost();
         this.clearCompletionTimer();
-        this.clearPickerTimer();
         this.write(`\r\x1b[2K`);
         this.inputLine = text;
+        this.builtinBuffered = Boolean(text);
         if (text) {
             this.write(text);
             this.scheduleCompletion();
@@ -671,7 +410,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
         if (this.closed) { return; }
         this.closed = true;
         this.clearCompletionTimer();
-        this.clearPickerTimer();
         this.channel = undefined;
         try { this.client?.end(); } catch { /* Connection may already be closed. */ }
         this.closeEmitter.fire(exitCode);
@@ -681,7 +419,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
         if (this.closed) { return; }
         this.closed = true;
         this.clearCompletionTimer();
-        this.clearPickerTimer();
         try { this.channel?.close(); } catch { /* Shell may already be closed. */ }
         try { this.client?.end(); } catch { /* Client may already be closed. */ }
         this.channel = undefined;
@@ -696,11 +433,6 @@ class RemoteSshTerminal implements vscode.Pseudoterminal, vscode.Disposable {
     }
 
     private writeRemoteOutput(value: string): void {
-        if (this.pickerActive) {
-            // 选择器打开期间缓冲远端输出，关闭后再输出，避免插入自绘帧破坏行对齐
-            this.pendingRemoteOutput += value;
-            return;
-        }
         this.clearGhost();
         this.write(value);
     }

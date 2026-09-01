@@ -7,7 +7,7 @@
 <style>
 body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; color:var(--vscode-foreground); background:var(--vscode-sideBar-background); font-family:var(--vscode-font-family); font-size:var(--vscode-font-size); }
 .toolbar { display:flex; gap:6px; margin-bottom:8px; flex:none; }
-#tree { flex:1; overflow-y:auto; min-height:0; }
+#tree { flex:1; overflow-y:auto; min-height:0; overflow-anchor:none; }
 .toolbar button { flex:1; background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); border:none; border-radius:2px; padding:4px 6px; cursor:pointer; font-size:12px; }
 .toolbar button:hover { background:var(--vscode-button-secondaryHoverBackground); }
 .node { display:flex; align-items:center; gap:4px; padding:3px 6px; border-radius:3px; cursor:pointer; white-space:nowrap; }
@@ -27,6 +27,7 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
 <body>
 <div class="toolbar">
   <button id="btnRefresh" title="刷新">↻ 刷新</button>
+  <button id="btnGitUpload" title="一键上传 Git 变动文件到远程">⇡ Git变动</button>
   <button id="btnAutoUpload" title="切换保存自动上传">⤒ 自动上传</button>
   <button id="btnConfig" title="打开远程连接配置">⚙ 配置</button>
   <button id="btnLogs" title="显示远程资源日志">☰ 日志</button>
@@ -104,8 +105,9 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
 
   function renderRecursive(parentEl, node) {
     const row = document.createElement('div');
-    row.className = 'node' + (node.key === selected ? ' selected' : '');
-    row.dataset.key = node.key;
+    const key = nodeKey(node);
+    row.className = 'node' + (key === selected ? ' selected' : '');
+    row.dataset.key = key;
     const chevron = node.kind === 'file' ? '' : (node.expanded ? '▾' : '▸');
     const kindIcon = node.kind === 'workspace' ? '📦' : node.kind === 'profile' ? '🔌' : node.kind === 'directory' ? '📁' : '📄';
     const meta = node.meta || '';
@@ -121,7 +123,7 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
       btn.onclick = (event) => { event.stopPropagation(); invoke(node, action); };
       actions.append(btn);
     }
-    row.onclick = () => { selected = node.key; void toggle(node); };
+    row.onclick = () => { selected = nodeKey(node); void toggle(node); };
     row.ondblclick = (event) => { if (node.kind === 'file') { event.preventDefault(); invoke(node, 'open'); } };
     parentEl.append(row);
     if (node.expanded && node.children) {
@@ -191,26 +193,27 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
       await loadChildren(node);
     }
     pendingReveal = null;
-    selected = node.key;
+    const targetKey = nodeKey(node);
+    selected = targetKey;
     render();
-    scrollToNode(node.key);
-    vscode.postMessage({ type: 'revealResult', ok: true, path: normalized, key: node.key });
+    scrollToNode(targetKey);
+    vscode.postMessage({ type: 'revealResult', ok: true, path: normalized, key: targetKey });
   }
 
-  // 滚动定位：scrollIntoView 与手动 scrollTop 双保险，多段重试防御布局时序
+  // 滚动定位：确认容器可滚（布局完成）后 scrollIntoView + 手动居中双保险；成功即停止，最多重试 8 次
   function scrollToNode(key) {
-    const attempts = [0, 100, 300, 700, 1500];
-    let index = 0;
+    let attempts = 0;
     const scroll = () => {
       const el = treeEl.querySelector('[data-key="' + String(key).replaceAll('"', '\\"') + '"]');
-      if (el) {
+      const scrollable = el && treeEl.clientHeight > 0 && treeEl.scrollHeight > treeEl.clientHeight;
+      if (scrollable) {
         try { el.scrollIntoView({ block: 'center', behavior: 'auto' }); } catch { /* 忽略 */ }
-        const rect = el.getBoundingClientRect();
-        const containerRect = treeEl.getBoundingClientRect();
-        treeEl.scrollTop = Math.max(0, rect.top - containerRect.top + treeEl.scrollTop - treeEl.clientHeight / 2);
+        const targetTop = el.getBoundingClientRect().top - treeEl.getBoundingClientRect().top + treeEl.scrollTop;
+        treeEl.scrollTop = Math.max(0, targetTop + el.clientHeight / 2 - treeEl.clientHeight / 2);
+        return; // 滚动成功，停止重试
       }
-      index += 1;
-      if (index < attempts.length) { setTimeout(scroll, attempts[index]); }
+      attempts += 1;
+      if (attempts < 8) { setTimeout(scroll, Math.min(200 * attempts, 800)); }
     };
     scroll();
   }
@@ -272,6 +275,7 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
   });
 
   document.getElementById('btnRefresh').onclick = () => vscode.postMessage({ type: 'refresh' });
+  document.getElementById('btnGitUpload').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.uploadGitChanges' });
   document.getElementById('btnAutoUpload').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.toggleUploadOnSave' });
   document.getElementById('btnConfig').onclick = () => vscode.postMessage({ type: 'openConfig' });
   document.getElementById('btnLogs').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.showLogs' });
