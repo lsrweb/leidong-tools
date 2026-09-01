@@ -6,9 +6,9 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{nonce}}';">
 <style>
 body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex; flex-direction:column; overflow:hidden; color:var(--vscode-foreground); background:var(--vscode-sideBar-background); font-family:var(--vscode-font-family); font-size:var(--vscode-font-size); }
-.toolbar { display:flex; gap:6px; margin-bottom:8px; flex:none; }
+.toolbar { display:flex; flex-direction:column; gap:4px; margin-bottom:8px; flex:none; }
 #tree { flex:1; overflow-y:auto; min-height:0; overflow-anchor:none; }
-.toolbar button { flex:1; background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); border:none; border-radius:2px; padding:4px 6px; cursor:pointer; font-size:12px; }
+.toolbar button { display:block; width:100%; box-sizing:border-box; background:var(--vscode-button-secondaryBackground); color:var(--vscode-button-secondaryForeground); border:none; border-radius:2px; padding:4px 8px; cursor:pointer; font-size:12px; text-align:left; white-space:nowrap; }
 .toolbar button:hover { background:var(--vscode-button-secondaryHoverBackground); }
 .node { display:flex; align-items:center; gap:4px; padding:3px 6px; border-radius:3px; cursor:pointer; white-space:nowrap; }
 .node:hover { background:var(--vscode-list-hoverBackground); }

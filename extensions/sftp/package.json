@@ -2,7 +2,7 @@
   "name": "leidong-sftp",
   "displayName": "雷动远程资源（SFTP / FTP）",
   "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -263,6 +263,11 @@
           "type": "boolean",
           "default": true,
           "description": "保存后自动上传到远程。"
+        },
+        "leidong-tools.remoteUploadOnAgentChanges": {
+          "type": "boolean",
+          "default": false,
+          "description": "AI Agent / 外部程序修改文件后自动上传到远程（默认关闭，需手动开启；按保存自动上传的目标配置上传）。"
         },
         "leidong-tools.remoteUploadExcludeRegex": {
           "type": "string",

@@ -1007,6 +1007,15 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     }
     const autoUploads = new Map<string, AutoUploadState>();
 
+    /** 自动上传目标（保存自动上传与外部修改上传共用同一套目标配置）。 */
+    const resolveAutoUploadTargets = async (folder: vscode.WorkspaceFolder): Promise<SftpProfile[]> => {
+        const profiles = (await configs.loadProfiles()).filter(profile =>
+            profile.workspaceFolder.uri.toString() === folder.uri.toString() && profile.uploadOnSave,
+        );
+        const selected = readAutoUploadTargets(context, folder);
+        return selected === undefined ? profiles : profiles.filter(profile => selected.includes(profile.id));
+    };
+
     const flushAutoUpload = async (key: string, state: AutoUploadState): Promise<void> => {
         if (state.running) { return; }
         state.running = true;
@@ -1016,12 +1025,9 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         try {
             const folder = vscode.workspace.getWorkspaceFolder(document.uri);
             if (!folder) { return; }
-            const profiles = (await configs.loadProfiles()).filter(profile =>
-                profile.workspaceFolder.uri.toString() === folder.uri.toString() && profile.uploadOnSave,
-            );
-            const selected = readAutoUploadTargets(context, folder);
-            const targets = selected === undefined ? profiles : profiles.filter(profile => selected.includes(profile.id));
+            const targets = await resolveAutoUploadTargets(folder);
             if (!targets.length) { return; }
+            recentUploadUris.set(document.uri.toString(), Date.now());
             const finish = activity.begin(`正在自动上传 ${path.basename(document.uri.fsPath)} (${targets.length})`);
             logger.info(undefined, `保存自动上传 ${document.uri.fsPath} -> ${targets.map(profile => profile.name).join('、')}`);
             try {
@@ -1064,6 +1070,64 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         state.timer = setTimeout(() => { void flushAutoUpload(key, state!); }, 300);
     };
 
+    // ---- AI Agent / 外部程序修改文件的自动上传 ----
+    // 监听磁盘变更（CLI 类 Agent 直接写盘不触发保存事件），防抖后按自动上传目标配置上传。
+    // 编辑器内未保存的改动（dirty）仍走保存上传，避免把未定稿内容传上去。
+    const externalUploads = new Map<string, { timer?: NodeJS.Timeout }>();
+    const recentUploadUris = new Map<string, number>();
+    const UPLOAD_DEDUPE_MS = 2000;
+
+    const flushExternalUpload = async (uri: vscode.Uri, state: { timer?: NodeJS.Timeout }): Promise<void> => {
+        state.timer = undefined;
+        try {
+            const folder = vscode.workspace.getWorkspaceFolder(uri);
+            if (!folder) { return; }
+            const document = vscode.workspace.textDocuments.find(item => item.uri.toString() === uri.toString());
+            if (document?.isDirty) { return; }
+            const last = recentUploadUris.get(uri.toString());
+            if (last !== undefined && Date.now() - last < UPLOAD_DEDUPE_MS) { return; }
+            const targets = await resolveAutoUploadTargets(folder);
+            if (!targets.length) { return; }
+            recentUploadUris.set(uri.toString(), Date.now());
+            const finish = activity.begin(`外部修改上传 ${path.basename(uri.fsPath)} (${targets.length})`);
+            logger.info(undefined, `外部修改自动上传 ${uri.fsPath} -> ${targets.map(profile => profile.name).join('、')}`);
+            let succeeded = true;
+            try {
+                const results = await Promise.allSettled(targets.map(profile => uploadMappedFile(service, profile, uri, false)));
+                results.forEach((result, index) => {
+                    if (result.status === 'rejected') {
+                        succeeded = false;
+                        logger.error(targets[index], `外部修改上传失败: ${messageOf(result.reason)}`);
+                    } else if (result.value) {
+                        remoteProvider.invalidateDirectory(targets[index], posixDirname(result.value));
+                    }
+                });
+            } finally {
+                finish(succeeded);
+            }
+        } finally {
+            if (!state.timer) { externalUploads.delete(uri.toString()); }
+        }
+    };
+
+    const scheduleExternalUpload = (uri: vscode.Uri): void => {
+        if (uri.scheme !== 'file') { return; }
+        const folder = vscode.workspace.getWorkspaceFolder(uri);
+        if (!folder) { return; }
+        const configuration = vscode.workspace.getConfiguration('leidong-tools', folder.uri);
+        if (!configuration.get<boolean>('remoteUploadOnAgentChanges', false)) { return; }
+        const key = uri.toString();
+        let state = externalUploads.get(key);
+        if (!state) {
+            state = {};
+            externalUploads.set(key, state);
+        }
+        if (state.timer) { clearTimeout(state.timer); }
+        state.timer = setTimeout(() => { void flushExternalUpload(uri, state!); }, 500);
+    };
+
+    const externalWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+
     context.subscriptions.push(
         viewRegistration,
         logger,
@@ -1074,6 +1138,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                 if (state.timer) { clearTimeout(state.timer); }
             }
             autoUploads.clear();
+            for (const state of externalUploads.values()) {
+                if (state.timer) { clearTimeout(state.timer); }
+            }
+            externalUploads.clear();
         }),
         vscode.workspace.registerFileSystemProvider('leidong-sftp', preview, { isReadonly: false, isCaseSensitive: true }),
         vscode.commands.registerCommand('leidong-tools.sftp.showLogs', () => logger.show()),
@@ -1512,6 +1580,11 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         configWatcher.onDidCreate(() => remoteProvider.refresh()),
         configWatcher.onDidChange(() => remoteProvider.refresh()),
         configWatcher.onDidDelete(() => remoteProvider.refresh()),
+    );
+    context.subscriptions.push(
+        externalWatcher,
+        externalWatcher.onDidCreate(uri => scheduleExternalUpload(uri)),
+        externalWatcher.onDidChange(uri => scheduleExternalUpload(uri)),
     );
 }
 
