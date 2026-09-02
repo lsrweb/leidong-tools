@@ -1,5 +1,14 @@
 # 更新日志 (Changelog)
 
+## [0.1.20] - 2026-09-01
+
+### 🐛 AI Agent 自动上传修复 + 独立开关
+
+- **修复 Agent 修改文件不触发上传**：此前会跳过编辑器中 dirty（未保存）的文件，而 Codex 等 Agent 常以"编辑器挂起未保存 + bash 直接写盘"的方式改文件，恰好被此检查拦截——现移除 dirty 检查，只认磁盘内容；人工保存与监听上传由 2 秒去重窗口避免重复。
+- **Agent 上传改为独立开关**：新增设置 `leidong-tools.remoteUploadOnAgentChanges` 与面板"⚡ Agent上传"按钮（命令 `leidong-tools.sftp.toggleAgentUpload`），不再与保存自动上传共用 `remoteUploadOnSaveEnabled` 字段，可单独开启/关闭（默认关闭）。
+- 面板按钮更名："自动上传" → "⤒ 保存上传"，与"⚡ Agent上传"并列，职责一目了然。
+- 开启 Agent 上传但当前工作区没有任何可用上传目标（sftp.json 中未开启 `uploadOnSave`）时，提示一次原因，不再静默无效果。
+
 ## [0.1.19] - 2026-09-02
 
 ### 🚀 并发上传加速 + 文件夹设置写入修复

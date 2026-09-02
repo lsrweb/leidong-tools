@@ -28,7 +28,8 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
 <div class="toolbar">
   <button id="btnRefresh" title="刷新">↻ 刷新</button>
   <button id="btnGitUpload" title="一键上传 Git 变动文件到远程">⇡ Git变动</button>
-  <button id="btnAutoUpload" title="切换保存自动上传">⤒ 自动上传</button>
+  <button id="btnAgentUpload" title="切换 Agent/外部程序修改文件后自动上传（默认关闭）">⚡ Agent上传</button>
+  <button id="btnAutoUpload" title="切换保存自动上传">⤒ 保存上传</button>
   <button id="btnConfig" title="打开远程连接配置">⚙ 配置</button>
   <button id="btnLogs" title="显示远程资源日志">☰ 日志</button>
 </div>
@@ -277,6 +278,7 @@ body { margin:0; padding:8px; height:100vh; box-sizing:border-box; display:flex;
   document.getElementById('btnRefresh').onclick = () => vscode.postMessage({ type: 'refresh' });
   document.getElementById('btnGitUpload').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.uploadGitChanges' });
   document.getElementById('btnAutoUpload').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.toggleUploadOnSave' });
+  document.getElementById('btnAgentUpload').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.toggleAgentUpload' });
   document.getElementById('btnConfig').onclick = () => vscode.postMessage({ type: 'openConfig' });
   document.getElementById('btnLogs').onclick = () => vscode.postMessage({ type: 'command', command: 'leidong-tools.sftp.showLogs' });
 

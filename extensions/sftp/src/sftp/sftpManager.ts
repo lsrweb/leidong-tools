@@ -1116,9 +1116,11 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
 
     // ---- AI Agent / 外部程序修改文件的自动上传 ----
     // 监听磁盘变更（CLI 类 Agent 直接写盘不触发保存事件），防抖后按自动上传目标配置上传。
-    // 编辑器内未保存的改动（dirty）仍走保存上传，避免把未定稿内容传上去。
+    // 不检查编辑器 dirty 状态：Agent 常以“编辑器挂起未保存 + bash 直接写盘”的方式改文件，
+    // 只认磁盘内容；人工保存的上传由 2 秒去重窗口避免重复。
     const externalUploads = new Map<string, { timer?: NodeJS.Timeout }>();
     const recentUploadUris = new Map<string, number>();
+    const warnedNoUploadTargets = new Set<string>();
     const UPLOAD_DEDUPE_MS = 2000;
 
     const flushExternalUpload = async (uri: vscode.Uri, state: { timer?: NodeJS.Timeout }): Promise<void> => {
@@ -1126,12 +1128,17 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         try {
             const folder = vscode.workspace.getWorkspaceFolder(uri);
             if (!folder) { return; }
-            const document = vscode.workspace.textDocuments.find(item => item.uri.toString() === uri.toString());
-            if (document?.isDirty) { return; }
             const last = recentUploadUris.get(uri.toString());
             if (last !== undefined && Date.now() - last < UPLOAD_DEDUPE_MS) { return; }
             const targets = await resolveAutoUploadTargets(folder);
-            if (!targets.length) { return; }
+            if (!targets.length) {
+                const key = folder.uri.toString();
+                if (!warnedNoUploadTargets.has(key)) {
+                    warnedNoUploadTargets.add(key);
+                    void vscode.window.showWarningMessage('Agent 修改自动上传已开启，但当前工作区没有可用的自动上传目标（需在 sftp.json 配置中开启 uploadOnSave）');
+                }
+                return;
+            }
             recentUploadUris.set(uri.toString(), Date.now());
             const finish = activity.begin(`外部修改上传 ${path.basename(uri.fsPath)} (${targets.length})`);
             logger.info(undefined, `外部修改自动上传 ${uri.fsPath} -> ${targets.map(profile => profile.name).join('、')}`);
@@ -1197,6 +1204,14 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             await configuration.update('remoteUploadOnSaveEnabled', enabled, vscode.ConfigurationTarget.WorkspaceFolder);
             remoteProvider.refreshProfiles();
             void vscode.window.showInformationMessage(`保存自动上传已${enabled ? '开启' : '关闭'}`);
+        }),
+        vscode.commands.registerCommand('leidong-tools.sftp.toggleAgentUpload', async () => {
+            const folder = await chooseWorkspaceFolder('选择要切换 Agent 修改自动上传的工作区');
+            if (!folder) { return; }
+            const configuration = vscode.workspace.getConfiguration('leidong-tools', folder.uri);
+            const enabled = !configuration.get<boolean>('remoteUploadOnAgentChanges', false);
+            await configuration.update('remoteUploadOnAgentChanges', enabled, vscode.ConfigurationTarget.WorkspaceFolder);
+            void vscode.window.showInformationMessage(`Agent 修改自动上传已${enabled ? '开启' : '关闭'}（${folder.name}）：Agent/外部程序修改文件后自动上传`);
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.refresh', () => remoteProvider.refresh()),
         vscode.commands.registerCommand('leidong-tools.sftp.testConnection', async (item?: SftpTreeItem) => {
