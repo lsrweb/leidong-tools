@@ -1,5 +1,14 @@
 # 更新日志 (Changelog)
 
+## [0.1.22] - 2026-09-02
+
+### 🛡️ 内置忽略 .git/.vscode + 新增忽略文件夹配置 + 下载回环修复
+
+- **内置忽略 `.git`、`.svn`、`.hg`、`.vscode`、`.idea`**（任意层级）：这些目录的变更不再参与上传与自动上传监听——修复 Agent（如 Codex）工作期间 `.git/FETCH_HEAD`、`.git/refs/codex/...` checkpoint、`.vscode/settings.json` 被误传到远端服务器的问题（无需任何配置）。
+- **新增配置 `remoteUploadExcludedFolders`**：排除指定文件夹——填文件夹名（如 `node_modules`，匹配任意层级同名文件夹）或工作区相对路径（如 `dist/cache`，从工作区根匹配）；与已有的 `remoteUploadExcludedExtensions`（文件后缀）、`remoteUploadExcludeRegex`（正则）叠加生效，对保存上传 / Agent 上传 / 文件夹上传 / Git 批量上传全部生效。
+- **修复"下载/打开远端文件又触发自动上传"回环**：面板下载、当前文件下载覆盖、同步下载、终端 `/download` `/download-dir` `/open` 写入工作区后，监听器会在 15 秒窗口期内跳过这些文件，不再把刚下载的内容原样传回远端。
+- **修复 `not a regular file` 报错**：外部修改监听只处理真实文件，目录/Agent 写盘中间态直接跳过，不再因 fastPut 失败反复断连重连。
+
 ## [0.1.21] - 2026-09-02
 
 ### 🧹 并发上传连接生命周期规划（防泄漏）

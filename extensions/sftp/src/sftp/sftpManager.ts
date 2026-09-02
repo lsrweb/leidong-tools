@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Readable, Writable } from 'stream';
 import { Client as FtpClient, FileType as FtpFileType } from 'basic-ftp';
 import { registerRemoteTerminal, BUILTIN_COMMANDS, type RemoteTerminalBuiltins } from './remoteTerminal';
+import { isIgnoredUploadPath, isUnderSuppressedPrefix, suppressionKey } from './uploadIgnore';
 
 // ssh2-sftp-client does not ship first-party TypeScript declarations.
 const SftpClient = require('ssh2-sftp-client');
@@ -279,7 +280,9 @@ interface FtpConnectionEntry {
 class SftpService implements vscode.Disposable {
     private readonly sftpConnections = new Map<string, SftpConnectionEntry>();
     private readonly ftpConnections = new Map<string, FtpConnectionEntry>();
-    private readonly uploadFilterCache = new Map<string, { signature: string; extensions: Set<string>; regexes: RegExp[] }>();
+    private readonly uploadFilterCache = new Map<string, { signature: string; extensions: Set<string>; folders: string[]; regexes: RegExp[] }>();
+    /** 下载目标路径 -> 抑制截止时间：下载写盘不触发外部修改自动上传（防止下载回环）。 */
+    private readonly downloadSuppressions = new Map<string, number>();
 
     constructor(
         private readonly logger: RemoteLogger,
@@ -501,28 +504,57 @@ class SftpService implements vscode.Disposable {
     isUploadAllowed(profile: SftpProfile, localUri: vscode.Uri): boolean {
         const configuration = vscode.workspace.getConfiguration('leidong-tools', profile.workspaceFolder.uri);
         const extensionValues = configuration.get<string[]>('remoteUploadExcludedExtensions', []);
+        const folderValues = configuration.get<string[]>('remoteUploadExcludedFolders', []);
         const regexValues = configuration.get<string[]>('remoteUploadExcludeRegex', []);
-        const signature = JSON.stringify([extensionValues, regexValues]);
+        const signature = JSON.stringify([extensionValues, folderValues, regexValues]);
         let filters = this.uploadFilterCache.get(profile.workspaceFolder.uri.toString());
         if (!filters || filters.signature !== signature) {
             const extensions = new Set(extensionValues.map(value => value.trim().toLowerCase().replace(/^\./, '')).filter(Boolean));
+            const folders = folderValues.map(value => value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '').toLowerCase()).filter(Boolean);
             const regexes: RegExp[] = [];
             for (const pattern of regexValues) {
                 if (!pattern.trim()) { continue; }
                 try { regexes.push(new RegExp(pattern)); }
                 catch (error) { this.logger.error(profile, `无效上传过滤正则 ${pattern}: ${messageOf(error)}`); }
             }
-            filters = { signature, extensions, regexes };
+            filters = { signature, extensions, folders, regexes };
             this.uploadFilterCache.set(profile.workspaceFolder.uri.toString(), filters);
         }
+        const relativePath = path.relative(profile.workspaceFolder.uri.fsPath, localUri.fsPath).replace(/\\/g, '/');
+        // 内置忽略（.git/.vscode 等）+ 用户配置的文件夹/后缀/正则
+        if (isIgnoredUploadPath(relativePath, filters.folders)) { return false; }
         const extension = path.extname(localUri.fsPath).toLowerCase().replace(/^\./, '');
         if (extension && filters.extensions.has(extension)) { return false; }
-        const relativePath = path.relative(profile.workspaceFolder.uri.fsPath, localUri.fsPath).replace(/\\/g, '/');
         for (const regex of filters.regexes) { if (regex.test(relativePath)) { return false; } }
         return true;
     }
 
+    /** 下载目标（含子树）在窗口期内不触发外部修改自动上传：避免“下载/打开远端文件后又被原样传回去”。 */
+    suppressExternalUpload(localUri: vscode.Uri, windowMs = 15000): void {
+        this.downloadSuppressions.set(suppressionKey(localUri.fsPath), Date.now() + windowMs);
+    }
+
+    isExternalUploadSuppressed(uri: vscode.Uri): boolean {
+        const target = suppressionKey(uri.fsPath);
+        let suppressed = false;
+        for (const [prefix, expiry] of this.downloadSuppressions) {
+            if (expiry < Date.now()) { this.downloadSuppressions.delete(prefix); continue; }
+            if (isUnderSuppressedPrefix(target, prefix)) { suppressed = true; break; }
+        }
+        return suppressed;
+    }
+
     async download(profile: SftpProfile, remotePath: string, localUri: vscode.Uri, directory: boolean): Promise<void> {
+        this.suppressExternalUpload(localUri);
+        try {
+            await this.downloadInner(profile, remotePath, localUri, directory);
+        } finally {
+            // 下载刚写完盘，监听事件可能还在防抖队列里，刷新抑制窗口覆盖尾巴
+            this.suppressExternalUpload(localUri);
+        }
+    }
+
+    private async downloadInner(profile: SftpProfile, remotePath: string, localUri: vscode.Uri, directory: boolean): Promise<void> {
         this.logger.info(profile, `下载${directory ? '目录' : '文件'} ${remotePath} -> ${localUri.fsPath}`);
         if (isFtp(profile)) {
             await this.withFtpClient(profile, async client => {
@@ -1155,6 +1187,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         try {
             const folder = vscode.workspace.getWorkspaceFolder(uri);
             if (!folder) { return; }
+            let stat: vscode.FileStat;
+            try { stat = await vscode.workspace.fs.stat(uri); } catch { return; }
+            if ((stat.type & vscode.FileType.File) === 0) { return; } // 目录/临时路径（如 Agent 写 .git 的中间态）不参与上传
+            if (service.isExternalUploadSuppressed(uri)) { return; }
             const last = recentUploadUris.get(uri.toString());
             if (last !== undefined && Date.now() - last < UPLOAD_DEDUPE_MS) { return; }
             const targets = await resolveAutoUploadTargets(folder);
@@ -1192,6 +1228,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         if (uri.scheme !== 'file') { return; }
         const folder = vscode.workspace.getWorkspaceFolder(uri);
         if (!folder) { return; }
+        // .git/.vscode 等内置忽略目录的高频变更（git fetch、Agent checkpoint、设置写入）不进防抖，直接丢弃
+        const relative = path.relative(folder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
+        if (isIgnoredUploadPath(relative)) { return; }
+        if (service.isExternalUploadSuppressed(uri)) { return; } // 刚被下载写盘的文件不回传
         const configuration = vscode.workspace.getConfiguration('leidong-tools', folder.uri);
         if (!configuration.get<boolean>('remoteUploadOnAgentChanges', false)) { return; }
         const key = uri.toString();

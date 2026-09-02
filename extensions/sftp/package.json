@@ -2,7 +2,7 @@
   "name": "leidong-sftp",
   "displayName": "雷动远程资源（SFTP / FTP）",
   "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -268,7 +268,16 @@
           "items": {
             "type": "string"
           },
-          "description": "自动上传排除的扩展名（如 .map）。"
+          "description": "自动上传排除的文件后缀（如 [\".map\", \".log\"]）。"
+        },
+        "leidong-tools.remoteUploadExcludedFolders": {
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          },
+          "description": "自动上传排除的文件夹：填文件夹名（如 node_modules，匹配任意层级同名文件夹）或工作区相对路径（如 dist/cache，从工作区根匹配）。.git、.svn、.hg、.vscode、.idea 为内置忽略，始终不上传。"
         },
         "leidong-tools.remoteUploadOnSaveEnabled": {
           "type": "boolean",
