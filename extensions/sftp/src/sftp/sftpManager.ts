@@ -395,6 +395,20 @@ class SftpService implements vscode.Disposable {
         }
     }
 
+    /** 释放批量上传的并发槽位连接（profileId#uN）；主连接不受影响，保存上传/终端/浏览仍复用主连接。 */
+    async closeUploadSlotConnections(profile: SftpProfile): Promise<void> {
+        for (const [id, sftp] of this.sftpConnections) {
+            if (id === profile.id || !isProfileConnectionKey(id, profile.id)) { continue; }
+            await this.enqueue(sftp, () => this.closeSftp(profile, sftp, '批量上传结束，并发连接已释放'));
+            this.sftpConnections.delete(id);
+        }
+        for (const [id, ftp] of this.ftpConnections) {
+            if (id === profile.id || !isProfileConnectionKey(id, profile.id)) { continue; }
+            await this.enqueue(ftp, async () => this.closeFtp(profile, ftp, '批量上传结束，并发连接已释放'));
+            this.ftpConnections.delete(id);
+        }
+    }
+
     async upload(profile: SftpProfile, localUri: vscode.Uri, remotePath: string, slot?: number): Promise<void> {
         if (!this.isUploadAllowed(profile, localUri)) {
             this.logger.info(profile, `已按过滤规则跳过 ${localUri.fsPath}`);
@@ -449,7 +463,18 @@ class SftpService implements vscode.Disposable {
         for (const directory of [remotePath, ...directories]) {
             await this.createDirectory(profile, directory);
         }
-        await this.runPool(files, concurrency, (file, workerIndex) => this.upload(profile, file.local, file.remote, workerIndex));
+        // 连接规划：并发槽位连接仅在批量上传期间存在，多文件并发时按 min(并发配置, 文件数) 建独立连接，
+        // 结束（含异常）后全部释放；单文件或并发=1 时直接复用主连接，与 Ctrl+S 保存上传同一条，不额外建连
+        try {
+            const slots = Math.min(concurrency, files.length);
+            if (slots > 1) {
+                await this.runPool(files, slots, (file, workerIndex) => this.upload(profile, file.local, file.remote, workerIndex));
+            } else {
+                for (const file of files) { await this.upload(profile, file.local, file.remote); }
+            }
+        } finally {
+            await this.closeUploadSlotConnections(profile);
+        }
     }
 
     /** 并发上传连接数（1 = 串行，上限 8，避免超过 SSH MaxSessions 限制）。 */
@@ -558,6 +583,7 @@ class SftpService implements vscode.Disposable {
 
     private async withSftpClient<T>(profile: SftpProfile, action: (client: any) => Promise<T>, slot?: number): Promise<T> {
         const entry = await this.getSftpEntry(profile, slot);
+        const key = connectionKey(profile.id, slot);
         return this.enqueue(entry, async () => {
             this.clearIdle(entry);
             try {
@@ -568,10 +594,10 @@ class SftpService implements vscode.Disposable {
             } catch (error) {
                 this.logger.error(profile, messageOf(error));
                 await this.closeSftp(profile, entry, '连接异常，已释放');
-                this.sftpConnections.delete(connectionKey(profile.id, slot));
+                this.sftpConnections.delete(key);
                 throw error;
             } finally {
-                if (entry.connected) { this.scheduleSftpIdle(profile, entry); }
+                if (entry.connected) { this.scheduleSftpIdle(profile, entry, key); }
             }
         });
     }
@@ -626,13 +652,13 @@ class SftpService implements vscode.Disposable {
         this.onStateChange?.();
     }
 
-    private scheduleSftpIdle(profile: SftpProfile, entry: SftpConnectionEntry): void {
+    private scheduleSftpIdle(profile: SftpProfile, entry: SftpConnectionEntry, key: string): void {
         const timeout = this.idleTimeoutMs(profile);
         if (timeout <= 0) { return; } // 0 = 一直保持连接
         entry.idleTimer = setTimeout(() => {
             void this.enqueue(entry, async () => {
                 await this.closeSftp(profile, entry, '空闲超时，连接已关闭');
-                this.sftpConnections.delete(profile.id);
+                this.sftpConnections.delete(key);
             });
         }, timeout);
     }
@@ -648,6 +674,7 @@ class SftpService implements vscode.Disposable {
 
     private async withFtpClient<T>(profile: SftpProfile, action: (client: FtpClient) => Promise<T>, slot?: number): Promise<T> {
         const entry = await this.getFtpEntry(profile, slot);
+        const key = connectionKey(profile.id, slot);
         return this.enqueue(entry, async () => {
             this.clearIdle(entry);
             try {
@@ -656,10 +683,10 @@ class SftpService implements vscode.Disposable {
             } catch (error) {
                 this.logger.error(profile, messageOf(error));
                 this.closeFtp(profile, entry, '连接异常，已释放');
-                this.ftpConnections.delete(connectionKey(profile.id, slot));
+                this.ftpConnections.delete(key);
                 throw error;
             } finally {
-                if (!entry.client.closed) { this.scheduleFtpIdle(profile, entry); }
+                if (!entry.client.closed) { this.scheduleFtpIdle(profile, entry, key); }
             }
         });
     }
@@ -694,13 +721,13 @@ class SftpService implements vscode.Disposable {
         this.onStateChange?.();
     }
 
-    private scheduleFtpIdle(profile: SftpProfile, entry: FtpConnectionEntry): void {
+    private scheduleFtpIdle(profile: SftpProfile, entry: FtpConnectionEntry, key: string): void {
         const timeout = this.idleTimeoutMs(profile);
         if (timeout <= 0) { return; } // 0 = 一直保持连接
         entry.idleTimer = setTimeout(() => {
             void this.enqueue(entry, async () => {
                 this.closeFtp(profile, entry, '空闲超时，连接已关闭');
-                this.ftpConnections.delete(profile.id);
+                this.ftpConnections.delete(key);
             });
         }, timeout);
     }
@@ -1901,14 +1928,25 @@ async function uploadGitChangeFiles(service: SftpService, profile: SftpProfile, 
         skippedFilter++;
         return false;
     });
-    await service.runPool(eligible, service.uploadConcurrency(profile), async (file, workerIndex) => {
+    const uploadOne = async (file: vscode.Uri, slot?: number): Promise<void> => {
         try {
-            const remote = await uploadMappedFile(service, profile, file, false, workerIndex);
+            const remote = await uploadMappedFile(service, profile, file, false, slot);
             if (remote) { uploaded.push(remote); }
         } catch (error) {
             failures.push(`${path.basename(file.fsPath)}: ${messageOf(error)}`);
         }
-    });
+    };
+    // 连接规划与 uploadDirectory 一致：多文件才开并发槽位连接，结束后释放；单文件/串行复用主连接
+    try {
+        const slots = Math.min(service.uploadConcurrency(profile), eligible.length);
+        if (slots > 1) {
+            await service.runPool(eligible, slots, uploadOne);
+        } else {
+            for (const file of eligible) { await uploadOne(file); }
+        }
+    } finally {
+        await service.closeUploadSlotConnections(profile);
+    }
     return { uploaded, skippedFilter, failures };
 }
 
