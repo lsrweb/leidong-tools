@@ -2,7 +2,7 @@
   "name": "leidong-sftp",
   "displayName": "雷动远程资源（SFTP / FTP）",
   "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -227,6 +227,7 @@
           "default": [
             ".vscode/sftp.json"
           ],
+          "scope": "resource",
           "items": {
             "type": "string"
           },
@@ -235,6 +236,7 @@
         "leidong-tools.remoteConfigFiles": {
           "type": "array",
           "default": [],
+          "scope": "resource",
           "items": {
             "type": "string"
           },
@@ -244,16 +246,19 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
+          "scope": "resource",
           "description": "远程连接空闲自动断开时间（秒）；0 表示一直保持连接。"
         },
         "leidong-tools.remoteVerboseProtocolLogging": {
           "type": "boolean",
           "default": false,
+          "scope": "resource",
           "description": "输出远程协议详细日志。"
         },
         "leidong-tools.remoteUploadExcludedExtensions": {
           "type": "array",
           "default": [],
+          "scope": "resource",
           "items": {
             "type": "string"
           },
@@ -262,21 +267,36 @@
         "leidong-tools.remoteUploadOnSaveEnabled": {
           "type": "boolean",
           "default": true,
+          "scope": "resource",
           "description": "保存后自动上传到远程。"
         },
         "leidong-tools.remoteUploadOnAgentChanges": {
           "type": "boolean",
           "default": false,
+          "scope": "resource",
           "description": "AI Agent / 外部程序修改文件后自动上传到远程（默认关闭，需手动开启；按保存自动上传的目标配置上传）。"
         },
+        "leidong-tools.remoteUploadConcurrency": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 8,
+          "scope": "resource",
+          "description": "并发上传连接数（1 = 串行）。文件夹上传与 Git 变动批量上传将同时传输多个文件；远端目录会先创建好，不同文件路径互不冲突。"
+        },
         "leidong-tools.remoteUploadExcludeRegex": {
-          "type": "string",
-          "default": "",
-          "description": "自动上传排除路径正则。"
+          "type": "array",
+          "default": [],
+          "scope": "resource",
+          "items": {
+            "type": "string"
+          },
+          "description": "自动上传排除路径正则（数组，可多条）。"
         },
         "leidong-tools.remoteTerminalFavoriteCommands": {
           "type": "array",
           "default": [],
+          "scope": "resource",
           "items": {
             "type": "string"
           },

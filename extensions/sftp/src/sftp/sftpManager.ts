@@ -383,13 +383,19 @@ class SftpService implements vscode.Disposable {
     }
 
     async disconnect(profile: SftpProfile): Promise<void> {
-        const sftp = this.sftpConnections.get(profile.id);
-        if (sftp) { await this.enqueue(sftp, () => this.closeSftp(profile, sftp, '已手动断开连接')); this.sftpConnections.delete(profile.id); }
-        const ftp = this.ftpConnections.get(profile.id);
-        if (ftp) { await this.enqueue(ftp, async () => this.closeFtp(profile, ftp, '已手动断开连接')); this.ftpConnections.delete(profile.id); }
+        for (const [id, sftp] of this.sftpConnections) {
+            if (!isProfileConnectionKey(id, profile.id)) { continue; }
+            await this.enqueue(sftp, () => this.closeSftp(profile, sftp, '已手动断开连接'));
+            this.sftpConnections.delete(id);
+        }
+        for (const [id, ftp] of this.ftpConnections) {
+            if (!isProfileConnectionKey(id, profile.id)) { continue; }
+            await this.enqueue(ftp, async () => this.closeFtp(profile, ftp, '已手动断开连接'));
+            this.ftpConnections.delete(id);
+        }
     }
 
-    async upload(profile: SftpProfile, localUri: vscode.Uri, remotePath: string): Promise<void> {
+    async upload(profile: SftpProfile, localUri: vscode.Uri, remotePath: string, slot?: number): Promise<void> {
         if (!this.isUploadAllowed(profile, localUri)) {
             this.logger.info(profile, `已按过滤规则跳过 ${localUri.fsPath}`);
             return;
@@ -401,7 +407,7 @@ class SftpService implements vscode.Disposable {
                 const total = (await vscode.workspace.fs.stat(localUri)).size;
                 client.trackProgress((info: any) => this.progress?.(info.bytesOverall ?? info.bytes ?? 0, total));
                 try { await client.uploadFrom(localUri.fsPath, remotePath); } finally { client.trackProgress(); }
-            });
+            }, slot);
             return;
         }
         await this.withSftpClient(profile, async client => {
@@ -409,7 +415,7 @@ class SftpService implements vscode.Disposable {
             await client.mkdir(parent, true);
             const total = (await vscode.workspace.fs.stat(localUri)).size;
             await client.fastPut(localUri.fsPath, remotePath, { step: (transferred: number, _chunk: number, remoteTotal: number) => this.progress?.(transferred, remoteTotal || total) });
-        });
+        }, slot);
     }
 
     async uploadDirectory(profile: SftpProfile, localUri: vscode.Uri, remotePath: string): Promise<void> {
@@ -418,17 +424,53 @@ class SftpService implements vscode.Disposable {
             return;
         }
         this.logger.info(profile, `上传目录 ${localUri.fsPath} -> ${remotePath}`);
-        await this.createDirectory(profile, remotePath);
-        const entries = await vscode.workspace.fs.readDirectory(localUri);
-        for (const [name, type] of entries) {
-            const childLocal = vscode.Uri.joinPath(localUri, name);
-            const childRemote = joinRemote(remotePath, name);
-            if ((type & vscode.FileType.Directory) !== 0) {
-                await this.uploadDirectory(profile, childLocal, childRemote);
-            } else if ((type & vscode.FileType.File) !== 0) {
-                await this.upload(profile, childLocal, childRemote);
+        const concurrency = this.uploadConcurrency(profile);
+        const files: Array<{ local: vscode.Uri; remote: string }> = [];
+        const directories: string[] = [];
+        const walk = async (local: vscode.Uri, remote: string): Promise<void> => {
+            const entries = await vscode.workspace.fs.readDirectory(local);
+            for (const [name, type] of entries) {
+                const childLocal = vscode.Uri.joinPath(local, name);
+                const childRemote = joinRemote(remote, name);
+                if ((type & vscode.FileType.Directory) !== 0) {
+                    if (!this.isUploadAllowed(profile, childLocal)) {
+                        this.logger.info(profile, `已按过滤规则跳过目录 ${childLocal.fsPath}`);
+                        continue;
+                    }
+                    directories.push(childRemote);
+                    await walk(childLocal, childRemote);
+                } else if ((type & vscode.FileType.File) !== 0) {
+                    files.push({ local: childLocal, remote: childRemote });
+                }
             }
+        };
+        await walk(localUri, remotePath);
+        // 先串行创建全部远端目录，避免并发 mkdir 同一路径冲突；再由各并发连接上传不同文件
+        for (const directory of [remotePath, ...directories]) {
+            await this.createDirectory(profile, directory);
         }
+        await this.runPool(files, concurrency, (file, workerIndex) => this.upload(profile, file.local, file.remote, workerIndex));
+    }
+
+    /** 并发上传连接数（1 = 串行，上限 8，避免超过 SSH MaxSessions 限制）。 */
+    uploadConcurrency(profile: SftpProfile): number {
+        const value = vscode.workspace.getConfiguration('leidong-tools', profile.workspaceFolder.uri)
+            .get<number>('remoteUploadConcurrency', 3);
+        return Math.min(8, Math.max(1, Math.floor(value) || 1));
+    }
+
+    /** 固定并发数的任务池：workerIndex 可用作独立连接槽位。 */
+    runPool<T>(items: T[], size: number, worker: (item: T, workerIndex: number) => Promise<void>): Promise<void> {
+        let next = 0;
+        const count = Math.max(1, Math.min(size, items.length));
+        const runners = Array.from({ length: count }, async (_value, workerIndex) => {
+            while (true) {
+                const current = next++;
+                if (current >= items.length) { break; }
+                await worker(items[current], workerIndex);
+            }
+        });
+        return Promise.all(runners).then(() => undefined);
     }
 
     isUploadAllowed(profile: SftpProfile, localUri: vscode.Uri): boolean {
@@ -514,8 +556,8 @@ class SftpService implements vscode.Disposable {
         });
     }
 
-    private async withSftpClient<T>(profile: SftpProfile, action: (client: any) => Promise<T>): Promise<T> {
-        const entry = await this.getSftpEntry(profile);
+    private async withSftpClient<T>(profile: SftpProfile, action: (client: any) => Promise<T>, slot?: number): Promise<T> {
+        const entry = await this.getSftpEntry(profile, slot);
         return this.enqueue(entry, async () => {
             this.clearIdle(entry);
             try {
@@ -526,7 +568,7 @@ class SftpService implements vscode.Disposable {
             } catch (error) {
                 this.logger.error(profile, messageOf(error));
                 await this.closeSftp(profile, entry, '连接异常，已释放');
-                this.sftpConnections.delete(profile.id);
+                this.sftpConnections.delete(connectionKey(profile.id, slot));
                 throw error;
             } finally {
                 if (entry.connected) { this.scheduleSftpIdle(profile, entry); }
@@ -534,9 +576,10 @@ class SftpService implements vscode.Disposable {
         });
     }
 
-    private async getSftpEntry(profile: SftpProfile): Promise<SftpConnectionEntry> {
+    private async getSftpEntry(profile: SftpProfile, slot?: number): Promise<SftpConnectionEntry> {
+        const key = connectionKey(profile.id, slot);
         const signature = profileSignature(profile);
-        const existing = this.sftpConnections.get(profile.id);
+        const existing = this.sftpConnections.get(key);
         if (existing?.signature === signature) { return existing; }
         if (existing) { await this.closeSftp(profile, existing, '配置已更新，旧连接已关闭'); }
         let entry!: SftpConnectionEntry;
@@ -556,7 +599,7 @@ class SftpService implements vscode.Disposable {
             },
         });
         entry = { client, connected: false, signature, queue: Promise.resolve() };
-        this.sftpConnections.set(profile.id, entry);
+        this.sftpConnections.set(key, entry);
         return entry;
     }
 
@@ -603,8 +646,8 @@ class SftpService implements vscode.Disposable {
         this.onStateChange?.();
     }
 
-    private async withFtpClient<T>(profile: SftpProfile, action: (client: FtpClient) => Promise<T>): Promise<T> {
-        const entry = await this.getFtpEntry(profile);
+    private async withFtpClient<T>(profile: SftpProfile, action: (client: FtpClient) => Promise<T>, slot?: number): Promise<T> {
+        const entry = await this.getFtpEntry(profile, slot);
         return this.enqueue(entry, async () => {
             this.clearIdle(entry);
             try {
@@ -613,7 +656,7 @@ class SftpService implements vscode.Disposable {
             } catch (error) {
                 this.logger.error(profile, messageOf(error));
                 this.closeFtp(profile, entry, '连接异常，已释放');
-                this.ftpConnections.delete(profile.id);
+                this.ftpConnections.delete(connectionKey(profile.id, slot));
                 throw error;
             } finally {
                 if (!entry.client.closed) { this.scheduleFtpIdle(profile, entry); }
@@ -621,9 +664,10 @@ class SftpService implements vscode.Disposable {
         });
     }
 
-    private async getFtpEntry(profile: SftpProfile): Promise<FtpConnectionEntry> {
+    private async getFtpEntry(profile: SftpProfile, slot?: number): Promise<FtpConnectionEntry> {
+        const key = connectionKey(profile.id, slot);
         const signature = profileSignature(profile);
-        const existing = this.ftpConnections.get(profile.id);
+        const existing = this.ftpConnections.get(key);
         if (existing?.signature === signature) { return existing; }
         if (existing) { this.closeFtp(profile, existing, '配置已更新，旧连接已关闭'); }
         const client = new FtpClient(20000);
@@ -632,7 +676,7 @@ class SftpService implements vscode.Disposable {
             client.ftp.log = (message: string) => this.logger.protocol(profile, message);
         }
         const entry = { client, signature, queue: Promise.resolve() };
-        this.ftpConnections.set(profile.id, entry);
+        this.ftpConnections.set(key, entry);
         return entry;
     }
 
@@ -1588,9 +1632,18 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     );
 }
 
-async function uploadMappedFile(service: SftpService, profile: SftpProfile, localUri: vscode.Uri, notify: boolean): Promise<string | undefined> {
+/** 并发上传的连接槽位 key：主连接用 profile.id，上传槽位加 #uN 后缀。 */
+function connectionKey(profileId: string, slot?: number): string {
+    return slot === undefined ? profileId : `${profileId}#u${slot}`;
+}
+
+function isProfileConnectionKey(key: string, profileId: string): boolean {
+    return key === profileId || key.startsWith(`${profileId}#`);
+}
+
+async function uploadMappedFile(service: SftpService, profile: SftpProfile, localUri: vscode.Uri, notify: boolean, slot?: number): Promise<string | undefined> {
     const remote = mappedRemotePath(profile, localUri);
-    await service.upload(profile, localUri, remote);
+    await service.upload(profile, localUri, remote, slot);
     if (notify) {
         void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${remote}`);
     }
@@ -1823,20 +1876,24 @@ async function collectGitChangedFiles(folder: vscode.WorkspaceFolder): Promise<{
     return { files, deletedCount };
 }
 
-/** 批量上传 Git 变动文件（复用 mappedRemotePath 映射与上传过滤规则），逐文件容错。 */
+/** 批量上传 Git 变动文件（复用 mappedRemotePath 映射与上传过滤规则），并发池 + 逐文件容错。 */
 async function uploadGitChangeFiles(service: SftpService, profile: SftpProfile, files: vscode.Uri[]): Promise<{ uploaded: string[]; skippedFilter: number; failures: string[] }> {
     const uploaded: string[] = [];
     const failures: string[] = [];
     let skippedFilter = 0;
-    for (const file of files) {
-        if (!service.isUploadAllowed(profile, file)) { skippedFilter++; continue; }
+    const eligible = files.filter(file => {
+        if (service.isUploadAllowed(profile, file)) { return true; }
+        skippedFilter++;
+        return false;
+    });
+    await service.runPool(eligible, service.uploadConcurrency(profile), async (file, workerIndex) => {
         try {
-            const remote = await uploadMappedFile(service, profile, file, false);
+            const remote = await uploadMappedFile(service, profile, file, false, workerIndex);
             if (remote) { uploaded.push(remote); }
         } catch (error) {
             failures.push(`${path.basename(file.fsPath)}: ${messageOf(error)}`);
         }
-    }
+    });
     return { uploaded, skippedFilter, failures };
 }
 
