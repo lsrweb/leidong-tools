@@ -281,8 +281,8 @@ class SftpService implements vscode.Disposable {
     private readonly sftpConnections = new Map<string, SftpConnectionEntry>();
     private readonly ftpConnections = new Map<string, FtpConnectionEntry>();
     private readonly uploadFilterCache = new Map<string, { signature: string; extensions: Set<string>; folders: string[]; regexes: RegExp[] }>();
-    /** 下载目标路径 -> 抑制截止时间：下载写盘不触发外部修改自动上传（防止下载回环）。 */
-    private readonly downloadSuppressions = new Map<string, number>();
+    /** 下载目标路径 -> 抑制记录：下载写盘不触发外部修改自动上传（防止下载回环）；文件记录写盘快照，内容被改后放行。 */
+    private readonly downloadSuppressions = new Map<string, { expiry: number; stat?: { mtime: number; size: number } }>();
 
     constructor(
         private readonly logger: RemoteLogger,
@@ -531,14 +531,34 @@ class SftpService implements vscode.Disposable {
 
     /** 下载目标（含子树）在窗口期内不触发外部修改自动上传：避免“下载/打开远端文件后又被原样传回去”。 */
     suppressExternalUpload(localUri: vscode.Uri, windowMs = 15000): void {
-        this.downloadSuppressions.set(suppressionKey(localUri.fsPath), Date.now() + windowMs);
+        this.downloadSuppressions.set(suppressionKey(localUri.fsPath), { expiry: Date.now() + windowMs });
     }
 
-    isExternalUploadSuppressed(uri: vscode.Uri): boolean {
+    /** 文件下载完成后记录写盘快照：窗口期内只有内容未被改动才抑制上传（下载后 Agent 紧接着修改则照常上传）。 */
+    async rememberDownloadedFile(localUri: vscode.Uri, windowMs = 15000): Promise<void> {
+        try {
+            const stat = await vscode.workspace.fs.stat(localUri);
+            if ((stat.type & vscode.FileType.File) === 0) { return; }
+            this.downloadSuppressions.set(suppressionKey(localUri.fsPath), { expiry: Date.now() + windowMs, stat: { mtime: stat.mtime, size: stat.size } });
+        } catch {
+            this.suppressExternalUpload(localUri, windowMs);
+        }
+    }
+
+    /**
+     * 目标是否处于下载抑制期。
+     * 文件：当前快照与下载写盘快照一致（或下载尚未完成、无快照）才抑制；内容被修改过（mtime/size 变化）立即放行。
+     * 目录：窗口期内整棵子树抑制。
+     */
+    isExternalUploadSuppressed(uri: vscode.Uri, current: { mtime: number; size: number }): boolean {
         const target = suppressionKey(uri.fsPath);
         let suppressed = false;
-        for (const [prefix, expiry] of this.downloadSuppressions) {
-            if (expiry < Date.now()) { this.downloadSuppressions.delete(prefix); continue; }
+        for (const [prefix, entry] of this.downloadSuppressions) {
+            if (entry.expiry < Date.now()) { this.downloadSuppressions.delete(prefix); continue; }
+            if (prefix === target && entry.stat) {
+                if (entry.stat.mtime === current.mtime && entry.stat.size === current.size) { suppressed = true; break; }
+                continue;
+            }
             if (isUnderSuppressedPrefix(target, prefix)) { suppressed = true; break; }
         }
         return suppressed;
@@ -549,8 +569,9 @@ class SftpService implements vscode.Disposable {
         try {
             await this.downloadInner(profile, remotePath, localUri, directory);
         } finally {
-            // 下载刚写完盘，监听事件可能还在防抖队列里，刷新抑制窗口覆盖尾巴
-            this.suppressExternalUpload(localUri);
+            // 下载刚写完盘，监听事件可能还在防抖队列里，刷新抑制记录覆盖尾巴；
+            // 文件记录写盘快照，窗口期内被改动（如 Agent 紧接着修改）则不再抑制
+            if (directory) { this.suppressExternalUpload(localUri); } else { await this.rememberDownloadedFile(localUri); }
         }
     }
 
@@ -1130,7 +1151,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             if (!folder) { return; }
             const targets = await resolveAutoUploadTargets(folder);
             if (!targets.length) { return; }
-            recentUploadUris.set(document.uri.toString(), Date.now());
+            const stamp = await statSnapshot(document.uri);
             const finish = activity.begin(`正在自动上传 ${path.basename(document.uri.fsPath)} (${targets.length})`);
             logger.info(undefined, `保存自动上传 ${document.uri.fsPath} -> ${targets.map(profile => profile.name).join('、')}`);
             try {
@@ -1148,6 +1169,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             } finally {
                 finish(succeeded);
             }
+            if (succeeded && stamp) { lastUploadedStats.set(document.uri.toString(), stamp); }
         } finally {
             state.running = false;
             if (state.generation !== runningGeneration) {
@@ -1175,24 +1197,39 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
 
     // ---- AI Agent / 外部程序修改文件的自动上传 ----
     // 监听磁盘变更（CLI 类 Agent 直接写盘不触发保存事件），防抖后按自动上传目标配置上传。
-    // 不检查编辑器 dirty 状态：Agent 常以“编辑器挂起未保存 + bash 直接写盘”的方式改文件，
-    // 只认磁盘内容；人工保存的上传由 2 秒去重窗口避免重复。
-    const externalUploads = new Map<string, { timer?: NodeJS.Timeout }>();
-    const recentUploadUris = new Map<string, number>();
+    // 不检查编辑器 dirty 状态：Agent 常以“编辑器挂起未保存 + bash 直接写盘”的方式改文件，只认磁盘内容。
+    interface ExternalUploadState { timer?: NodeJS.Timeout; generation: number; running: boolean }
+    const externalUploads = new Map<string, ExternalUploadState>();
     const warnedNoUploadTargets = new Set<string>();
-    const UPLOAD_DEDUPE_MS = 2000;
+    /**
+     * 最近一次上传成功时的磁盘快照（mtime+size）。
+     * 去重按快照而不是时间窗口：Agent（Qoder/Codex 等）会在同一文件上连续多次写盘，
+     * 时间窗口会把窗口期内的后续修改一并跳过（远端停留在中间版本、日志却显示成功）；
+     * 快照比较只跳过“同一次写入”的重复事件（保存 + 磁盘监听双触发），内容每变一次都会重新上传。
+     */
+    const lastUploadedStats = new Map<string, { mtime: number; size: number }>();
 
-    const flushExternalUpload = async (uri: vscode.Uri, state: { timer?: NodeJS.Timeout }): Promise<void> => {
+    const statSnapshot = async (uri: vscode.Uri): Promise<{ mtime: number; size: number } | undefined> => {
+        try {
+            const stat = await vscode.workspace.fs.stat(uri);
+            return (stat.type & vscode.FileType.File) !== 0 ? { mtime: stat.mtime, size: stat.size } : undefined;
+        } catch { return undefined; }
+    };
+
+    const flushExternalUpload = async (uri: vscode.Uri, state: ExternalUploadState): Promise<void> => {
+        if (state.running) { return; }
+        state.running = true;
         state.timer = undefined;
+        const runningGeneration = state.generation;
         try {
             const folder = vscode.workspace.getWorkspaceFolder(uri);
             if (!folder) { return; }
-            let stat: vscode.FileStat;
-            try { stat = await vscode.workspace.fs.stat(uri); } catch { return; }
-            if ((stat.type & vscode.FileType.File) === 0) { return; } // 目录/临时路径（如 Agent 写 .git 的中间态）不参与上传
-            if (service.isExternalUploadSuppressed(uri)) { return; }
-            const last = recentUploadUris.get(uri.toString());
-            if (last !== undefined && Date.now() - last < UPLOAD_DEDUPE_MS) { return; }
+            // 目录/已删除/Agent 写盘中间态不参与上传
+            const stamp = await statSnapshot(uri);
+            if (!stamp) { return; }
+            const uploaded = lastUploadedStats.get(uri.toString());
+            if (uploaded && uploaded.mtime === stamp.mtime && uploaded.size === stamp.size) { return; } // 同一次写入的重复事件（保存 + 监听双触发）
+            if (service.isExternalUploadSuppressed(uri, stamp)) { return; } // 刚被下载写盘且内容未再变动的文件不回传
             const targets = await resolveAutoUploadTargets(folder);
             if (!targets.length) {
                 const key = folder.uri.toString();
@@ -1202,7 +1239,6 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                 }
                 return;
             }
-            recentUploadUris.set(uri.toString(), Date.now());
             const finish = activity.begin(`外部修改上传 ${path.basename(uri.fsPath)} (${targets.length})`);
             logger.info(undefined, `外部修改自动上传 ${uri.fsPath} -> ${targets.map(profile => profile.name).join('、')}`);
             let succeeded = true;
@@ -1212,15 +1248,23 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                     if (result.status === 'rejected') {
                         succeeded = false;
                         logger.error(targets[index], `外部修改上传失败: ${messageOf(result.reason)}`);
-                    } else if (result.value) {
-                        remoteProvider.invalidateDirectory(targets[index], posixDirname(result.value));
+                    } else {
+                        logger.info(targets[index], '外部修改上传完成');
+                        if (result.value) { remoteProvider.invalidateDirectory(targets[index], posixDirname(result.value)); }
                     }
                 });
             } finally {
                 finish(succeeded);
             }
+            if (succeeded) { lastUploadedStats.set(uri.toString(), stamp); }
         } finally {
-            if (!state.timer) { externalUploads.delete(uri.toString()); }
+            state.running = false;
+            // 上传期间又收到新的修改事件：按最新代次补跑一次，避免慢速上传时旧内容后完成、覆盖新内容
+            if (state.generation !== runningGeneration) {
+                state.timer = setTimeout(() => { void flushExternalUpload(uri, state); }, 300);
+            } else {
+                externalUploads.delete(uri.toString());
+            }
         }
     };
 
@@ -1231,15 +1275,16 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         // .git/.vscode 等内置忽略目录的高频变更（git fetch、Agent checkpoint、设置写入）不进防抖，直接丢弃
         const relative = path.relative(folder.uri.fsPath, uri.fsPath).replace(/\\/g, '/');
         if (isIgnoredUploadPath(relative)) { return; }
-        if (service.isExternalUploadSuppressed(uri)) { return; } // 刚被下载写盘的文件不回传
         const configuration = vscode.workspace.getConfiguration('leidong-tools', folder.uri);
         if (!configuration.get<boolean>('remoteUploadOnAgentChanges', false)) { return; }
         const key = uri.toString();
         let state = externalUploads.get(key);
         if (!state) {
-            state = {};
+            state = { generation: 0, running: false };
             externalUploads.set(key, state);
         }
+        state.generation++;
+        if (state.running) { return; } // 上传进行中：结束后按最新代次补跑
         if (state.timer) { clearTimeout(state.timer); }
         state.timer = setTimeout(() => { void flushExternalUpload(uri, state!); }, 500);
     };
