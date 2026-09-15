@@ -123,9 +123,10 @@ function sanitizeContent(raw: string, fileUri?: vscode.Uri): string {
  */
 /**
  * VueIndex 构建 schema 版本：解析器逻辑升级后递增，强制旧缓存失效。
- * v1: Vue2 Options API；v2: Vue3 Composition API（createApp/setup/ref/reactive/computed）。
+ * v1: Vue2 Options API；v2: Vue3 Composition API（createApp/setup/ref/reactive/computed）；
+ * v3: setup 声明注释扩展（行尾注释 + 紧邻上方的 // 注释块）。
  */
-const VUE_INDEX_SCHEMA_VERSION = 2;
+const VUE_INDEX_SCHEMA_VERSION = 3;
 
 /** Vue3 setup 生命周期钩子调用（onMounted 等，收入 index.lifecycle）。 */
 const ON_SETUP_LIFECYCLE_HOOKS = new Set([
@@ -344,10 +345,23 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             new vscode.Position(lineOffset + loc.start.line - 1, loc.start.column),
             new vscode.Position(lineOffset + loc.end.line - 1, loc.end.column)
         ));
-        // 行尾注释（const x = ref(true) // 说明）
+        // 声明注释：行尾注释（const x = ref(true) // 说明）优先；
+        // 其次取紧邻声明上方的连续 // 注释块（.dev.js 中函数/方法常用上方注释说明），跳过 #region 标记
+        const leadingDocForLine = (lineIndex: number): string | undefined => {
+            const collected: string[] = [];
+            for (let i = lineIndex - 1; i >= 0 && collected.length < 5; i--) {
+                const match = /^\/\/(.*)$/.exec((sourceLines[i] || '').trim());
+                if (!match) { break; }
+                const content = match[1].trim();
+                if (!content || /^#?\s*(?:end)?region\b/i.test(content)) { break; }
+                collected.unshift(content);
+            }
+            return collected.length ? collected.join('\n') : undefined;
+        };
         const docForLine = (loc: t.SourceLocation | null | undefined): string | undefined => {
             if (!loc) { return undefined; }
-            return getInlineLineComment(sourceLines[loc.start.line - 1] || '', loc.start.column);
+            const lineIndex = loc.start.line - 1;
+            return getInlineLineComment(sourceLines[lineIndex] || '', loc.start.column) || leadingDocForLine(lineIndex);
         };
         for (const statement of body) {
             if (t.isVariableDeclaration(statement)) {

@@ -28,6 +28,7 @@ import { FILE_SELECTORS } from './config';
 import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache, warmCssQuickIndexForDocument } from '../providers/cssIndexProvider';
 import { XTemplateHtmlCompletionProvider } from '../providers/xTemplateHtmlCompletionProvider';
 import { TodoHighlightProvider } from '../providers/todoHighlightProvider';
+import { SetupReturnInlayHintsProvider } from '../providers/setupReturnInlayHints';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -90,6 +91,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     );
 
     context.subscriptions.push(new TodoHighlightProvider());
+
+    // 注册 Vue3 setup return 块幽灵文本注释（Inlay Hint）：return 项后展示声明处注释
+    context.subscriptions.push(
+        vscode.languages.registerInlayHintsProvider(
+            FILE_SELECTORS.JAVASCRIPT_ONLY,
+            new SetupReturnInlayHintsProvider()
+        )
+    );
 
     // 注册 JavaScript 补全提供器
     context.subscriptions.push(

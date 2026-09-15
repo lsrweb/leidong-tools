@@ -1,5 +1,14 @@
 # 更新日志 (Changelog)
 
+## [3.4.4] - 2026-09-15
+
+### ✨ setup return 块注释悬停 + 幽灵文本（Inlay Hint）
+
+- **修复上方 `//` 注释不生效**：Vue3 setup 中函数/变量只写「上方注释」时（如 `// 同步子账号选中项` + `const handleAccountSelection = (rows) => {}`），此前悬停只读行尾注释、读不到它；现在声明的注释提取为**行尾注释优先，其次紧邻上方的连续 // 注释块**（自动跳过 `#region`/`#endregion` 标记）。HTML 模板绑定（如 `@selection-change="handleAccountSelection"`）与 JS 内悬停都会显示该注释。
+- **JS 悬停优先展示 Vue 信息**：在 .dev.js 中悬停 `return { ... }` 块内函数/变量，优先展示 Vue Method/Data 完整信息（注释、类型、定义位置），未命中索引时才回退原有的 Local Symbol 提示（此前 Local Symbol 抢先返回，把注释吞掉了）。
+- **新增幽灵文本注释（Inlay Hint）**：Vue3 setup 的 `return { ... }` 块内各项（如 `subCount,`）后以幽灵文本显示其声明处注释；无注释不显示、项行内已有注释不重复；仅对 `.dev.js` 或包含 `createApp` 的 JS 文件生效。可通过配置 `leidong-tools.setupReturnInlayHints` 开关（默认开启）。
+- Vue 索引 schema 升级到 v3，旧缓存自动失效重建。
+
 ## [3.4.3] - 2026-08-06
 
 ### ✨ reactive 对象属性跳转 + 注释显示 + 测试体系

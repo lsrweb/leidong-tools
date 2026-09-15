@@ -157,15 +157,7 @@ export class VueHoverProvider implements vscode.HoverProvider {
                 }
             }
 
-            const localSymbol = await jsSymbolParser.findLocalSymbol(document, position, word);
-            if (localSymbol) {
-                return new vscode.Hover(
-                    new vscode.MarkdownString(`**Local Symbol**: ${word}\n\nScope: \`local\`\n\nDefined at ${document.uri.fsPath}:${localSymbol.range.start.line + 1}`),
-                    wordRange
-                );
-            }
-
-            // JS 文件：只读取当前文件已有 Vue 索引缓存
+            // JS 文件：优先 Vue 索引（setup return 块内函数/变量显示注释、类型与定义位置），未命中再回退本地符号
             let jsVueIndex: VueIndex | null = null;
             try {
                 jsVueIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
@@ -184,6 +176,14 @@ export class VueHoverProvider implements vscode.HoverProvider {
                     const hover = buildVueHover(def, jsVueIndex);
                     if (hover) { return hover; }
                 }
+            }
+
+            const localSymbol = await jsSymbolParser.findLocalSymbol(document, position, word);
+            if (localSymbol) {
+                return new vscode.Hover(
+                    new vscode.MarkdownString(`**Local Symbol**: ${word}\n\nScope: \`local\`\n\nDefined at ${document.uri.fsPath}:${localSymbol.range.start.line + 1}`),
+                    wordRange
+                );
             }
         }
 

@@ -72,6 +72,27 @@ const app = createApp({
         assert.strictEqual(loc.range.start.line, 3, '跳转落点应为 const 声明行');
     });
 
+    test('Vue3 setup：上方 // 注释作为 return 项的 doc（遇到 #region 停止收集）', () => {
+        const index = buildVueIndexForContent(
+            `createApp({
+  setup() {
+    // 同步子账号选中项
+    const handleAccountSelection = (rows) => { return rows }
+    // #region 统计
+    // 子账号可见素材数量
+    const subCount = ref(0)
+    const noDoc = ref(1)
+    return { handleAccountSelection, subCount, noDoc }
+  }
+})`,
+            uri,
+            0,
+        );
+        assert.strictEqual(index.methodMeta.get('handleAccountSelection')?.doc, '同步子账号选中项', '函数上方注释缺失');
+        assert.strictEqual(index.dataMeta.get('subCount')?.doc, '子账号可见素材数量', '常量上方注释应跳过 #region 标记');
+        assert.strictEqual(index.dataMeta.get('noDoc')?.doc, undefined, '无注释不应产生 doc');
+    });
+
     test('Vue3 setup 返回函数分类（不误入 data）', () => {
         const index = buildVueIndexForContent(
             `createApp({

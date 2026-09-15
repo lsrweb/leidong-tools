@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.4.3",
+  "version": "3.4.4",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -346,6 +346,11 @@
           "type": "boolean",
           "default": true,
           "description": "启用/关闭 Vue 模板诊断（未使用变量检测、模板表达式未定义变量警告）。关闭后不再显示 Hint 和 Warning 诊断。"
+        },
+        "leidong-tools.setupReturnInlayHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 Vue3 setup 的 return { } 块内，变量/函数后以幽灵文本（Inlay Hint）显示其声明处的注释（行尾注释优先，其次上方 // 注释）。仅对 .dev.js 或包含 createApp 的 JS 文件生效。"
         },
         "leidong-tools.rebuildOnSave": {
           "type": "boolean",
