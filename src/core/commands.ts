@@ -19,6 +19,7 @@ import { formatXTemplateSelectionOrFallback } from '../providers/xTemplateFormat
 import { refreshAllOpenVueDiagnostics, refreshVueDiagnostics } from '../providers/vueDiagnosticsProvider';
 import { refreshProviderConfiguration } from './providers';
 import { warmCssQuickIndexForDocument } from '../providers/cssIndexProvider';
+import { planSetupReturnExport } from '../parsers/setupReturnScanner';
 
 /**
  * 日志配置项接口 (用于 dotLogReplace 命令)
@@ -270,6 +271,59 @@ export function registerCommands(context: vscode.ExtensionContext): FileWatchMan
     context.subscriptions.push(
         vscode.commands.registerCommand(COMMANDS.LOG_SELECTED_VARIABLE, () => {
             logSelectedVariable();
+        })
+    );
+
+    // 注册「导出到 setup return」：把光标处的变量/函数快速加入 setup 的 return { } 块
+    // （按声明顺序插入、插入行始终带逗号、必要时补齐上一行逗号，避免语法错误）
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.exportToSetupReturn', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor || !['javascript', 'typescript', 'javascriptreact', 'typescriptreact'].includes(editor.document.languageId)) {
+                void vscode.window.showWarningMessage('请在 .dev.js（Vue3 页面）文件中使用「导出到 setup return」');
+                return;
+            }
+            const document = editor.document;
+            const position = editor.selection.active;
+            let symbol = '';
+            const wordRange = document.getWordRangeAtPosition(position);
+            if (wordRange) { symbol = document.getText(wordRange); }
+            if (!symbol) {
+                symbol = /^\s*(?:const|let|var|function|async\s+function)\s+([A-Za-z_$][\w$]*)/.exec(document.lineAt(position.line).text)?.[1] ?? '';
+            }
+            if (!symbol) {
+                void vscode.window.showWarningMessage('未识别到要导出的变量/函数，请把光标放在符号或声明行上');
+                return;
+            }
+            const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+            const plan = planSetupReturnExport(document.getText(), symbol, position.line, eol);
+            if (plan.kind === 'exists') {
+                void vscode.window.showInformationMessage(`${symbol} 已在 setup return 中导出（第 ${plan.line + 1} 行）`);
+                return;
+            }
+            if (plan.kind === 'not-declared') {
+                void vscode.window.showWarningMessage(`未找到 ${symbol} 的声明（需要 const/let/var/function 声明）`);
+                return;
+            }
+            if (plan.kind === 'no-return-block') {
+                void vscode.window.showWarningMessage('当前文件未找到 setup 的 return { } 块');
+                return;
+            }
+            const edit = new vscode.WorkspaceEdit();
+            if (plan.commaFixLine !== undefined) {
+                const commaLine = document.lineAt(plan.commaFixLine);
+                edit.insert(document.uri, new vscode.Position(plan.commaFixLine, commaLine.text.trimEnd().length), ',');
+            }
+            edit.insert(document.uri, new vscode.Position(plan.line, plan.character), plan.text);
+            await vscode.workspace.applyEdit(edit);
+            vscode.window.setStatusBarMessage(`已导出 ${symbol} 到 setup return`, 3000);
+        })
+    );
+
+    // 「设置导出快捷键」：打开键盘快捷方式编辑器并定位到导出命令，方便按个人习惯自定义按键
+    context.subscriptions.push(
+        vscode.commands.registerCommand('leidong-tools.changeExportToSetupReturnKey', () => {
+            void vscode.commands.executeCommand('workbench.action.openGlobalKeybindings', 'leidong-tools.exportToSetupReturn');
         })
     );
 

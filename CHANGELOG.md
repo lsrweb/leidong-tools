@@ -1,5 +1,15 @@
 # 更新日志 (Changelog)
 
+## [3.4.5] - 2026-09-15
+
+### ✨ 快捷导出到 setup return + Vue3 框架代码块 + 注释提取增强
+
+- **新增命令「导出到 setup return」**（`leidong-tools.exportToSetupReturn`）：光标放在 .dev.js 的变量/函数上（或声明行）即可一键加入 setup 的 `return { }` 块——按声明顺序插入（与 return 项顺序约定一致，实测落点在对应声明位置）、插入行始终带逗号、上一项缺逗号时自动补齐，应用后经 Babel 解析验证无语法错误；已导出 / 未声明 / 无 return 块均有明确提示。
+  - 默认快捷键 `Ctrl+Alt+R`（仅 .dev.js 生效）；命令面板中执行「设置「导出到 setup return」快捷键」会自动打开 VS Code 键盘快捷方式编辑器并定位到该命令，按个人习惯改任意按键；编辑器右键菜单同样可触发。
+- **新增 Vue3 框架快捷代码块**：在 .dev.js 中输入 `v3` 前缀快速生成项目标准结构——`v3page` 完整页面框架（依赖引入 + createApp/setup/return + 挂载）、`v3setup` createApp 骨架、`v3ref` / `v3reactive` / `v3computed` / `v3fn` 常用声明（自带 `// 说明` 注释占位）。
+- **悬停注释稳定性（索引按需构建）**：.dev.js / 含 createApp 的页面在悬停缺缓存时自动构建一次索引（与 HTML 侧外部文件构建行为对齐），保存后悬停不再退化为无注释的 Local Symbol 提示。
+- **注释提取增强**：多行声明的结尾行注释（如 `}; // 文件后缀对应图标`）现在也能被悬停与幽灵文本读取；Vue2 data 属性支持上方 `//` 注释。
+
 ## [3.4.4] - 2026-09-15
 
 ### ✨ setup return 块注释悬停 + 幽灵文本（Inlay Hint）

@@ -58,6 +58,7 @@ const xTemplateFormattingProvider_1 = __webpack_require__(183);
 const vueDiagnosticsProvider_1 = __webpack_require__(191);
 const providers_1 = __webpack_require__(193);
 const cssIndexProvider_1 = __webpack_require__(217);
+const setupReturnScanner_1 = __webpack_require__(221);
 /**
  * 注册所有命令
  */
@@ -211,6 +212,55 @@ function registerCommands(context) {
     // 注册选中变量快速日志命令
     context.subscriptions.push(vscode.commands.registerCommand(config_1.COMMANDS.LOG_SELECTED_VARIABLE, () => {
         (0, consoleLogger_1.logSelectedVariable)();
+    }));
+    // 注册「导出到 setup return」：把光标处的变量/函数快速加入 setup 的 return { } 块
+    // （按声明顺序插入、插入行始终带逗号、必要时补齐上一行逗号，避免语法错误）
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.exportToSetupReturn', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || !['javascript', 'typescript', 'javascriptreact', 'typescriptreact'].includes(editor.document.languageId)) {
+            void vscode.window.showWarningMessage('请在 .dev.js（Vue3 页面）文件中使用「导出到 setup return」');
+            return;
+        }
+        const document = editor.document;
+        const position = editor.selection.active;
+        let symbol = '';
+        const wordRange = document.getWordRangeAtPosition(position);
+        if (wordRange) {
+            symbol = document.getText(wordRange);
+        }
+        if (!symbol) {
+            symbol = /^\s*(?:const|let|var|function|async\s+function)\s+([A-Za-z_$][\w$]*)/.exec(document.lineAt(position.line).text)?.[1] ?? '';
+        }
+        if (!symbol) {
+            void vscode.window.showWarningMessage('未识别到要导出的变量/函数，请把光标放在符号或声明行上');
+            return;
+        }
+        const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+        const plan = (0, setupReturnScanner_1.planSetupReturnExport)(document.getText(), symbol, position.line, eol);
+        if (plan.kind === 'exists') {
+            void vscode.window.showInformationMessage(`${symbol} 已在 setup return 中导出（第 ${plan.line + 1} 行）`);
+            return;
+        }
+        if (plan.kind === 'not-declared') {
+            void vscode.window.showWarningMessage(`未找到 ${symbol} 的声明（需要 const/let/var/function 声明）`);
+            return;
+        }
+        if (plan.kind === 'no-return-block') {
+            void vscode.window.showWarningMessage('当前文件未找到 setup 的 return { } 块');
+            return;
+        }
+        const edit = new vscode.WorkspaceEdit();
+        if (plan.commaFixLine !== undefined) {
+            const commaLine = document.lineAt(plan.commaFixLine);
+            edit.insert(document.uri, new vscode.Position(plan.commaFixLine, commaLine.text.trimEnd().length), ',');
+        }
+        edit.insert(document.uri, new vscode.Position(plan.line, plan.character), plan.text);
+        await vscode.workspace.applyEdit(edit);
+        vscode.window.setStatusBarMessage(`已导出 ${symbol} 到 setup return`, 3000);
+    }));
+    // 「设置导出快捷键」：打开键盘快捷方式编辑器并定位到导出命令，方便按个人习惯自定义按键
+    context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.changeExportToSetupReturnKey', () => {
+        void vscode.commands.executeCommand('workbench.action.openGlobalKeybindings', 'leidong-tools.exportToSetupReturn');
     }));
     // 注册性能报告命令
     context.subscriptions.push(vscode.commands.registerCommand('leidong-tools.showPerformanceReport', async () => {
@@ -1595,7 +1645,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             return;
         }
         const makeLoc = (loc) => new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + loc.start.line - 1, loc.start.column), new vscode.Position(lineOffset + loc.end.line - 1, loc.end.column)));
-        // 声明注释：行尾注释（const x = ref(true) // 说明）优先；
+        // 声明注释：行尾注释优先（多行声明取结尾行，如 `} // 说明` 或 `}; // 说明`）；
         // 其次取紧邻声明上方的连续 // 注释块（.dev.js 中函数/方法常用上方注释说明），跳过 #region 标记
         const leadingDocForLine = (lineIndex) => {
             const collected = [];
@@ -1612,12 +1662,15 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             }
             return collected.length ? collected.join('\n') : undefined;
         };
-        const docForLine = (loc) => {
+        const docForLine = (loc, endLoc) => {
             if (!loc) {
                 return undefined;
             }
-            const lineIndex = loc.start.line - 1;
-            return getInlineLineComment(sourceLines[lineIndex] || '', loc.start.column) || leadingDocForLine(lineIndex);
+            const startIndex = loc.start.line - 1;
+            const endIndex = Math.max(startIndex, ((endLoc ?? loc).end?.line ?? loc.start.line) - 1);
+            const inline = getInlineLineComment(sourceLines[startIndex] || '', loc.start.column)
+                || (endIndex > startIndex ? getInlineLineComment(sourceLines[endIndex] || '') : undefined);
+            return inline || leadingDocForLine(startIndex);
         };
         for (const statement of body) {
             if (t.isVariableDeclaration(statement)) {
@@ -1628,7 +1681,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                     const name = declarator.id.name;
                     const kind = classifySetupValue(declarator.init);
                     const map = kind === 'methods' ? index.methods : kind === 'computed' ? index.computed : index.data;
-                    const doc = docForLine(declarator.id.loc);
+                    const doc = docForLine(declarator.id.loc, declarator.loc);
                     if (!map.has(name)) {
                         map.set(name, makeLoc(declarator.id.loc));
                     }
@@ -1682,7 +1735,7 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
             else if (t.isFunctionDeclaration(statement) && t.isIdentifier(statement.id) && statement.id.loc) {
                 if (!index.methods.has(statement.id.name)) {
                     index.methods.set(statement.id.name, makeLoc(statement.id.loc));
-                    const doc = docForLine(statement.id.loc);
+                    const doc = docForLine(statement.id.loc, statement.loc);
                     if (doc && index.methodMeta && !index.methodMeta.has(statement.id.name)) {
                         index.methodMeta.set(statement.id.name, { params: [], doc });
                     }
@@ -1770,7 +1823,8 @@ function buildVueIndex(jsContent, uri, baseLine = 0) {
                 }
                 const loc = new vscode.Location(uri, new vscode.Range(new vscode.Position(lineOffset + propLoc.start.line - 1, propLoc.start.column), new vscode.Position(lineOffset + propLoc.end.line - 1, propLoc.end.column)));
                 dest.set(name, loc);
-                const doc = getDocForDataProperty(prop);
+                // 数据属性注释：行尾注释优先，其次属性上方的 // 注释（兼容 Vue2 data 属性写法）
+                const doc = getDocForDataProperty(prop) || getDocFromProp(prop);
                 const initInfo = inferDataType(prop.value);
                 if (destMeta && !destMeta.has(name)) {
                     destMeta.set(name, { doc: doc || undefined, ...initInfo });
@@ -50743,6 +50797,7 @@ const cssIndexProvider_1 = __webpack_require__(217);
 const xTemplateHtmlCompletionProvider_1 = __webpack_require__(218);
 const todoHighlightProvider_1 = __webpack_require__(219);
 const setupReturnInlayHints_1 = __webpack_require__(220);
+const vue3SnippetProvider_1 = __webpack_require__(222);
 let refreshProviderConfigurationImpl;
 function refreshProviderConfiguration() {
     refreshProviderConfigurationImpl?.();
@@ -50817,6 +50872,8 @@ function registerProviders(context, fileWatchManager) {
     ], new completionProvider_1.VonCompletionProvider()
     // 不设置 trigger characters，仅在用户主动请求补全（如输入 von 后按 Ctrl+Space）时触发
     ));
+    // 注册 Vue3 页面（.dev.js）框架快捷代码块：输入 v3 前缀生成项目标准结构
+    context.subscriptions.push(vscode.languages.registerCompletionItemProvider(config_1.FILE_SELECTORS.JAVASCRIPT_ONLY, new vue3SnippetProvider_1.Vue3SnippetCompletionProvider()));
     let outlineRegistration;
     let referenceRegistration;
     let codeLensRegistration;
@@ -52968,6 +53025,12 @@ const templateLiteralHelper_1 = __webpack_require__(200);
 const codeLensProvider_1 = __webpack_require__(202);
 const path = __importStar(__webpack_require__(3));
 const fs = __importStar(__webpack_require__(178));
+/** 索引是否为空（无任何 Vue 成员），用于判断是否需要按需构建/回退。 */
+function isEmptyVueIndex(index) {
+    return !index
+        || (index.data.size === 0 && index.methods.size === 0 && index.computed.size === 0
+            && index.mixinData.size === 0 && index.mixinMethods.size === 0);
+}
 class VueHoverProvider {
     provideHover(document, position, token) {
         return new Promise((resolve) => {
@@ -53146,15 +53209,18 @@ class VueHoverProvider {
             // JS 文件：优先 Vue 索引（setup return 块内函数/变量显示注释、类型与定义位置），未命中再回退本地符号
             let jsVueIndex = null;
             try {
-                jsVueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(document.getText(), document.uri, 0);
+                const content = document.getText();
+                jsVueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
+                // .dev.js / createApp 页面：缺缓存时按需构建一次（与 HTML 侧外部文件构建行为对齐），之后命中 LRU 缓存
+                if (isEmptyVueIndex(jsVueIndex) && (path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js') || content.includes('createApp'))) {
+                    jsVueIndex = (0, parseDocument_1.buildVueIndexForContent)(content, document.uri, 0);
+                }
+                // 回退：仍为空时通过关联 HTML 间接获取
+                if (isEmptyVueIndex(jsVueIndex)) {
+                    jsVueIndex = this.resolveVueIndexForJsViaHtml(document) || jsVueIndex;
+                }
             }
             catch { /* ignore parse errors */ }
-            // 回退：VueIndex 为空时通过关联 HTML 间接获取
-            if (jsVueIndex && jsVueIndex.data.size === 0 && jsVueIndex.methods.size === 0
-                && jsVueIndex.computed.size === 0 && jsVueIndex.mixinData.size === 0
-                && jsVueIndex.mixinMethods.size === 0) {
-                jsVueIndex = this.resolveVueIndexForJsViaHtml(document) || jsVueIndex;
-            }
             if (jsVueIndex) {
                 const def = (0, parseDocument_1.findDefinitionInIndex)(word, jsVueIndex);
                 if (def) {
@@ -58954,17 +59020,23 @@ exports.SetupReturnInlayHintsProvider = SetupReturnInlayHintsProvider;
 "use strict";
 
 /**
- * Vue3 setup `return { ... }` 块注释扫描（Inlay Hint 幽灵文本数据源）。
+ * Vue3 setup `return { ... }` 块扫描（Inlay Hint 幽灵文本 + 快捷导出共用的纯文本分析）。
  *
- * 纯文本扫描、不依赖 Babel/索引缓存，保证索引未构建时幽灵文本依然可用：
- * - 定位 `return { ... }` 块（花括号配平，仅收集顶层单行 shorthand 项，如 `subCount,`）；
- * - 按最接近的 `const/let/var` 或 `function` 声明找注释：行尾注释优先，其次紧邻上方的连续 // 注释块。
+ * 不依赖 Babel/索引缓存：
+ * - 定位 `return { ... }` 块（花括号配平）与块内顶层 return 项；
+ * - 声明注释：行尾注释优先（含多行声明的结尾行），其次紧邻上方的连续 // 注释块；
+ * - 快捷导出：按声明顺序计算插入位置，插入行始终带逗号、必要时自动补齐上一行逗号，避免语法错误。
  */
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.inlineCommentOf = inlineCommentOf;
+exports.findSetupReturnBlocks = findSetupReturnBlocks;
+exports.collectSetupReturnItems = collectSetupReturnItems;
 exports.commentForDeclarationLine = commentForDeclarationLine;
+exports.findDeclarationLine = findDeclarationLine;
 exports.scanSetupReturnHints = scanSetupReturnHints;
+exports.planSetupReturnExport = planSetupReturnExport;
 const MAX_LEADING_COMMENT_LINES = 5;
+const MAX_STATEMENT_LINES = 300;
 /** 提取行内 `//` 注释（跳过字符串/模板串；与 parseDocument 的行尾注释语义一致）。 */
 function inlineCommentOf(line, startIndex = 0) {
     let inSingle = false;
@@ -59023,11 +59095,99 @@ function inlineCommentOf(line, startIndex = 0) {
     }
     return undefined;
 }
-/** 声明处注释：行尾注释优先；无行尾注释时向上收集紧邻的连续 // 注释块（跳过 #region/#endregion 标记）。 */
+/** 行首缩进宽度（用于区分嵌套函数内的同名局部声明）。 */
+function indentOf(line) {
+    const match = /^[ \t]*/.exec(line);
+    return match ? match[0].length : 0;
+}
+/** 花括号增量（块内为扁平列表，直接计数即可；注释行由调用方跳过）。 */
+function braceDelta(line) {
+    let delta = 0;
+    for (const ch of line) {
+        if (ch === '{') {
+            delta++;
+        }
+        else if (ch === '}') {
+            delta--;
+        }
+    }
+    return delta;
+}
+/** 定位文件中所有 `return { ... }` 块（纯注释行不参与配平）。 */
+function findSetupReturnBlocks(lines) {
+    const blocks = [];
+    let line = 0;
+    while (line < lines.length) {
+        if (!/^\s*return\s*\{/.test(lines[line])) {
+            line++;
+            continue;
+        }
+        let depth = 0;
+        let end = line;
+        for (let i = line; i < lines.length; i++) {
+            if (i !== line && /^\s*\/\//.test(lines[i])) {
+                continue;
+            }
+            depth += braceDelta(lines[i]);
+            if (depth <= 0) {
+                end = i;
+                break;
+            }
+        }
+        blocks.push({ start: line, end });
+        line = end + 1;
+    }
+    return blocks;
+}
+/** 收集块内的 return 项（shorthand 与 key: value 都识别，用于“已导出”判断与按声明顺序插入）。 */
+function collectSetupReturnItems(lines, block) {
+    const items = [];
+    let depth = braceDelta(lines[block.start]);
+    for (let i = block.start + 1; i < block.end; i++) {
+        const delta = braceDelta(lines[i]);
+        if (depth === 1 && delta === 0) {
+            const match = /^([A-Za-z_$][\w$]*)\s*(?::[^,]*)?,?$/.exec(lines[i].trim());
+            if (match) {
+                items.push({ name: match[1], line: i });
+            }
+        }
+        depth += delta;
+    }
+    return items;
+}
+/** 多行声明的结尾行：从声明行起做括号/花括号/中括号配平，返回闭合行（单行声明返回自身）。 */
+function findStatementEndLine(lines, startLine) {
+    let depth = 0;
+    for (let i = startLine; i < lines.length && i - startLine <= MAX_STATEMENT_LINES; i++) {
+        for (const ch of lines[i]) {
+            if (ch === '{' || ch === '(' || ch === '[') {
+                depth++;
+            }
+            else if (ch === '}' || ch === ')' || ch === ']') {
+                depth--;
+            }
+        }
+        if (depth <= 0) {
+            return i;
+        }
+    }
+    return startLine;
+}
+/**
+ * 声明处注释：行尾注释优先（多行声明取结尾行，如 `}; // 说明`）；
+ * 其次向上收集紧邻的连续 // 注释块（跳过 #region/#endregion 标记）。
+ */
 function commentForDeclarationLine(lines, lineIndex) {
     const inline = inlineCommentOf(lines[lineIndex] || '');
     if (inline) {
         return inline;
+    }
+    const endLine = findStatementEndLine(lines, lineIndex);
+    if (endLine > lineIndex) {
+        const endInline = inlineCommentOf(lines[endLine] || '');
+        if (endInline) {
+            return endInline;
+        }
     }
     const collected = [];
     for (let i = lineIndex - 1; i >= 0 && collected.length < MAX_LEADING_COMMENT_LINES; i--) {
@@ -59043,27 +59203,22 @@ function commentForDeclarationLine(lines, lineIndex) {
     }
     return collected.length ? collected.join(' ') : undefined;
 }
-/** 行首缩进宽度（用于区分嵌套函数内的同名局部声明）。 */
-function indentOf(line) {
-    const match = /^[ \t]*/.exec(line);
-    return match ? match[0].length : 0;
-}
 /**
- * 定位声明行：只接受比 return 项更外层（缩进更浅）的声明，避免被函数体内的同名局部变量抢先；
- * 同层取最接近的，优先向上查找、找不到再向下。
+ * 定位声明行：只接受比参照点更外层（缩进更浅）的声明，避免被函数体内的同名局部变量抢先；
+ * 同层取最接近的；从 fromLine 起向上查找，找不到再向下。
  */
-function findDeclarationLine(lines, name, itemLine) {
+function findDeclarationLine(lines, name, fromLine, referenceIndent) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = new RegExp(`^\\s*(?:(?:const|let|var)\\s+${escaped}\\b|(?:async\\s+)?function\\s+${escaped}\\b)`);
-    const itemIndent = indentOf(lines[itemLine]);
+    const limit = referenceIndent ?? indentOf(lines[fromLine] || '');
     let best = -1;
     let bestIndent = Number.MAX_SAFE_INTEGER;
-    for (let i = itemLine - 1; i >= 0; i--) {
+    for (let i = Math.min(fromLine, lines.length - 1); i >= 0; i--) {
         if (!pattern.test(lines[i])) {
             continue;
         }
         const indent = indentOf(lines[i]);
-        if (indent >= itemIndent) {
+        if (indent >= limit) {
             continue;
         }
         if (indent < bestIndent) {
@@ -59074,25 +59229,12 @@ function findDeclarationLine(lines, name, itemLine) {
     if (best >= 0) {
         return best;
     }
-    for (let i = itemLine + 1; i < lines.length; i++) {
-        if (pattern.test(lines[i]) && indentOf(lines[i]) < itemIndent) {
+    for (let i = fromLine + 1; i < lines.length; i++) {
+        if (pattern.test(lines[i]) && indentOf(lines[i]) < limit) {
             return i;
         }
     }
     return -1;
-}
-/** 花括号增量（return 块为扁平标识符列表，直接计数即可；注释行由调用方跳过）。 */
-function braceDelta(line) {
-    let delta = 0;
-    for (const ch of line) {
-        if (ch === '{') {
-            delta++;
-        }
-        else if (ch === '}') {
-            delta--;
-        }
-    }
-    return delta;
 }
 /**
  * 扫描全部 `return { ... }` 块，为顶层单行 shorthand 项生成幽灵文本注释。
@@ -59101,28 +59243,9 @@ function braceDelta(line) {
 function scanSetupReturnHints(text) {
     const lines = text.split(/\r?\n/);
     const hints = [];
-    let line = 0;
-    while (line < lines.length) {
-        if (!/^\s*return\s*\{/.test(lines[line])) {
-            line++;
-            continue;
-        }
-        // 花括号配平求块尾（纯注释行不参与配平）
-        let depth = 0;
-        let end = line;
-        for (let i = line; i < lines.length; i++) {
-            if (i !== line && /^\s*\/\//.test(lines[i])) {
-                continue;
-            }
-            depth += braceDelta(lines[i]);
-            if (depth <= 0) {
-                end = i;
-                break;
-            }
-        }
-        // 仅收集 depth 恰为 1 的顶层单行 shorthand 项
-        depth = braceDelta(lines[line]);
-        for (let i = line + 1; i < end; i++) {
+    for (const block of findSetupReturnBlocks(lines)) {
+        let depth = braceDelta(lines[block.start]);
+        for (let i = block.start + 1; i < block.end; i++) {
             const delta = braceDelta(lines[i]);
             if (depth === 1 && delta === 0) {
                 const match = /^([A-Za-z_$][\w$]*)\s*,?$/.exec(lines[i].trim());
@@ -59136,10 +59259,208 @@ function scanSetupReturnHints(text) {
             }
             depth += delta;
         }
-        line = end + 1;
     }
     return hints;
 }
+/**
+ * 计算“导出到 setup return”的插入计划（纯函数）。
+ * - 目标块取文件中最后一个 `return { ... }`（.dev.js 约定：setup 的 return 位于文件末尾）；
+ * - 已导出 → exists；未找到声明 → not-declared；无 return 块 → no-return-block；
+ * - 插入按声明顺序（与 return 项顺序约定一致），插入行始终以逗号结尾；
+ *   插入点上一行缺逗号时通过 commaFixLine 补上，避免语法错误；
+ * - 单行块（`return { a, b };`）退化为行内插入。
+ */
+function planSetupReturnExport(text, symbolName, cursorLine, eol = '\n') {
+    const lines = text.split(/\r?\n/);
+    const blocks = findSetupReturnBlocks(lines);
+    const block = blocks.length ? blocks[blocks.length - 1] : undefined;
+    if (!block) {
+        return { kind: 'no-return-block' };
+    }
+    const items = collectSetupReturnItems(lines, block);
+    const itemIndent = items.length ? indentOf(lines[items[0].line]) : indentOf(lines[block.start] || '') + 1;
+    const declarationLine = findDeclarationLine(lines, symbolName, cursorLine, itemIndent);
+    if (declarationLine < 0) {
+        return { kind: 'not-declared' };
+    }
+    const existing = items.find(item => item.name === symbolName);
+    if (existing) {
+        return { kind: 'exists', line: existing.line };
+    }
+    // 单行 return 块：在 `return` 后的 `{` 之后行内插入（已有项时带逗号，空块不带）
+    if (block.end === block.start) {
+        const source = lines[block.start] || '';
+        const returnIndex = source.indexOf('return');
+        const braceIndex = returnIndex >= 0 ? source.indexOf('{', returnIndex) : -1;
+        if (braceIndex < 0) {
+            return { kind: 'no-return-block' };
+        }
+        const closeIndex = source.indexOf('}', braceIndex + 1);
+        const inner = closeIndex > braceIndex ? source.slice(braceIndex + 1, closeIndex) : '';
+        if (new RegExp(`(?:^|[{,])\\s*${symbolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?=[,}])`).test(inner)) {
+            return { kind: 'exists', line: block.start };
+        }
+        return { kind: 'insert', line: block.start, character: braceIndex + 1, text: inner.trim().length > 0 ? ` ${symbolName},` : ` ${symbolName} ` };
+    }
+    const indent = items.length
+        ? /^[ \t]*/.exec(lines[items[0].line])?.[0] ?? '\t'
+        : `${/^[ \t]*/.exec(lines[block.start] || '')?.[0] ?? ''}\t`;
+    // 按声明顺序：插到最后一个“声明位于新符号之前”的项之后；无法定位时插到列表最前
+    let insertLine = items.length ? items[0].line : block.start + 1;
+    for (const item of items) {
+        const itemDeclaration = findDeclarationLine(lines, item.name, item.line, itemIndent);
+        if (itemDeclaration >= 0 && itemDeclaration < declarationLine) {
+            insertLine = item.line + 1;
+        }
+    }
+    // 上一行缺逗号时补一个（如最后一项写作 `lastItem` 无逗号的风格）
+    let commaFixLine;
+    let previous = insertLine - 1;
+    while (previous > block.start) {
+        const trimmed = (lines[previous] || '').trim();
+        if (!trimmed || trimmed.startsWith('//')) {
+            previous--;
+            continue;
+        }
+        break;
+    }
+    if (previous > block.start) {
+        const trimmed = (lines[previous] || '').trimEnd();
+        if (trimmed && !trimmed.endsWith(',')) {
+            commaFixLine = previous;
+        }
+    }
+    return { kind: 'insert', line: insertLine, character: 0, text: `${indent}${symbolName},${eol}`, commaFixLine };
+}
+
+
+/***/ }),
+/* 222 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.Vue3SnippetCompletionProvider = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const path = __importStar(__webpack_require__(3));
+/**
+ * Vue3 页面（.dev.js）框架快捷代码块：输入 `v3` 前缀快速生成项目标准结构。
+ * 仅在 .dev.js 文件中生效（CDN 写法：Vue3.createApp + EPS.ElementPlus）。
+ */
+class Vue3SnippetCompletionProvider {
+    provideCompletionItems(document, position, token) {
+        if (token.isCancellationRequested) {
+            return [];
+        }
+        if (!path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js')) {
+            return [];
+        }
+        const textBefore = document.lineAt(position).text.substring(0, position.character);
+        const match = /(?:^|[^A-Za-z0-9_$])(v3[a-z]*)$/.exec(textBefore);
+        if (!match) {
+            return [];
+        }
+        const range = new vscode.Range(position.translate(0, -match[1].length), position);
+        const make = (label, prefix, detail, body, sort) => {
+            const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Snippet);
+            item.detail = `雷动三千 · ${detail}`;
+            item.insertText = new vscode.SnippetString(body.join('\n'));
+            item.filterText = prefix;
+            item.sortText = sort;
+            item.range = range;
+            return item;
+        };
+        return [
+            make('Vue3 页面完整框架 (v3page)', 'v3page', 'Vue3 页面框架（依赖引入 + createApp + 挂载）', [
+                'const computed = Vue3.computed;',
+                'const createApp = Vue3.createApp;',
+                'const onMounted = Vue3.onMounted;',
+                'const nextTick = Vue3.nextTick;',
+                'const reactive = Vue3.reactive;',
+                'const ref = Vue3.ref;',
+                'const watch = Vue3.watch;',
+                'const ElMessage = EPS.ElMessage;',
+                'const ElMessageBox = EPS.ElMessageBox;',
+                '',
+                'const app = createApp({',
+                '\tsetup: function () {',
+                '\t\t${1}',
+                '\t\treturn {',
+                '\t\t};',
+                '\t},',
+                '});',
+                '',
+                'app.use(ElementPlus);',
+                'if (!app.component("ElpQuery")) app.component("ElpQuery", EPS.ElQuery);',
+                'if (!app.component("ElpQueryItem")) app.component("ElpQueryItem", EPS.ElQueryItem);',
+                'app.component("comm-tips", window.CommTipsVue3);',
+                'app.mount("#${2:app-id}");',
+            ], '0001'),
+            make('Vue3 createApp + setup (v3setup)', 'v3setup', 'Vue3 createApp/setup 骨架', [
+                'const app = createApp({',
+                '\tsetup: function () {',
+                '\t\t$0',
+                '\t\treturn {',
+                '\t\t};',
+                '\t},',
+                '});',
+            ], '0002'),
+            make('ref 变量 (v3ref)', 'v3ref', 'ref 变量声明', [
+                'const ${1:name} = ref(${2:null}); // ${3:说明}',
+            ], '0003'),
+            make('reactive 变量 (v3reactive)', 'v3reactive', 'reactive 对象声明', [
+                'const ${1:name} = reactive({',
+                '\t${2:field}: ${3:""}, $0',
+                '}); // ${4:说明}',
+            ], '0004'),
+            make('computed 计算属性 (v3computed)', 'v3computed', 'computed 计算属性', [
+                'const ${1:name} = computed(() => {',
+                '\t$0',
+                '}); // ${2:说明}',
+            ], '0005'),
+            make('方法 (v3fn)', 'v3fn', '函数/方法声明', [
+                'const ${1:name} = (${2:params}) => {',
+                '\t$0',
+                '}; // ${3:说明}',
+            ], '0006'),
+        ];
+    }
+}
+exports.Vue3SnippetCompletionProvider = Vue3SnippetCompletionProvider;
 
 
 /***/ })

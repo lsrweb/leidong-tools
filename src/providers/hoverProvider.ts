@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, findDefinitionInIndex, getCachedVueIndexForContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, findDefinitionInIndex, getCachedVueIndexForContent, buildVueIndexForContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
@@ -8,6 +8,13 @@ import { getTemplateLiteralAtPosition } from '../helpers/templateLiteralHelper';
 import { getRefCountAtLine } from './codeLensProvider';
 import * as path from 'path';
 import * as fs from 'fs';
+
+/** 索引是否为空（无任何 Vue 成员），用于判断是否需要按需构建/回退。 */
+function isEmptyVueIndex(index: VueIndex | null): boolean {
+    return !index
+        || (index.data.size === 0 && index.methods.size === 0 && index.computed.size === 0
+            && index.mixinData.size === 0 && index.mixinMethods.size === 0);
+}
 
 export class VueHoverProvider implements vscode.HoverProvider {
     provideHover(document: vscode.TextDocument, position: vscode.Position, token: vscode.CancellationToken): Promise<vscode.Hover | null> {
@@ -160,15 +167,17 @@ export class VueHoverProvider implements vscode.HoverProvider {
             // JS 文件：优先 Vue 索引（setup return 块内函数/变量显示注释、类型与定义位置），未命中再回退本地符号
             let jsVueIndex: VueIndex | null = null;
             try {
-                jsVueIndex = getCachedVueIndexForContent(document.getText(), document.uri, 0);
+                const content = document.getText();
+                jsVueIndex = getCachedVueIndexForContent(content, document.uri, 0);
+                // .dev.js / createApp 页面：缺缓存时按需构建一次（与 HTML 侧外部文件构建行为对齐），之后命中 LRU 缓存
+                if (isEmptyVueIndex(jsVueIndex) && (path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js') || content.includes('createApp'))) {
+                    jsVueIndex = buildVueIndexForContent(content, document.uri, 0);
+                }
+                // 回退：仍为空时通过关联 HTML 间接获取
+                if (isEmptyVueIndex(jsVueIndex)) {
+                    jsVueIndex = this.resolveVueIndexForJsViaHtml(document) || jsVueIndex;
+                }
             } catch { /* ignore parse errors */ }
-
-            // 回退：VueIndex 为空时通过关联 HTML 间接获取
-            if (jsVueIndex && jsVueIndex.data.size === 0 && jsVueIndex.methods.size === 0
-                && jsVueIndex.computed.size === 0 && jsVueIndex.mixinData.size === 0
-                && jsVueIndex.mixinMethods.size === 0) {
-                jsVueIndex = this.resolveVueIndexForJsViaHtml(document) || jsVueIndex;
-            }
 
             if (jsVueIndex) {
                 const def = findDefinitionInIndex(word, jsVueIndex);

@@ -93,6 +93,40 @@ const app = createApp({
         assert.strictEqual(index.dataMeta.get('noDoc')?.doc, undefined, '无注释不应产生 doc');
     });
 
+    test('Vue3 setup：多行声明结尾行的行尾注释也能作为 doc', () => {
+        const index = buildVueIndexForContent(
+            `createApp({
+  setup() {
+    const fileTypeIcons = {
+      xls: 'xls.png'
+    }; // 文件后缀对应图标
+    return { fileTypeIcons }
+  }
+})`,
+            uri,
+            0,
+        );
+        assert.strictEqual(index.dataMeta.get('fileTypeIcons')?.doc, '文件后缀对应图标', '多行声明结尾行注释缺失');
+    });
+
+    test('Vue2 data：属性上方的 // 注释作为 doc', () => {
+        const index = buildVueIndexForContent(
+            `new Vue({
+  data() {
+    return {
+      // 标题文案
+      title: 'hello',
+      count: 0 // 计数
+    }
+  }
+})`,
+            uri,
+            0,
+        );
+        assert.strictEqual(index.dataMeta.get('title')?.doc, '标题文案', 'data 属性上方注释缺失');
+        assert.strictEqual(index.dataMeta.get('count')?.doc, '计数', 'data 属性行尾注释缺失');
+    });
+
     test('Vue3 setup 返回函数分类（不误入 data）', () => {
         const index = buildVueIndexForContent(
             `createApp({

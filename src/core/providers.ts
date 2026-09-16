@@ -29,6 +29,7 @@ import { CssQuickIndexCompletionProvider, clearCssQuickIndexCache, warmCssQuickI
 import { XTemplateHtmlCompletionProvider } from '../providers/xTemplateHtmlCompletionProvider';
 import { TodoHighlightProvider } from '../providers/todoHighlightProvider';
 import { SetupReturnInlayHintsProvider } from '../providers/setupReturnInlayHints';
+import { Vue3SnippetCompletionProvider } from '../providers/vue3SnippetProvider';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -157,6 +158,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
             ],
             new VonCompletionProvider()
             // 不设置 trigger characters，仅在用户主动请求补全（如输入 von 后按 Ctrl+Space）时触发
+        )
+    );
+
+    // 注册 Vue3 页面（.dev.js）框架快捷代码块：输入 v3 前缀生成项目标准结构
+    context.subscriptions.push(
+        vscode.languages.registerCompletionItemProvider(
+            FILE_SELECTORS.JAVASCRIPT_ONLY,
+            new Vue3SnippetCompletionProvider()
         )
     );
 

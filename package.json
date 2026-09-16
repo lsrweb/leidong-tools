@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.4.4",
+  "version": "3.4.5",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -148,6 +148,16 @@
       {
         "command": "leidong-tools.buildCurrentVueIndex",
         "title": "构建索引",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.exportToSetupReturn",
+        "title": "导出到 setup return（雷动三千）",
+        "category": "雷动三千工具集"
+      },
+      {
+        "command": "leidong-tools.changeExportToSetupReturnKey",
+        "title": "设置「导出到 setup return」快捷键（雷动三千）",
         "category": "雷动三千工具集"
       },
       {
@@ -370,7 +380,7 @@
             "文件保存后构建当前文件索引，不在编辑中构建。",
             "按固定间隔构建可见且未修改的文件索引。"
           ],
-          "description": "Vue 索引构建时机。默认 manual，所有语言功能只读取已有缓存，不会因为打开、切换、补全、Hover、诊断而自动构建。"
+          "description": "Vue 索引构建时机。默认 manual，语言功能只读取已有缓存，不会因为打开、切换、补全、Hover、诊断而自动构建（例外：.dev.js / 含 createApp 的页面在 Hover 缺缓存时会按需构建一次，保证注释与跳转可用）。"
         },
         "leidong-tools.indexBuildIntervalMinutes": {
           "type": "number",
@@ -541,6 +551,12 @@
         "when": "editorHasSelection"
       },
       {
+        "command": "leidong-tools.exportToSetupReturn",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorTextFocus && resourceFilename =~ /\\.dev\\.js$/"
+      },
+      {
         "command": "leidong-tools.buildCurrentVueIndex",
         "key": "ctrl+alt+i",
         "mac": "cmd+alt+i",
@@ -624,6 +640,11 @@
           "command": "leidong-tools.buildCurrentVueIndex",
           "when": "editorLangId == html || editorLangId == javascript || editorLangId == typescript || editorLangId == javascriptreact || editorLangId == typescriptreact || editorLangId == vue",
           "group": "leidong-tools@4"
+        },
+        {
+          "command": "leidong-tools.exportToSetupReturn",
+          "when": "resourceFilename =~ /\\.dev\\.js$/",
+          "group": "leidong-tools@6"
         },
         {
           "command": "leidong-tools.formatXTemplateSelection",

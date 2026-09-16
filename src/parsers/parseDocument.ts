@@ -345,7 +345,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             new vscode.Position(lineOffset + loc.start.line - 1, loc.start.column),
             new vscode.Position(lineOffset + loc.end.line - 1, loc.end.column)
         ));
-        // 声明注释：行尾注释（const x = ref(true) // 说明）优先；
+        // 声明注释：行尾注释优先（多行声明取结尾行，如 `} // 说明` 或 `}; // 说明`）；
         // 其次取紧邻声明上方的连续 // 注释块（.dev.js 中函数/方法常用上方注释说明），跳过 #region 标记
         const leadingDocForLine = (lineIndex: number): string | undefined => {
             const collected: string[] = [];
@@ -358,10 +358,13 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             }
             return collected.length ? collected.join('\n') : undefined;
         };
-        const docForLine = (loc: t.SourceLocation | null | undefined): string | undefined => {
+        const docForLine = (loc: t.SourceLocation | null | undefined, endLoc?: t.SourceLocation | null): string | undefined => {
             if (!loc) { return undefined; }
-            const lineIndex = loc.start.line - 1;
-            return getInlineLineComment(sourceLines[lineIndex] || '', loc.start.column) || leadingDocForLine(lineIndex);
+            const startIndex = loc.start.line - 1;
+            const endIndex = Math.max(startIndex, ((endLoc ?? loc).end?.line ?? loc.start.line) - 1);
+            const inline = getInlineLineComment(sourceLines[startIndex] || '', loc.start.column)
+                || (endIndex > startIndex ? getInlineLineComment(sourceLines[endIndex] || '') : undefined);
+            return inline || leadingDocForLine(startIndex);
         };
         for (const statement of body) {
             if (t.isVariableDeclaration(statement)) {
@@ -370,7 +373,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     const name = declarator.id.name;
                     const kind = classifySetupValue(declarator.init);
                     const map = kind === 'methods' ? index.methods : kind === 'computed' ? index.computed : index.data;
-                    const doc = docForLine(declarator.id.loc);
+                    const doc = docForLine(declarator.id.loc, declarator.loc);
                     if (!map.has(name)) {
                         map.set(name, makeLoc(declarator.id.loc!));
                     }
@@ -411,7 +414,7 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
             } else if (t.isFunctionDeclaration(statement) && t.isIdentifier(statement.id) && statement.id.loc) {
                 if (!index.methods.has(statement.id.name)) {
                     index.methods.set(statement.id.name, makeLoc(statement.id.loc!));
-                    const doc = docForLine(statement.id.loc);
+                    const doc = docForLine(statement.id.loc, statement.loc);
                     if (doc && index.methodMeta && !index.methodMeta.has(statement.id.name)) {
                         index.methodMeta.set(statement.id.name, { params: [], doc });
                     }
@@ -481,7 +484,8 @@ function buildVueIndex(jsContent: string, uri: vscode.Uri, baseLine = 0): VueInd
                     new vscode.Position(lineOffset + propLoc.end.line - 1, propLoc.end.column)
                 ));
                 dest.set(name, loc);
-                const doc = getDocForDataProperty(prop);
+                // 数据属性注释：行尾注释优先，其次属性上方的 // 注释（兼容 Vue2 data 属性写法）
+                const doc = getDocForDataProperty(prop) || getDocFromProp(prop);
                 const initInfo = inferDataType(prop.value);
                 if (destMeta && !destMeta.has(name)) {
                     destMeta.set(name, { doc: doc || undefined, ...initInfo });
