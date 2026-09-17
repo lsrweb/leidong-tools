@@ -1,5 +1,5 @@
 import { buildAndCacheTemplateIndex, removeTemplateIndex, pruneTemplateIndex, recreateTemplateIndexCache } from '../finders/templateIndexer';
-import { buildVueIndexForContent, removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache, resolveVueIndexForHtml } from '../parsers/parseDocument';
+import { buildVueIndexForContent, removeVueIndexForUri, recreateVueIndexCache, pruneVueIndexCache, resolveVueIndexForHtml, getCachedVueIndex, looksLikeVueDocument } from '../parsers/parseDocument';
 import * as vscode from 'vscode';
 
 type IndexBuildMode = 'manual' | 'onSave' | 'interval';
@@ -76,6 +76,21 @@ export function registerIndexLifecycle(context: vscode.ExtensionContext) {
             buildVueRelatedIndexesForDocument(doc);
         }
     }));
+
+    // 打开 / 切换到 Vue 页面或组件文件（.dev.js、createApp、new Vue、Vue.extend、Vue-like 组件对象）时自动构建一次索引，
+    // 不再需要手动执行"构建索引"；已有缓存（保存前）直接跳过，避免切换标签页时重复解析。
+    const buildIndexWhenEnterVueFile = (document: vscode.TextDocument | undefined): void => {
+        if (!document || document.uri.scheme !== 'file') { return; }
+        if (document.languageId !== 'javascript' && document.languageId !== 'typescript'
+            && document.languageId !== 'javascriptreact' && document.languageId !== 'typescriptreact') { return; }
+        if (getCachedVueIndex(document.uri)) { return; }
+        if (!looksLikeVueDocument(document.getText(), document.uri.fsPath)) { return; }
+        buildVueRelatedIndexesForDocument(document);
+    };
+    disposables.push(vscode.workspace.onDidOpenTextDocument(buildIndexWhenEnterVueFile));
+    disposables.push(vscode.window.onDidChangeActiveTextEditor(editor => buildIndexWhenEnterVueFile(editor?.document)));
+    // 扩展激活时已打开并处于活动状态的 Vue 组件文件补建一次
+    buildIndexWhenEnterVueFile(vscode.window.activeTextEditor?.document);
 
     function resetIntervalBuild() {
         if (intervalTimer) {

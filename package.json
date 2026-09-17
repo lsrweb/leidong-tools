@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.4.5",
+  "version": "3.4.7",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -362,6 +362,11 @@
           "default": true,
           "description": "在 Vue3 setup 的 return { } 块内，变量/函数后以幽灵文本（Inlay Hint）显示其声明处的注释（行尾注释优先，其次上方 // 注释）。仅对 .dev.js 或包含 createApp 的 JS 文件生效。"
         },
+        "leidong-tools.enableWorkspaceReferences": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用/关闭跨文件引用（Shift+F12「查找所有引用」）：在工作区内搜索当前符号的全部出现（全局组件、页面方法、工具函数等），自动排除 node_modules / dist / out / .vscode-test 等目录。"
+        },
         "leidong-tools.rebuildOnSave": {
           "type": "boolean",
           "default": false,
@@ -380,7 +385,7 @@
             "文件保存后构建当前文件索引，不在编辑中构建。",
             "按固定间隔构建可见且未修改的文件索引。"
           ],
-          "description": "Vue 索引构建时机。默认 manual，语言功能只读取已有缓存，不会因为打开、切换、补全、Hover、诊断而自动构建（例外：.dev.js / 含 createApp 的页面在 Hover 缺缓存时会按需构建一次，保证注释与跳转可用）。"
+          "description": "Vue 索引构建时机。默认 manual：语言功能只读取已有缓存，不会因为打开、切换、补全、Hover、诊断而自动构建（例外：.dev.js 与 Vue 组件文件（createApp/new Vue/Vue.extend/Vue-like 组件对象）在打开或切换进入时自动构建一次，Hover 缺缓存时也会补建，保证注释与跳转可用）。"
         },
         "leidong-tools.indexBuildIntervalMinutes": {
           "type": "number",
@@ -765,6 +770,7 @@
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
     "vsix": "vsce package",
+    "release": "node scripts/release.js",
     "publish": "vsce publish",
     "publish:patch": "vsce publish patch",
     "publish:minor": "vsce publish minor",

@@ -36,7 +36,7 @@
             ]
         },
         {
-            "begin": "((?:style|css|styles|styleText|cssText|styleSheet|styleContent|innerHTML|textContent)(?:\\s*\\.\\s*[a-zA-Z_$][\\w$]*)*)(\\s*)(=\\s*)(`)",
+            "begin": "((?:(?:(?i:style)|(?i:css))[\\w$]*|innerHTML|textContent)(?:\\s*\\.\\s*[a-zA-Z_$][\\w$]*)*)(\\s*)([=:]\\s*)(`)",
             "beginCaptures": {
                 "1": { "name": "meta.object-literal.key.js" },
                 "2": { "name": "source.js" },

@@ -1,6 +1,6 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { buildVueIndexForContent } from '../parsers/parseDocument';
+import { buildVueIndexForContent, looksLikeVueDocument } from '../parsers/parseDocument';
 
 /**
  * VueIndex 解析器测试：Vue2 Options API 与 Vue3 Composition API（CDN 场景）全覆盖。
@@ -125,6 +125,48 @@ const app = createApp({
         );
         assert.strictEqual(index.dataMeta.get('title')?.doc, '标题文案', 'data 属性上方注释缺失');
         assert.strictEqual(index.dataMeta.get('count')?.doc, '计数', 'data 属性行尾注释缺失');
+    });
+
+    test('Vue-like 组件对象（window.x = {...}）收录 data/methods/computed', () => {
+        const index = buildVueIndexForContent(
+            `(function (window, document) {
+  window.iyunzk_message_dialog = {
+    name: 'iyunzk_message_dialog',
+    data() {
+      return {
+        dialog: false, // 弹窗开关
+        title: '',
+      }
+    },
+    computed: {
+      // 当前类型配置
+      popupType() { return {} }
+    },
+    methods: {
+      // 打开弹窗
+      openDialog(item) {},
+      closeDialog() {},
+    },
+    template: \`<div class="message-popup"></div>\`,
+  };
+})(window, document);`,
+            uri,
+            0,
+        );
+        assert.ok(index.data.has('dialog'), '组件 data 应被收录');
+        assert.strictEqual(index.dataMeta.get('dialog')?.doc, '弹窗开关', 'data 行尾注释缺失');
+        assert.ok(index.methods.has('openDialog'), '组件 methods 应被收录');
+        assert.ok(index.computed.has('popupType'), '组件 computed 应被收录');
+    });
+
+    test('looksLikeVueDocument：页面/组件识别与超大文件跳过', () => {
+        assert.ok(looksLikeVueDocument('anything', 'E:/x/index.dev.js'), '.dev.js 应识别');
+        assert.ok(looksLikeVueDocument('const app = createApp({});', 'E:/x/a.js'), 'createApp 应识别');
+        assert.ok(looksLikeVueDocument('window.Vue.extend({})', 'E:/x/b.js'), 'Vue.extend 应识别');
+        assert.ok(looksLikeVueDocument("window.x = { data() {}, methods: {}, template: '' }", 'E:/x/c.js'), 'Vue-like 组件对象应识别');
+        assert.ok(looksLikeVueDocument('new Vue({})', 'E:/x/e.js'), 'new Vue 应识别');
+        assert.ok(!looksLikeVueDocument('const a = 1; export default a;', 'E:/x/d.js'), '普通 JS 不应识别');
+        assert.ok(!looksLikeVueDocument(`createApp(${'x'.repeat(600001)}`, 'E:/x/big.js'), '超大文件不应识别');
     });
 
     test('Vue3 setup 返回函数分类（不误入 data）', () => {

@@ -30,6 +30,8 @@ import { XTemplateHtmlCompletionProvider } from '../providers/xTemplateHtmlCompl
 import { TodoHighlightProvider } from '../providers/todoHighlightProvider';
 import { SetupReturnInlayHintsProvider } from '../providers/setupReturnInlayHints';
 import { Vue3SnippetCompletionProvider } from '../providers/vue3SnippetProvider';
+import { WorkspaceReferenceProvider } from '../providers/workspaceReferenceProvider';
+import { VueGlobalSymbolProvider } from '../providers/workspaceSymbolProvider';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -88,6 +90,18 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.languages.registerHoverProvider(
             vueLanguageSelector,
             new VueHoverProvider()
+        )
+    );
+
+    // 注册跨文件引用（Shift+F12 / 查找所有引用：全局组件、方法在工作区里被哪些页面引用）
+    // 与全局符号搜索（Ctrl+T：列出全项目 window.xxx 全局组件/API）
+    context.subscriptions.push(
+        vscode.languages.registerReferenceProvider(
+            vueLanguageSelector,
+            new WorkspaceReferenceProvider()
+        ),
+        vscode.languages.registerWorkspaceSymbolProvider(
+            new VueGlobalSymbolProvider()
         )
     );
 

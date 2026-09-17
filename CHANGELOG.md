@@ -1,5 +1,24 @@
 # 更新日志 (Changelog)
 
+## [3.4.7] - 2026-09-17
+
+### ✨ 跨文件引用 + 全局符号搜索（Ctrl+T）+ 一键发布
+
+- **跨文件引用（Shift+F12 / 右键「查找所有引用」/ Peek References）**：光标放在任意符号上（`window.iyunzk_message_dialog` 这类全局组件、页面方法、工具函数、`module_code`）即可搜索**整个工作区**的全部出现并逐个跳转；默认开启（`leidong-tools.enableWorkspaceReferences` 可关闭）；当前文档使用内存内容，未保存的编辑同样能命中；自动排除 node_modules / .vscode-test / dist / out / build 等目录，带文件大小与结果数上限，重复查询命中缓存。
+- **全局符号搜索（Ctrl+T「转到工作区中的符号」）**：列出全项目 `window.xxx = ...` 全局组件 / 全局 API 定义，输入关键字过滤、回车直达定义处；结果缓存 60 秒，文件保存后自动失效。
+- **一键发布脚本**：新增 `npm run release` = 测试通过 → 打包 vsix → 发布到 Marketplace（测试失败直接中止，贴合"测试通过才允许发布"的门禁；版本号取自 package.json）。
+
+## [3.4.6] - 2026-09-17
+
+### ✨ JS 组件文件自动建索引 + 内嵌 CSS 高亮 + Vue2/Vue3 组件模板
+
+- **JS 组件文件打开即构建索引**：`assets/js` 下的自包含组件（如 `messageDialog.js`：`window.xxx = { data() {}, methods: {}, template }`）此前需要手动"构建索引"，现在**打开或切换进入文件时自动构建一次**（已有缓存则跳过，切换标签页不重复解析；保存后重新进入会自动补建）。Hover 缺缓存时也会按需补建；超过 600KB 的压缩库文件不会自动构建。
+- **修复 JS 内嵌 CSS 无语法高亮**：`STYLE_TEXT`、`CSS_TEXT` 等大写命名的样式模板串此前匹配不到（旧规则只认小写 `style/css/styles...`），现在改为**大小写不敏感 + 任意 style/css 前缀命名**，并支持对象属性 `style: \`...\`` 写法——模板串内的 CSS 获得完整语法高亮（含嵌入 `meta.embedded.block.css` 映射，注释/括号行为与 CSS 一致）。
+- **新增 Vue2/Vue3 标准 JS 组件模板**（任意 JS 文件输入 `v2` / `v3` 触发）：
+  - `v2comp`：Vue2 自包含组件（IIFE + 样式注入 + data/computed/watch/beforeDestroy/methods/template）；
+  - `v3comp`：Vue3 CDN 组件（样式注入 + setup/ref/computed + template + app.component 注册用法）。
+  - 页面模板（v3page 等）仍仅限 `.dev.js` 页面。
+
 ## [3.4.5] - 2026-09-15
 
 ### ✨ 快捷导出到 setup return + Vue3 框架代码块 + 注释提取增强

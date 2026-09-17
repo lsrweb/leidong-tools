@@ -1268,6 +1268,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.looksLikeVueDocument = looksLikeVueDocument;
 exports.getCachedVueIndexForContent = getCachedVueIndexForContent;
 exports.buildVueIndexForContent = buildVueIndexForContent;
 exports.getOrCreateVueIndexFromContent = getOrCreateVueIndexFromContent;
@@ -1376,6 +1377,25 @@ function sanitizeContent(raw, fileUri) {
 /**
  * 解析一个 JS 源（外部或内联）生成 VueIndex
  */
+/**
+ * 判断 JS/TS 文件是否像 Vue 页面/组件（用于打开文件、Hover 时的按需构建索引）：
+ * `.dev.js` 页面、createApp / new Vue / Vue.extend / Vue.component，以及 Vue-like 组件对象
+ * （window.x = { data() {}, methods: {}, template: `...` } 形式，如 assets/js 下的自包含组件）。
+ * 超过 600KB 的文件（压缩库等）不自动构建，避免无谓的解析开销。
+ */
+function looksLikeVueDocument(text, fsPath) {
+    if (fsPath.toLowerCase().endsWith('.dev.js')) {
+        return true;
+    }
+    if (text.length > 600000) {
+        return false;
+    }
+    if (/createApp\s*\(|new\s+Vue\s*\(|Vue\s*\.\s*extend\s*\(|Vue\s*\.\s*component\s*\(/.test(text)) {
+        return true;
+    }
+    // Vue-like 组件对象：含 template 且含 data/methods/computed/setup/watch 选项
+    return /template\s*:/.test(text) && /(?:^|[^\w.$])(?:data|methods|computed|setup|watch)\s*[:(]/.test(text);
+}
 /**
  * VueIndex 构建 schema 版本：解析器逻辑升级后递增，强制旧缓存失效。
  * v1: Vue2 Options API；v2: Vue3 Composition API（createApp/setup/ref/reactive/computed）；
@@ -49418,6 +49438,28 @@ function registerIndexLifecycle(context) {
             buildVueRelatedIndexesForDocument(doc);
         }
     }));
+    // 打开 / 切换到 Vue 页面或组件文件（.dev.js、createApp、new Vue、Vue.extend、Vue-like 组件对象）时自动构建一次索引，
+    // 不再需要手动执行"构建索引"；已有缓存（保存前）直接跳过，避免切换标签页时重复解析。
+    const buildIndexWhenEnterVueFile = (document) => {
+        if (!document || document.uri.scheme !== 'file') {
+            return;
+        }
+        if (document.languageId !== 'javascript' && document.languageId !== 'typescript'
+            && document.languageId !== 'javascriptreact' && document.languageId !== 'typescriptreact') {
+            return;
+        }
+        if ((0, parseDocument_1.getCachedVueIndex)(document.uri)) {
+            return;
+        }
+        if (!(0, parseDocument_1.looksLikeVueDocument)(document.getText(), document.uri.fsPath)) {
+            return;
+        }
+        buildVueRelatedIndexesForDocument(document);
+    };
+    disposables.push(vscode.workspace.onDidOpenTextDocument(buildIndexWhenEnterVueFile));
+    disposables.push(vscode.window.onDidChangeActiveTextEditor(editor => buildIndexWhenEnterVueFile(editor?.document)));
+    // 扩展激活时已打开并处于活动状态的 Vue 组件文件补建一次
+    buildIndexWhenEnterVueFile(vscode.window.activeTextEditor?.document);
     function resetIntervalBuild() {
         if (intervalTimer) {
             clearInterval(intervalTimer);
@@ -50798,6 +50840,8 @@ const xTemplateHtmlCompletionProvider_1 = __webpack_require__(218);
 const todoHighlightProvider_1 = __webpack_require__(219);
 const setupReturnInlayHints_1 = __webpack_require__(220);
 const vue3SnippetProvider_1 = __webpack_require__(222);
+const workspaceReferenceProvider_1 = __webpack_require__(223);
+const workspaceSymbolProvider_1 = __webpack_require__(225);
 let refreshProviderConfigurationImpl;
 function refreshProviderConfiguration() {
     refreshProviderConfigurationImpl?.();
@@ -50848,6 +50892,9 @@ function registerProviders(context, fileWatchManager) {
         }
         cssWarmTimers.clear();
     }), vscode.languages.registerHoverProvider(vueLanguageSelector, new hoverProvider_1.VueHoverProvider()));
+    // 注册跨文件引用（Shift+F12 / 查找所有引用：全局组件、方法在工作区里被哪些页面引用）
+    // 与全局符号搜索（Ctrl+T：列出全项目 window.xxx 全局组件/API）
+    context.subscriptions.push(vscode.languages.registerReferenceProvider(vueLanguageSelector, new workspaceReferenceProvider_1.WorkspaceReferenceProvider()), vscode.languages.registerWorkspaceSymbolProvider(new workspaceSymbolProvider_1.VueGlobalSymbolProvider()));
     context.subscriptions.push(new todoHighlightProvider_1.TodoHighlightProvider());
     // 注册 Vue3 setup return 块幽灵文本注释（Inlay Hint）：return 项后展示声明处注释
     context.subscriptions.push(vscode.languages.registerInlayHintsProvider(config_1.FILE_SELECTORS.JAVASCRIPT_ONLY, new setupReturnInlayHints_1.SetupReturnInlayHintsProvider()));
@@ -53211,8 +53258,8 @@ class VueHoverProvider {
             try {
                 const content = document.getText();
                 jsVueIndex = (0, parseDocument_1.getCachedVueIndexForContent)(content, document.uri, 0);
-                // .dev.js / createApp 页面：缺缓存时按需构建一次（与 HTML 侧外部文件构建行为对齐），之后命中 LRU 缓存
-                if (isEmptyVueIndex(jsVueIndex) && (path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js') || content.includes('createApp'))) {
+                // Vue 页面/组件（.dev.js、createApp、Vue.extend、Vue-like 组件对象等）：缺缓存时按需构建一次，之后命中 LRU 缓存
+                if (isEmptyVueIndex(jsVueIndex) && (0, parseDocument_1.looksLikeVueDocument)(content, document.uri.fsPath)) {
                     jsVueIndex = (0, parseDocument_1.buildVueIndexForContent)(content, document.uri, 0);
                 }
                 // 回退：仍为空时通过关联 HTML 间接获取
@@ -59378,19 +59425,18 @@ exports.Vue3SnippetCompletionProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
 /**
- * Vue3 页面（.dev.js）框架快捷代码块：输入 `v3` 前缀快速生成项目标准结构。
- * 仅在 .dev.js 文件中生效（CDN 写法：Vue3.createApp + EPS.ElementPlus）。
+ * Vue 快捷代码块：
+ * - 组件模板（v2comp / v3comp）：Vue2 / Vue3 标准 JS 组件（IIFE 自包含 + 样式注入 + data/setup + template），所有 JS/TS 文件可用；
+ * - 页面模板（v3page / v3setup / v3ref / v3reactive / v3computed / v3fn）：仅 .dev.js 页面可用（CDN 写法：Vue3.createApp + EPS.ElementPlus）。
+ * 触发方式：输入 v2 / v3 前缀（或 Ctrl+Space）。
  */
 class Vue3SnippetCompletionProvider {
     provideCompletionItems(document, position, token) {
         if (token.isCancellationRequested) {
             return [];
         }
-        if (!path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js')) {
-            return [];
-        }
         const textBefore = document.lineAt(position).text.substring(0, position.character);
-        const match = /(?:^|[^A-Za-z0-9_$])(v3[a-z]*)$/.exec(textBefore);
+        const match = /(?:^|[^A-Za-z0-9_$])(v[23][a-z]*)$/.exec(textBefore);
         if (!match) {
             return [];
         }
@@ -59404,8 +59450,112 @@ class Vue3SnippetCompletionProvider {
             item.range = range;
             return item;
         };
-        return [
-            make('Vue3 页面完整框架 (v3page)', 'v3page', 'Vue3 页面框架（依赖引入 + createApp + 挂载）', [
+        const items = [];
+        // ---- 组件模板：所有 JS/TS 文件可用（assets/js 下的自包含组件，如 messageDialog.js） ----
+        items.push(make('Vue2 JS 组件 (v2comp)', 'v2comp', 'Vue2 标准 JS 组件（样式注入 + data/methods/template）', [
+            '/**',
+            ' * 自定义组件 - ${1:说明}',
+            ' * 兼容性：vue2 + element-ui',
+            ' * 全局组件名：${2:name}',
+            ' */',
+            '(function (window, document) {',
+            '\t\'use strict\';',
+            '',
+            '\t// ---------- 样式：脚本内注入，保证组件自包含（仅注入一次） ----------',
+            '\tvar STYLE_ID = \'${2:name}-style\';',
+            '\tvar STYLE_TEXT = `',
+            '\t\t.${2:name} {',
+            '\t\t}',
+            '\t`;',
+            '\tif (!document.getElementById(STYLE_ID)) {',
+            '\t\tvar styleElement = document.createElement(\'style\');',
+            '\t\tstyleElement.id = STYLE_ID;',
+            '\t\tstyleElement.type = \'text/css\';',
+            '\t\tstyleElement.textContent = STYLE_TEXT;',
+            '\t\tdocument.head.appendChild(styleElement);',
+            '\t}',
+            '',
+            '\twindow.${3:ComponentName} = {',
+            '\t\tname: \'${2:name}\',',
+            '\t\tdata() {',
+            '\t\t\treturn {',
+            '\t\t\t\t${4:visible}: false, // ${5:显示状态}',
+            '\t\t\t};',
+            '\t\t},',
+            '\t\tcomputed: {',
+            '\t\t\t// ${6:计算属性说明}',
+            '\t\t\t${7:computedValue}() {',
+            '\t\t\t\treturn this.${4:visible};',
+            '\t\t\t},',
+            '\t\t},',
+            '\t\twatch: {},',
+            '\t\tbeforeDestroy() {},',
+            '\t\tmethods: {',
+            '\t\t\t// 打开组件',
+            '\t\t\topen() {',
+            '\t\t\t\tthis.${4:visible} = true;',
+            '\t\t\t},',
+            '\t\t\t// 关闭组件',
+            '\t\t\tclose() {',
+            '\t\t\t\tthis.${4:visible} = false;',
+            '\t\t\t},',
+            '\t\t},',
+            '\t\ttemplate: `',
+            '\t\t\t<div class="${2:name}" v-if="${4:visible}"></div>',
+            '\t\t`,',
+            '\t};',
+            '})(window, document);',
+        ], '0010'), make('Vue3 JS 组件 (v3comp)', 'v3comp', 'Vue3 标准 JS 组件（setup + 样式注入 + template）', [
+            '/**',
+            ' * 自定义组件 - ${1:说明}',
+            ' * 兼容性：vue3 (CDN)',
+            ' * 用法：app.component(\'${2:name}\', window.${3:ComponentName})',
+            ' */',
+            '(function (window, document) {',
+            '\t\'use strict\';',
+            '',
+            '\tconst ref = Vue3.ref;',
+            '\tconst computed = Vue3.computed;',
+            '',
+            '\t// ---------- 样式：脚本内注入，保证组件自包含（仅注入一次） ----------',
+            '\tconst STYLE_ID = \'${2:name}-style\';',
+            '\tconst STYLE_TEXT = `',
+            '\t\t.${2:name} {',
+            '\t\t}',
+            '\t`;',
+            '\tif (!document.getElementById(STYLE_ID)) {',
+            '\t\tconst styleElement = document.createElement(\'style\');',
+            '\t\tstyleElement.id = STYLE_ID;',
+            '\t\tstyleElement.type = \'text/css\';',
+            '\t\tstyleElement.textContent = STYLE_TEXT;',
+            '\t\tdocument.head.appendChild(styleElement);',
+            '\t}',
+            '',
+            '\twindow.${3:ComponentName} = {',
+            '\t\tname: \'${2:name}\',',
+            '\t\tprops: {},',
+            '\t\tsetup(props, { emit }) {',
+            '\t\t\tconst ${4:visible} = ref(false); // ${5:显示状态}',
+            '\t\t\tconst ${6:computedValue} = computed(() => ${4:visible}.value); // ${7:计算属性说明}',
+            '\t\t\t// 打开组件',
+            '\t\t\tconst open = () => {',
+            '\t\t\t\t${4:visible}.value = true;',
+            '\t\t\t};',
+            '\t\t\t// 关闭组件',
+            '\t\t\tconst close = () => {',
+            '\t\t\t\t${4:visible}.value = false;',
+            '\t\t\t};',
+            '\t\t\treturn { ${4:visible}, ${6:computedValue}, open, close };',
+            '\t\t},',
+            '\t\ttemplate: `',
+            '\t\t\t<div class="${2:name}" v-if="${4:visible}"></div>',
+            '\t\t`,',
+            '\t};',
+            '})(window, document);',
+        ], '0011'));
+        // ---- 页面模板：仅 .dev.js 页面可用 ----
+        if (path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js')) {
+            items.push(make('Vue3 页面完整框架 (v3page)', 'v3page', 'Vue3 页面框架（依赖引入 + createApp + 挂载）', [
                 'const computed = Vue3.computed;',
                 'const createApp = Vue3.createApp;',
                 'const onMounted = Vue3.onMounted;',
@@ -59429,8 +59579,7 @@ class Vue3SnippetCompletionProvider {
                 'if (!app.component("ElpQueryItem")) app.component("ElpQueryItem", EPS.ElQueryItem);',
                 'app.component("comm-tips", window.CommTipsVue3);',
                 'app.mount("#${2:app-id}");',
-            ], '0001'),
-            make('Vue3 createApp + setup (v3setup)', 'v3setup', 'Vue3 createApp/setup 骨架', [
+            ], '0001'), make('Vue3 createApp + setup (v3setup)', 'v3setup', 'Vue3 createApp/setup 骨架', [
                 'const app = createApp({',
                 '\tsetup: function () {',
                 '\t\t$0',
@@ -59438,29 +59587,346 @@ class Vue3SnippetCompletionProvider {
                 '\t\t};',
                 '\t},',
                 '});',
-            ], '0002'),
-            make('ref 变量 (v3ref)', 'v3ref', 'ref 变量声明', [
+            ], '0002'), make('ref 变量 (v3ref)', 'v3ref', 'ref 变量声明', [
                 'const ${1:name} = ref(${2:null}); // ${3:说明}',
-            ], '0003'),
-            make('reactive 变量 (v3reactive)', 'v3reactive', 'reactive 对象声明', [
+            ], '0003'), make('reactive 变量 (v3reactive)', 'v3reactive', 'reactive 对象声明', [
                 'const ${1:name} = reactive({',
                 '\t${2:field}: ${3:""}, $0',
                 '}); // ${4:说明}',
-            ], '0004'),
-            make('computed 计算属性 (v3computed)', 'v3computed', 'computed 计算属性', [
+            ], '0004'), make('computed 计算属性 (v3computed)', 'v3computed', 'computed 计算属性', [
                 'const ${1:name} = computed(() => {',
                 '\t$0',
                 '}); // ${2:说明}',
-            ], '0005'),
-            make('方法 (v3fn)', 'v3fn', '函数/方法声明', [
+            ], '0005'), make('方法 (v3fn)', 'v3fn', '函数/方法声明', [
                 'const ${1:name} = (${2:params}) => {',
                 '\t$0',
                 '}; // ${3:说明}',
-            ], '0006'),
-        ];
+            ], '0006'));
+        }
+        return items;
     }
 }
 exports.Vue3SnippetCompletionProvider = Vue3SnippetCompletionProvider;
+
+
+/***/ }),
+/* 223 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.WorkspaceReferenceProvider = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const workspaceTextSearch_1 = __webpack_require__(224);
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+/**
+ * 跨文件引用（Shift+F12 / 右键「查找所有引用」/ Peek References）：
+ * 在工作区内搜索光标符号的全部出现（全局组件 window.xxx、页面方法、工具函数等），
+ * 当前文档使用内存内容，未保存的编辑也能被搜到；
+ * 已有文件级 Vue 引用提供器（enableReferences）的结果会与本结果自动合并。
+ */
+class WorkspaceReferenceProvider {
+    async provideReferences(document, position, _context, token) {
+        const config = vscode.workspace.getConfiguration('leidong-tools', document.uri);
+        if (!config.get('enableWorkspaceReferences', true)) {
+            return null;
+        }
+        const wordRange = document.getWordRangeAtPosition(position, /[a-zA-Z_$][\w$]*/);
+        if (!wordRange) {
+            return null;
+        }
+        const word = document.getText(wordRange);
+        if (word.length < 2) {
+            return null;
+        }
+        const pattern = `\\b${escapeRegExp(word)}\\b`;
+        const hits = await (0, workspaceTextSearch_1.scanWorkspaceText)(pattern, { maxResults: 300 }, token);
+        // 当前文档优先用内存内容：未保存的编辑同样能命中
+        let merged = hits;
+        if (document.isDirty) {
+            const inMemory = [];
+            (0, workspaceTextSearch_1.collectLineHits)(document.uri, document.getText(), new RegExp(pattern, 'gd'), { maxHitsPerFile: 300, maxResults: 300 }, inMemory);
+            merged = [...hits.filter(hit => hit.uri.toString() !== document.uri.toString()), ...inMemory];
+        }
+        if (!merged.length) {
+            return null;
+        }
+        return merged.map(hit => new vscode.Location(hit.uri, new vscode.Range(hit.line, hit.character, hit.line, hit.character + hit.length)));
+    }
+}
+exports.WorkspaceReferenceProvider = WorkspaceReferenceProvider;
+
+
+/***/ }),
+/* 224 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.collectLineHits = collectLineHits;
+exports.scanWorkspaceText = scanWorkspaceText;
+/**
+ * 工作区文本扫描（跨文件引用 / 全局符号搜索共用）。
+ *
+ * 说明：VS Code 的 findTextInFiles 仍是 proposed API（正式扩展不可用），
+ * 这里用稳定 API 组合实现：findFiles 收集候选文件 → 带 mtime 校验的文本缓存 → 正则逐行匹配。
+ * 排除依赖/构建目录，避免把 VS Code 安装目录、node_modules、打包产物当引用来源。
+ */
+const vscode = __importStar(__webpack_require__(2));
+const SEARCH_EXCLUDE = '**/{node_modules,bower_components,.git,.svn,.hg,.vscode-test,dist,out,build,coverage}/**';
+const MAX_FILE_BYTES = 600000;
+const MAX_FILES = 1500;
+const READ_BATCH = 16;
+const textCache = new Map();
+const MAX_CACHE_ENTRIES = 300;
+async function readWithCache(uri) {
+    try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        if ((stat.type & vscode.FileType.File) === 0 || stat.size > MAX_FILE_BYTES) {
+            return null;
+        }
+        const key = uri.toString();
+        const cached = textCache.get(key);
+        if (cached && cached.mtime === stat.mtime) {
+            return cached.text;
+        }
+        const bytes = await vscode.workspace.fs.readFile(uri);
+        const text = Buffer.from(bytes).toString('utf8');
+        textCache.set(key, { mtime: stat.mtime, text });
+        if (textCache.size > MAX_CACHE_ENTRIES) {
+            const oldest = textCache.keys().next().value;
+            if (oldest !== undefined) {
+                textCache.delete(oldest);
+            }
+        }
+        return text;
+    }
+    catch {
+        return null;
+    }
+}
+/** 行内正则扫描（captureGroup 指定时以捕获组作为命中位置，并返回 name）。 */
+function collectLineHits(uri, text, regex, options, hits) {
+    const lines = text.split(/\r?\n/);
+    let fileHits = 0;
+    for (let line = 0; line < lines.length && fileHits < options.maxHitsPerFile && hits.length < options.maxResults; line++) {
+        regex.lastIndex = 0;
+        let match;
+        while ((match = regex.exec(lines[line])) !== null) {
+            let start = match.index;
+            let length = match[0].length;
+            let name;
+            if (options.captureGroup && match.indices && match.indices[options.captureGroup]) {
+                const [groupStart, groupEnd] = match.indices[options.captureGroup];
+                start = groupStart;
+                length = groupEnd - groupStart;
+                name = match[options.captureGroup];
+            }
+            hits.push({ uri, line, character: start, length, preview: lines[line].trim().slice(0, 160), name });
+            fileHits++;
+            if (match[0].length === 0) {
+                regex.lastIndex++;
+            } // 空匹配防死循环
+            if (fileHits >= options.maxHitsPerFile || hits.length >= options.maxResults) {
+                break;
+            }
+        }
+    }
+}
+/** 扫描工作区文本，返回正则命中列表（行级，含预览）。 */
+async function scanWorkspaceText(pattern, options = {}, token) {
+    const regex = new RegExp(pattern, 'gd');
+    const include = options.include ?? '**/*.{js,ts,jsx,tsx,html,vue}';
+    const scanOptions = {
+        maxHitsPerFile: options.maxHitsPerFile ?? 50,
+        maxResults: options.maxResults ?? 300,
+        captureGroup: options.captureGroup,
+    };
+    const uris = await vscode.workspace.findFiles(include, SEARCH_EXCLUDE, MAX_FILES, token);
+    const hits = [];
+    for (let i = 0; i < uris.length && hits.length < scanOptions.maxResults; i += READ_BATCH) {
+        if (token?.isCancellationRequested) {
+            break;
+        }
+        const batch = uris.slice(i, i + READ_BATCH);
+        const texts = await Promise.all(batch.map(readWithCache));
+        for (let j = 0; j < batch.length; j++) {
+            const text = texts[j];
+            if (text === null || text === undefined) {
+                continue;
+            }
+            collectLineHits(batch[j], text, regex, scanOptions, hits);
+        }
+    }
+    return hits;
+}
+
+
+/***/ }),
+/* 225 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.VueGlobalSymbolProvider = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const workspaceTextSearch_1 = __webpack_require__(224);
+const CACHE_TTL_MS = 60000;
+const MAX_SYMBOLS = 300;
+/**
+ * 全局符号搜索（Ctrl+T「转到工作区中的符号」）：
+ * 扫描全项目的 `window.xxx = ...` 定义（全局组件 / 全局 API），输入关键字过滤、回车跳转。
+ * 首次请求扫描工作区并缓存 60 秒，文件保存后缓存自动失效。
+ */
+class VueGlobalSymbolProvider {
+    constructor() {
+        this.cache = null;
+        this.saveListener = vscode.workspace.onDidSaveTextDocument(() => { this.cache = null; });
+    }
+    dispose() {
+        this.saveListener.dispose();
+    }
+    async provideWorkspaceSymbols(query, token) {
+        const symbols = await this.getSymbols(token);
+        const keyword = query.trim().toLowerCase();
+        const matched = keyword ? symbols.filter(symbol => symbol.name.toLowerCase().includes(keyword)) : symbols;
+        return matched.slice(0, MAX_SYMBOLS);
+    }
+    async getSymbols(token) {
+        const now = Date.now();
+        if (this.cache && now - this.cache.at < CACHE_TTL_MS) {
+            return this.cache.symbols;
+        }
+        const hits = await (0, workspaceTextSearch_1.scanWorkspaceText)('window\\s*\\.\\s*([A-Za-z_$][\\w$]*)\\s*=', {
+            include: '**/*.{js,ts,html}',
+            maxResults: 400,
+            maxHitsPerFile: 30,
+            captureGroup: 1,
+        }, token);
+        const seen = new Set();
+        const symbols = [];
+        for (const hit of hits) {
+            if (!hit.name) {
+                continue;
+            }
+            const key = `${hit.name}@${hit.uri.toString()}`;
+            if (seen.has(key)) {
+                continue;
+            }
+            seen.add(key);
+            symbols.push(new vscode.SymbolInformation(hit.name, vscode.SymbolKind.Object, '全局（window）', new vscode.Location(hit.uri, new vscode.Range(hit.line, hit.character, hit.line, hit.character + hit.length))));
+        }
+        if (!token.isCancellationRequested) {
+            this.cache = { at: now, symbols };
+        }
+        return symbols;
+    }
+}
+exports.VueGlobalSymbolProvider = VueGlobalSymbolProvider;
 
 
 /***/ })

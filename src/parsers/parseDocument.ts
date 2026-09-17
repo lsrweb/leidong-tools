@@ -122,6 +122,19 @@ function sanitizeContent(raw: string, fileUri?: vscode.Uri): string {
  * 解析一个 JS 源（外部或内联）生成 VueIndex
  */
 /**
+ * 判断 JS/TS 文件是否像 Vue 页面/组件（用于打开文件、Hover 时的按需构建索引）：
+ * `.dev.js` 页面、createApp / new Vue / Vue.extend / Vue.component，以及 Vue-like 组件对象
+ * （window.x = { data() {}, methods: {}, template: `...` } 形式，如 assets/js 下的自包含组件）。
+ * 超过 600KB 的文件（压缩库等）不自动构建，避免无谓的解析开销。
+ */
+export function looksLikeVueDocument(text: string, fsPath: string): boolean {
+    if (fsPath.toLowerCase().endsWith('.dev.js')) { return true; }
+    if (text.length > 600000) { return false; }
+    if (/createApp\s*\(|new\s+Vue\s*\(|Vue\s*\.\s*extend\s*\(|Vue\s*\.\s*component\s*\(/.test(text)) { return true; }
+    // Vue-like 组件对象：含 template 且含 data/methods/computed/setup/watch 选项
+    return /template\s*:/.test(text) && /(?:^|[^\w.$])(?:data|methods|computed|setup|watch)\s*[:(]/.test(text);
+}
+/**
  * VueIndex 构建 schema 版本：解析器逻辑升级后递增，强制旧缓存失效。
  * v1: Vue2 Options API；v2: Vue3 Composition API（createApp/setup/ref/reactive/computed）；
  * v3: setup 声明注释扩展（行尾注释 + 紧邻上方的 // 注释块）。

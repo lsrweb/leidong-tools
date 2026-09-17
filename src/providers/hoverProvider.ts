@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { resolveVueIndexForHtml, findDefinitionInIndex, getCachedVueIndexForContent, buildVueIndexForContent, getExternalDevScriptPathsForHtml } from '../parsers/parseDocument';
+import { resolveVueIndexForHtml, findDefinitionInIndex, getCachedVueIndexForContent, buildVueIndexForContent, getExternalDevScriptPathsForHtml, looksLikeVueDocument } from '../parsers/parseDocument';
 import type { VueIndex } from '../parsers/parseDocument';
 import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
@@ -169,8 +169,8 @@ export class VueHoverProvider implements vscode.HoverProvider {
             try {
                 const content = document.getText();
                 jsVueIndex = getCachedVueIndexForContent(content, document.uri, 0);
-                // .dev.js / createApp 页面：缺缓存时按需构建一次（与 HTML 侧外部文件构建行为对齐），之后命中 LRU 缓存
-                if (isEmptyVueIndex(jsVueIndex) && (path.basename(document.uri.fsPath).toLowerCase().endsWith('.dev.js') || content.includes('createApp'))) {
+                // Vue 页面/组件（.dev.js、createApp、Vue.extend、Vue-like 组件对象等）：缺缓存时按需构建一次，之后命中 LRU 缓存
+                if (isEmptyVueIndex(jsVueIndex) && looksLikeVueDocument(content, document.uri.fsPath)) {
                     jsVueIndex = buildVueIndexForContent(content, document.uri, 0);
                 }
                 // 回退：仍为空时通过关联 HTML 间接获取
