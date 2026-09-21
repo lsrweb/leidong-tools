@@ -57,8 +57,8 @@ const indexManager_1 = __webpack_require__(182);
 const xTemplateFormattingProvider_1 = __webpack_require__(183);
 const vueDiagnosticsProvider_1 = __webpack_require__(191);
 const providers_1 = __webpack_require__(193);
-const cssIndexProvider_1 = __webpack_require__(217);
-const setupReturnScanner_1 = __webpack_require__(221);
+const cssIndexProvider_1 = __webpack_require__(220);
+const setupReturnScanner_1 = __webpack_require__(224);
 /**
  * 注册所有命令
  */
@@ -50828,20 +50828,22 @@ const colorProvider_1 = __webpack_require__(207);
 const laytplBracketHighlighter_1 = __webpack_require__(208);
 const laytplFoldingProvider_1 = __webpack_require__(210);
 const xTemplateFoldingProvider_1 = __webpack_require__(211);
+const phpTagBracketHighlighter_1 = __webpack_require__(212);
+const phpTagFoldingProvider_1 = __webpack_require__(214);
 const xTemplateFormattingProvider_1 = __webpack_require__(183);
-const copilotAnalyzer_1 = __webpack_require__(212);
-const variableIndexWebview_1 = __webpack_require__(213);
-const diagnosticsWebview_1 = __webpack_require__(214);
-const watchServiceTreeView_1 = __webpack_require__(215);
-const toolboxWebview_1 = __webpack_require__(216);
+const copilotAnalyzer_1 = __webpack_require__(215);
+const variableIndexWebview_1 = __webpack_require__(216);
+const diagnosticsWebview_1 = __webpack_require__(217);
+const watchServiceTreeView_1 = __webpack_require__(218);
+const toolboxWebview_1 = __webpack_require__(219);
 const config_1 = __webpack_require__(5);
-const cssIndexProvider_1 = __webpack_require__(217);
-const xTemplateHtmlCompletionProvider_1 = __webpack_require__(218);
-const todoHighlightProvider_1 = __webpack_require__(219);
-const setupReturnInlayHints_1 = __webpack_require__(220);
-const vue3SnippetProvider_1 = __webpack_require__(222);
-const workspaceReferenceProvider_1 = __webpack_require__(223);
-const workspaceSymbolProvider_1 = __webpack_require__(225);
+const cssIndexProvider_1 = __webpack_require__(220);
+const xTemplateHtmlCompletionProvider_1 = __webpack_require__(221);
+const todoHighlightProvider_1 = __webpack_require__(222);
+const setupReturnInlayHints_1 = __webpack_require__(223);
+const vue3SnippetProvider_1 = __webpack_require__(225);
+const workspaceReferenceProvider_1 = __webpack_require__(226);
+const workspaceSymbolProvider_1 = __webpack_require__(228);
 let refreshProviderConfigurationImpl;
 function refreshProviderConfiguration() {
     refreshProviderConfigurationImpl?.();
@@ -50980,13 +50982,18 @@ function registerProviders(context, fileWatchManager) {
     context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor((editor) => {
         (0, codeLensProvider_1.updateInlineRefDecorations)(editor);
         (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(editor);
+        (0, phpTagBracketHighlighter_1.updatePhpTagBracketHighlights)(editor);
         scheduleCssIndexWarm(editor?.document);
-    }), vscode.workspace.onDidOpenTextDocument(scheduleCssIndexWarm), vscode.workspace.onDidCloseTextDocument(laytplBracketHighlighter_1.clearLaytplBracketCache), vscode.workspace.onDidSaveTextDocument(document => {
+    }), vscode.workspace.onDidOpenTextDocument(scheduleCssIndexWarm), vscode.workspace.onDidCloseTextDocument(document => {
+        (0, laytplBracketHighlighter_1.clearLaytplBracketCache)(document);
+        (0, phpTagBracketHighlighter_1.clearPhpTagInfoCache)(document);
+    }), vscode.workspace.onDidSaveTextDocument(document => {
         if (document.languageId === 'css' || document.languageId === 'html' || document.languageId === 'vue') {
             invalidateCssIndexes();
         }
     }), vscode.window.onDidChangeTextEditorSelection((event) => {
         (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(event.textEditor);
+        (0, phpTagBracketHighlighter_1.updatePhpTagBracketHighlights)(event.textEditor);
     }), vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('leidong-tools.enableOutlineSymbols') ||
             e.affectsConfiguration('leidong-tools.enableReferences') ||
@@ -51008,9 +51015,15 @@ function registerProviders(context, fileWatchManager) {
     // 初始化当前编辑器的装饰
     (0, codeLensProvider_1.updateInlineRefDecorations)(vscode.window.activeTextEditor);
     (0, laytplBracketHighlighter_1.updateLaytplBracketHighlights)(vscode.window.activeTextEditor);
+    (0, phpTagBracketHighlighter_1.updatePhpTagBracketHighlights)(vscode.window.activeTextEditor);
     scheduleCssIndexWarm(vscode.window.activeTextEditor?.document);
     // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
     context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(config_1.FILE_SELECTORS.HTML, new laytplFoldingProvider_1.LaytplFoldingRangeProvider()));
+    // 注册 PHP 原生标签折叠/匹配/高亮（.php 视图与含 <?php 的 HTML 页面通用）
+    context.subscriptions.push(vscode.languages.registerFoldingRangeProvider([
+        { scheme: 'file', language: 'php' },
+        { scheme: 'file', language: 'html' }
+    ], new phpTagFoldingProvider_1.PhpTagFoldingRangeProvider()));
     // 注册 text/x-template 折叠提供器（让 script 内封装的组件 HTML 标签可折叠）
     context.subscriptions.push(vscode.languages.registerFoldingRangeProvider(config_1.FILE_SELECTORS.HTML, new xTemplateFoldingProvider_1.XTemplateFoldingRangeProvider()));
     // 注册 text/x-template 局部格式化（Format Selection）
@@ -56334,6 +56347,662 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.clearPhpTagBracketHighlights = clearPhpTagBracketHighlights;
+exports.updatePhpTagBracketHighlights = updatePhpTagBracketHighlights;
+exports.clearPhpTagInfoCache = clearPhpTagInfoCache;
+const vscode = __importStar(__webpack_require__(2));
+const phpTagParser_1 = __webpack_require__(213);
+const BRACKET_CHARS = new Set(['(', ')', '[', ']', '{', '}']);
+const phpTagMatchDecorationType = vscode.window.createTextEditorDecorationType({
+    backgroundColor: new vscode.ThemeColor('editorBracketMatch.background'),
+    borderRadius: '2px'
+});
+let lastDecoratedEditor;
+const infoCache = new Map();
+const MAX_INFO_CACHE_ENTRIES = 20;
+function isBracketChar(char) {
+    return Boolean(char && BRACKET_CHARS.has(char));
+}
+function isPhpDocument(document) {
+    return document.languageId === 'php' || document.languageId === 'html';
+}
+function getDocumentInfo(document) {
+    const cacheKey = document.uri.toString();
+    const cached = infoCache.get(cacheKey);
+    if (cached && cached.version === document.version) {
+        return cached.info;
+    }
+    const info = (0, phpTagParser_1.getPhpTagInfo)(document.getText());
+    infoCache.delete(cacheKey);
+    infoCache.set(cacheKey, { version: document.version, info });
+    while (infoCache.size > MAX_INFO_CACHE_ENTRIES) {
+        const oldest = infoCache.keys().next().value;
+        if (!oldest) {
+            break;
+        }
+        infoCache.delete(oldest);
+    }
+    return info;
+}
+function createRangeFromOffsets(document, startOffset, endOffset) {
+    return new vscode.Range(document.positionAt(startOffset), document.positionAt(endOffset));
+}
+function findCandidateBracketOffsets(document, position) {
+    const line = document.lineAt(position.line).text;
+    const currentOffset = document.offsetAt(position);
+    const offsets = [];
+    if (isBracketChar(line[position.character])) {
+        offsets.push(currentOffset);
+    }
+    if (position.character > 0 && isBracketChar(line[position.character - 1])) {
+        offsets.push(currentOffset - 1);
+    }
+    return offsets;
+}
+function isWithinToken(offset, token) {
+    return offset >= token.offset && offset < token.offset + token.text.length;
+}
+function collectAltPairDecorations(document, pair, offset) {
+    if (!isWithinToken(offset, pair.open) && !isWithinToken(offset, pair.close)) {
+        return undefined;
+    }
+    return [
+        { range: createRangeFromOffsets(document, pair.open.offset, pair.open.offset + pair.open.text.length) },
+        { range: createRangeFromOffsets(document, pair.close.offset, pair.close.offset + pair.close.text.length) }
+    ];
+}
+function collectTagMarkerDecorations(document, tag, offset) {
+    if (tag.closeMarkerStart < 0) {
+        return undefined;
+    }
+    const onOpenMarker = offset >= tag.openMarkerStart && offset < tag.openMarkerEnd;
+    const onCloseMarker = offset >= tag.closeMarkerStart && offset < tag.closeMarkerStart + 2;
+    if (!onOpenMarker && !onCloseMarker) {
+        return undefined;
+    }
+    return [
+        { range: createRangeFromOffsets(document, tag.openMarkerStart, tag.openMarkerEnd) },
+        { range: createRangeFromOffsets(document, tag.closeMarkerStart, tag.closeMarkerStart + 2) }
+    ];
+}
+function collectMatchDecorations(document, info, offset) {
+    for (const candidate of findCandidateBracketOffsets(document, document.positionAt(offset))) {
+        const target = info.bracketPairs.get(candidate);
+        if (target === undefined) {
+            continue;
+        }
+        return [
+            { range: createRangeFromOffsets(document, candidate, candidate + 1) },
+            { range: createRangeFromOffsets(document, target, target + 1) }
+        ];
+    }
+    for (const pair of info.altPairs) {
+        const decorations = collectAltPairDecorations(document, pair, offset);
+        if (decorations) {
+            return decorations;
+        }
+    }
+    for (const tag of info.tags) {
+        const decorations = collectTagMarkerDecorations(document, tag, offset);
+        if (decorations) {
+            return decorations;
+        }
+    }
+    return [];
+}
+function clearPhpTagBracketHighlights(editor) {
+    if (editor) {
+        editor.setDecorations(phpTagMatchDecorationType, []);
+    }
+}
+function updatePhpTagBracketHighlights(editor) {
+    if (lastDecoratedEditor && lastDecoratedEditor !== editor) {
+        clearPhpTagBracketHighlights(lastDecoratedEditor);
+    }
+    if (!editor || !isPhpDocument(editor.document)) {
+        clearPhpTagBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    if (editor.selections.length !== 1 || !editor.selection.isEmpty) {
+        clearPhpTagBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    const document = editor.document;
+    if (!document.getText().includes('<?')) {
+        clearPhpTagBracketHighlights(editor);
+        lastDecoratedEditor = editor;
+        return;
+    }
+    const offset = document.offsetAt(editor.selection.active);
+    const decorations = collectMatchDecorations(document, getDocumentInfo(document), offset);
+    editor.setDecorations(phpTagMatchDecorationType, decorations);
+    lastDecoratedEditor = editor;
+}
+function clearPhpTagInfoCache(document) {
+    infoCache.delete(document.uri.toString());
+}
+
+
+/***/ }),
+/* 213 */
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.buildPhpLineOffsets = buildPhpLineOffsets;
+exports.getPhpLineAtOffset = getPhpLineAtOffset;
+exports.scanPhpTags = scanPhpTags;
+exports.getPhpTagInfo = getPhpTagInfo;
+exports.getPhpBracketPairs = getPhpBracketPairs;
+exports.findMatchingPhpBracket = findMatchingPhpBracket;
+exports.findPhpTagFoldingRanges = findPhpTagFoldingRanges;
+const OPEN_BRACKETS = new Map([
+    ['(', ')'],
+    ['[', ']'],
+    ['{', '}']
+]);
+const CLOSE_BRACKETS = new Map([
+    [')', '('],
+    [']', '['],
+    ['}', '{']
+]);
+const ALT_OPENERS = new Set(['if', 'while', 'for', 'foreach', 'switch', 'declare']);
+const ALT_CONTINUATIONS = new Set(['else', 'elseif', 'case', 'default']);
+const ALT_CLOSER_KIND = new Map([
+    ['endif', 'if'],
+    ['endwhile', 'while'],
+    ['endfor', 'for'],
+    ['endforeach', 'foreach'],
+    ['endswitch', 'switch'],
+    ['enddeclare', 'declare']
+]);
+const PHP_KEYWORDS = new Set([
+    ...ALT_OPENERS,
+    ...ALT_CONTINUATIONS,
+    ...ALT_CLOSER_KIND.keys()
+]);
+function buildPhpLineOffsets(text) {
+    const lineOffsets = [0];
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '\n') {
+            lineOffsets.push(index + 1);
+        }
+    }
+    return lineOffsets;
+}
+function getPhpLineAtOffset(lineOffsets, offset) {
+    let low = 0;
+    let high = lineOffsets.length - 1;
+    while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const lineOffset = lineOffsets[mid];
+        const nextLineOffset = mid + 1 < lineOffsets.length ? lineOffsets[mid + 1] : Number.MAX_SAFE_INTEGER;
+        if (offset < lineOffset) {
+            high = mid - 1;
+            continue;
+        }
+        if (offset >= nextLineOffset) {
+            low = mid + 1;
+            continue;
+        }
+        return mid;
+    }
+    return 0;
+}
+function isPhpIdentifierChar(char) {
+    return Boolean(char) && /[A-Za-z0-9_]/.test(char);
+}
+function isPhpIdentifierStartChar(char) {
+    return Boolean(char) && /[A-Za-z_]/.test(char);
+}
+function skipPhpString(text, start, to) {
+    const quote = text[start];
+    let index = start + 1;
+    while (index < to) {
+        const char = text[index];
+        if (char === '\\') {
+            index += 2;
+            continue;
+        }
+        if (char === quote) {
+            return index + 1;
+        }
+        index++;
+    }
+    return to;
+}
+// PHP 语义：行注释内的 ?> 同样会终止 PHP 模式，因此扫描时不能跳过 ?>
+function skipPhpLineComment(text, from, to) {
+    let index = from;
+    while (index < to) {
+        const char = text[index];
+        if (char === '\n') {
+            return index + 1;
+        }
+        if (char === '?' && text[index + 1] === '>') {
+            return index;
+        }
+        index++;
+    }
+    return to;
+}
+function skipPhpBlockComment(text, from, to) {
+    let index = from;
+    while (index < to) {
+        const char = text[index];
+        if (char === '?' && text[index + 1] === '>') {
+            return index;
+        }
+        if (char === '*' && text[index + 1] === '/') {
+            return index + 2;
+        }
+        index++;
+    }
+    return to;
+}
+function trySkipPhpHeredoc(text, start, to) {
+    let index = start + 3;
+    while (index < to && (text[index] === ' ' || text[index] === '\t')) {
+        index++;
+    }
+    let quote = '';
+    if (text[index] === '\'' || text[index] === '"') {
+        quote = text[index];
+        index++;
+    }
+    const labelStart = index;
+    if (!isPhpIdentifierStartChar(text[index])) {
+        return -1;
+    }
+    while (index < to && isPhpIdentifierChar(text[index])) {
+        index++;
+    }
+    const label = text.slice(labelStart, index);
+    if (quote) {
+        if (text[index] !== quote) {
+            return -1;
+        }
+        index++;
+    }
+    while (index < to && (text[index] === ' ' || text[index] === '\t')) {
+        index++;
+    }
+    if (text[index] === '\r') {
+        index++;
+    }
+    if (text[index] !== '\n') {
+        return -1;
+    }
+    index++;
+    while (index < to) {
+        const lineEnd = text.indexOf('\n', index);
+        const lineStop = lineEnd < 0 || lineEnd > to ? to : lineEnd;
+        const line = text.slice(index, lineStop);
+        const trimmed = line.replace(/^[ \t]+/, '');
+        if (trimmed.startsWith(label) && !isPhpIdentifierChar(trimmed[label.length])) {
+            const indent = line.length - trimmed.length;
+            return Math.min(index + indent + label.length, to);
+        }
+        if (lineEnd < 0 || lineEnd >= to) {
+            return to;
+        }
+        index = lineEnd + 1;
+    }
+    return to;
+}
+// 遍历一段 PHP 代码：跳过字符串/注释/heredoc，emit 括号与控制关键字 token；
+// 返回区间内 `?>` 的偏移（未找到返回 -1）。注释内的 ?> 视为终止（与 PHP 一致）。
+function walkPhpCode(text, from, to, emit, lineOffsets) {
+    let index = from;
+    const lineAt = (offset) => lineOffsets ? getPhpLineAtOffset(lineOffsets, offset) : 0;
+    while (index < to) {
+        const char = text[index];
+        const next = index + 1 < text.length ? text[index + 1] : '';
+        if (char === '?') {
+            if (next === '>') {
+                return index;
+            }
+            index++;
+            continue;
+        }
+        if (char === '\'' || char === '"') {
+            index = skipPhpString(text, index, to);
+            continue;
+        }
+        if (char === '/' && next === '/') {
+            index = skipPhpLineComment(text, index + 2, to);
+            continue;
+        }
+        if (char === '#') {
+            if (next === '[') {
+                index++;
+                continue;
+            }
+            index = skipPhpLineComment(text, index + 1, to);
+            continue;
+        }
+        if (char === '/' && next === '*') {
+            index = skipPhpBlockComment(text, index + 2, to);
+            continue;
+        }
+        if (char === '<' && next === '<' && text[index + 2] === '<') {
+            const heredocEnd = trySkipPhpHeredoc(text, index, to);
+            if (heredocEnd >= 0) {
+                index = heredocEnd;
+                continue;
+            }
+        }
+        if (OPEN_BRACKETS.has(char) || CLOSE_BRACKETS.has(char)) {
+            emit?.({ text: char, offset: index, line: lineAt(index) });
+            index++;
+            continue;
+        }
+        if (isPhpIdentifierStartChar(char)) {
+            let end = index + 1;
+            while (end < to && isPhpIdentifierChar(text[end])) {
+                end++;
+            }
+            const word = text.slice(index, end);
+            if (PHP_KEYWORDS.has(word) && !isPhpMemberAccess(text, index)) {
+                emit?.({ text: word, offset: index, line: lineAt(index) });
+            }
+            index = end;
+            continue;
+        }
+        index++;
+    }
+    return -1;
+}
+// `->prop` / `Foo::CONST` / `$var` 之后的标识符不是控制关键字
+function isPhpMemberAccess(text, identifierStart) {
+    let index = identifierStart - 1;
+    while (index >= 0 && (text[index] === ' ' || text[index] === '\t' || text[index] === '\r' || text[index] === '\n')) {
+        index--;
+    }
+    const char = text[index];
+    if (char === '$') {
+        return true;
+    }
+    if (char === '>' && text[index - 1] === '-') {
+        return true;
+    }
+    if (char === ':' && text[index - 1] === ':') {
+        return true;
+    }
+    return false;
+}
+function isOpenPhpTag(text, at) {
+    const after = at + 2;
+    const char = text[after];
+    if (char === '=') {
+        return after + 1;
+    }
+    if (char && /\s/.test(char)) {
+        return after;
+    }
+    if (text.slice(after, after + 3).toLowerCase() === 'php' &&
+        !isPhpIdentifierChar(text[after + 3])) {
+        return after + 3;
+    }
+    return -1;
+}
+function scanPhpTags(text) {
+    const tags = [];
+    let searchIndex = 0;
+    while (searchIndex < text.length) {
+        const startIndex = text.indexOf('<?', searchIndex);
+        if (startIndex < 0) {
+            break;
+        }
+        const openMarkerEnd = isOpenPhpTag(text, startIndex);
+        if (openMarkerEnd < 0) {
+            searchIndex = startIndex + 2;
+            continue;
+        }
+        const codeStart = openMarkerEnd;
+        const closeOffset = walkPhpCode(text, codeStart, text.length);
+        const codeEnd = closeOffset >= 0 ? closeOffset : text.length;
+        tags.push({
+            start: startIndex,
+            end: closeOffset >= 0 ? closeOffset + 2 : text.length,
+            openMarkerStart: startIndex,
+            openMarkerEnd,
+            codeStart,
+            codeEnd,
+            closeMarkerStart: closeOffset
+        });
+        searchIndex = closeOffset >= 0 ? closeOffset + 2 : text.length;
+    }
+    return tags;
+}
+function nextNonWhitespaceChar(text, from) {
+    let index = from;
+    while (index < text.length && (text[index] === ' ' || text[index] === '\t' || text[index] === '\r' || text[index] === '\n')) {
+        index++;
+    }
+    return text[index] ?? '';
+}
+function getPhpTagInfo(text) {
+    const tags = scanPhpTags(text);
+    const bracketPairs = new Map();
+    const altPairs = [];
+    const foldingRanges = [];
+    if (!tags.length) {
+        return { tags, bracketPairs, altPairs, foldingRanges };
+    }
+    const lineOffsets = buildPhpLineOffsets(text);
+    const tokens = [];
+    for (const tag of tags) {
+        walkPhpCode(text, tag.codeStart, tag.codeEnd, token => tokens.push(token), lineOffsets);
+    }
+    const pushFold = (startLine, endLine) => {
+        if (endLine > startLine) {
+            foldingRanges.push({ start: startLine, end: endLine });
+        }
+    };
+    const braceStack = [];
+    const pairStacks = new Map();
+    const altStack = [];
+    let pending;
+    for (const token of tokens) {
+        if (token.text.length === 1) {
+            const char = token.text;
+            const openBracket = OPEN_BRACKETS.get(char);
+            if (openBracket) {
+                const stack = pairStacks.get(char) ?? [];
+                stack.push(token);
+                pairStacks.set(char, stack);
+                if (char === '{') {
+                    braceStack.push(token);
+                }
+                if (pending && !pending.seenOpenParen) {
+                    if (char === '(') {
+                        pending.seenOpenParen = true;
+                        pending.parenBalance = 1;
+                    }
+                    else {
+                        pending = undefined;
+                    }
+                }
+                else if (pending && char === '(') {
+                    pending.parenBalance++;
+                }
+                continue;
+            }
+            const closeBracket = CLOSE_BRACKETS.get(char);
+            if (!closeBracket) {
+                continue;
+            }
+            const stack = pairStacks.get(closeBracket);
+            const openToken = stack?.pop();
+            if (openToken) {
+                bracketPairs.set(openToken.offset, token.offset);
+                bracketPairs.set(token.offset, openToken.offset);
+                if (char === '}') {
+                    pushFold(openToken.line, token.line - 1);
+                }
+            }
+            if (pending && pending.seenOpenParen && char === ')') {
+                pending.parenBalance--;
+                if (pending.parenBalance === 0) {
+                    // 替代语法要求冒号紧跟在 ) 之后，防止 `echo $a ? 1 : 0;` 的三元冒号误判
+                    if (nextNonWhitespaceChar(text, token.offset + 1) === ':') {
+                        altStack.push({ kind: pending.kind, open: pending.token, segmentStart: pending.token });
+                    }
+                    pending = undefined;
+                }
+            }
+            continue;
+        }
+        if (pending && (!pending.seenOpenParen || pending.parenBalance > 0)) {
+            if (!pending.seenOpenParen) {
+                pending = undefined;
+            }
+            else {
+                continue;
+            }
+        }
+        if (ALT_OPENERS.has(token.text)) {
+            pending = { kind: token.text, token, seenOpenParen: false, parenBalance: 0 };
+            continue;
+        }
+        if (ALT_CONTINUATIONS.has(token.text)) {
+            const top = altStack[altStack.length - 1];
+            if (top) {
+                pushFold(top.segmentStart.line, token.line - 1);
+                top.segmentStart = token;
+            }
+            continue;
+        }
+        const closerKind = ALT_CLOSER_KIND.get(token.text);
+        if (closerKind) {
+            const top = altStack[altStack.length - 1];
+            if (top && top.kind === closerKind) {
+                altStack.pop();
+                pushFold(top.segmentStart.line, token.line - 1);
+                altPairs.push({ kind: closerKind, open: top.open, close: token });
+            }
+        }
+    }
+    for (const tag of tags) {
+        const startLine = getPhpLineAtOffset(lineOffsets, tag.start);
+        const lastLine = getPhpLineAtOffset(lineOffsets, Math.max(tag.start, tag.end - 1));
+        pushFold(startLine, lastLine - 1);
+    }
+    foldingRanges.sort((a, b) => a.start - b.start || b.end - a.end);
+    return { tags, bracketPairs, altPairs, foldingRanges };
+}
+function getPhpBracketPairs(text) {
+    return getPhpTagInfo(text).bracketPairs;
+}
+function findMatchingPhpBracket(text, offset) {
+    return getPhpTagInfo(text).bracketPairs.get(offset) ?? null;
+}
+function findPhpTagFoldingRanges(text) {
+    return getPhpTagInfo(text).foldingRanges;
+}
+
+
+/***/ }),
+/* 214 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.PhpTagFoldingRangeProvider = exports.findPhpTagFoldingRanges = void 0;
+const vscode = __importStar(__webpack_require__(2));
+const phpTagParser_1 = __webpack_require__(213);
+var phpTagParser_2 = __webpack_require__(213);
+Object.defineProperty(exports, "findPhpTagFoldingRanges", ({ enumerable: true, get: function () { return phpTagParser_2.findPhpTagFoldingRanges; } }));
+class PhpTagFoldingRangeProvider {
+    provideFoldingRanges(document, _context, _token) {
+        const text = document.getText();
+        if (!text.includes('<?')) {
+            return [];
+        }
+        return (0, phpTagParser_1.findPhpTagFoldingRanges)(text).map(range => new vscode.FoldingRange(range.start, range.end, vscode.FoldingRangeKind.Region));
+    }
+}
+exports.PhpTagFoldingRangeProvider = PhpTagFoldingRangeProvider;
+
+
+/***/ }),
+/* 215 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.collectReferenceContext = collectReferenceContext;
 exports.registerCopilotAnalyzer = registerCopilotAnalyzer;
 /**
@@ -57405,7 +58074,7 @@ function registerCopilotAnalyzer(context) {
 
 
 /***/ }),
-/* 213 */
+/* 216 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57688,7 +58357,7 @@ __decorate([
 
 
 /***/ }),
-/* 214 */
+/* 217 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57831,7 +58500,7 @@ exports.DiagnosticsWebviewProvider = DiagnosticsWebviewProvider;
 
 
 /***/ }),
-/* 215 */
+/* 218 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -57947,7 +58616,7 @@ exports.WatchServiceTreeDataProvider = WatchServiceTreeDataProvider;
 
 
 /***/ }),
-/* 216 */
+/* 219 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -58080,7 +58749,7 @@ function createNonce() {
 
 
 /***/ }),
-/* 217 */
+/* 220 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -58585,7 +59254,7 @@ function normalizeSlash(value) {
 
 
 /***/ }),
-/* 218 */
+/* 221 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -58698,7 +59367,7 @@ function getOpenTagText(document, position) {
 
 
 /***/ }),
-/* 219 */
+/* 222 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -58963,7 +59632,7 @@ exports.TodoHighlightProvider = TodoHighlightProvider;
 
 
 /***/ }),
-/* 220 */
+/* 223 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -59005,7 +59674,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SetupReturnInlayHintsProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
 const path = __importStar(__webpack_require__(3));
-const setupReturnScanner_1 = __webpack_require__(221);
+const setupReturnScanner_1 = __webpack_require__(224);
 /** 幽灵文本最大展示长度，超出截断并补充 tooltip 全文。 */
 const MAX_LABEL_LENGTH = 60;
 /**
@@ -59061,7 +59730,7 @@ exports.SetupReturnInlayHintsProvider = SetupReturnInlayHintsProvider;
 
 
 /***/ }),
-/* 221 */
+/* 224 */
 /***/ ((__unused_webpack_module, exports) => {
 
 "use strict";
@@ -59382,7 +60051,7 @@ function planSetupReturnExport(text, symbolName, cursorLine, eol = '\n') {
 
 
 /***/ }),
-/* 222 */
+/* 225 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -59610,7 +60279,7 @@ exports.Vue3SnippetCompletionProvider = Vue3SnippetCompletionProvider;
 
 
 /***/ }),
-/* 223 */
+/* 226 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -59651,7 +60320,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WorkspaceReferenceProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const workspaceTextSearch_1 = __webpack_require__(224);
+const workspaceTextSearch_1 = __webpack_require__(227);
 function escapeRegExp(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -59694,7 +60363,7 @@ exports.WorkspaceReferenceProvider = WorkspaceReferenceProvider;
 
 
 /***/ }),
-/* 224 */
+/* 227 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -59833,7 +60502,7 @@ async function scanWorkspaceText(pattern, options = {}, token) {
 
 
 /***/ }),
-/* 225 */
+/* 228 */
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
@@ -59874,7 +60543,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.VueGlobalSymbolProvider = void 0;
 const vscode = __importStar(__webpack_require__(2));
-const workspaceTextSearch_1 = __webpack_require__(224);
+const workspaceTextSearch_1 = __webpack_require__(227);
 const CACHE_TTL_MS = 60000;
 const MAX_SYMBOLS = 300;
 /**

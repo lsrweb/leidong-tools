@@ -17,6 +17,8 @@ import { VueColorProvider } from '../providers/colorProvider';
 import { clearLaytplBracketCache, updateLaytplBracketHighlights } from '../providers/laytplBracketHighlighter';
 import { LaytplFoldingRangeProvider } from '../providers/laytplFoldingProvider';
 import { XTemplateFoldingRangeProvider } from '../providers/xTemplateFoldingProvider';
+import { clearPhpTagInfoCache, updatePhpTagBracketHighlights } from '../providers/phpTagBracketHighlighter';
+import { PhpTagFoldingRangeProvider } from '../providers/phpTagFoldingProvider';
 import { XTemplateRangeFormattingProvider } from '../providers/xTemplateFormattingProvider';
 import { registerCopilotAnalyzer } from '../providers/copilotAnalyzer';
 import { VariableIndexWebviewProvider } from '../providers/variableIndexWebview';
@@ -263,10 +265,14 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.window.onDidChangeActiveTextEditor((editor) => {
             updateInlineRefDecorations(editor);
             updateLaytplBracketHighlights(editor);
+            updatePhpTagBracketHighlights(editor);
             scheduleCssIndexWarm(editor?.document);
         }),
         vscode.workspace.onDidOpenTextDocument(scheduleCssIndexWarm),
-        vscode.workspace.onDidCloseTextDocument(clearLaytplBracketCache),
+        vscode.workspace.onDidCloseTextDocument(document => {
+            clearLaytplBracketCache(document);
+            clearPhpTagInfoCache(document);
+        }),
         vscode.workspace.onDidSaveTextDocument(document => {
             if (document.languageId === 'css' || document.languageId === 'html' || document.languageId === 'vue') {
                 invalidateCssIndexes();
@@ -274,6 +280,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         }),
         vscode.window.onDidChangeTextEditorSelection((event) => {
             updateLaytplBracketHighlights(event.textEditor);
+            updatePhpTagBracketHighlights(event.textEditor);
         }),
         vscode.workspace.onDidChangeConfiguration((e) => {
             if (e.affectsConfiguration('leidong-tools.enableOutlineSymbols') ||
@@ -302,6 +309,7 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
     // 初始化当前编辑器的装饰
     updateInlineRefDecorations(vscode.window.activeTextEditor);
     updateLaytplBracketHighlights(vscode.window.activeTextEditor);
+    updatePhpTagBracketHighlights(vscode.window.activeTextEditor);
     scheduleCssIndexWarm(vscode.window.activeTextEditor?.document);
 
     // 注册 layui laytpl 折叠提供器（补充 HTML 中 {{# ... }} 代码块折叠）
@@ -309,6 +317,17 @@ export function registerProviders(context: vscode.ExtensionContext, fileWatchMan
         vscode.languages.registerFoldingRangeProvider(
             FILE_SELECTORS.HTML,
             new LaytplFoldingRangeProvider()
+        )
+    );
+
+    // 注册 PHP 原生标签折叠/匹配/高亮（.php 视图与含 <?php 的 HTML 页面通用）
+    context.subscriptions.push(
+        vscode.languages.registerFoldingRangeProvider(
+            [
+                { scheme: 'file', language: 'php' },
+                { scheme: 'file', language: 'html' }
+            ],
+            new PhpTagFoldingRangeProvider()
         )
     );
 

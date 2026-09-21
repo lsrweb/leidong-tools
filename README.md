@@ -210,6 +210,18 @@ my-project/
 
 ---
 
+### 7. 🧩 PHP 原生标签增强（.php / 含 PHP 的 HTML）
+
+针对 PHP + HTML 混写视图（如 `application/views/` 页面）：
+
+- **折叠** — `<?php if (...) { ?>` … `<?php } ?>` 花括号跨标签整块折叠（支持 `} else {` 链与任意嵌套）；`if:/endif;`、`foreach:/endforeach;` 等替代语法按 else/elseif/case 分段折叠；多行 `<?php ... ?>` 整块可折叠
+- **匹配高亮** — 光标置于 `{ } ( ) [ ]` 上高亮跨标签配对；置于 `if`/`endif` 等关键字上高亮关键字配对；置于 `<?php`/`?>` 上高亮标签开闭
+- **HTML 内 PHP 高亮** — `.html` 页面中的 `<?php ?>` / `<?= ?>` 获得完整 PHP 语法高亮（`<?xml` 不误判）
+
+标签之间的 HTML/CSS 花括号不参与匹配；字符串 / 注释 / heredoc 内的括号自动忽略。
+
+---
+
 
 
 ### 远程资源管理器（SFTP / FTP / FTPS）
