@@ -1,11 +1,12 @@
 # 开发配置
 .vscode/**
-.vscode-test/**
+.vscode-test**
 .github/**
 .gitignore
 .npmrc
 .yarnrc
 .vscode-test.mjs
+.qoder/**
 
 # 源码 (打包后不需要)
 src/**

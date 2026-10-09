@@ -1,6 +1,6 @@
 {
     "fileTypes": [],
-    "injectionSelector": "L:source.js -comment, L:source.ts -comment, L:source.js.jsx -comment, L:source.tsx -comment",
+    "injectionSelector": "L:source.js -comment -string, L:source.ts -comment -string, L:source.js.jsx -comment -string, L:source.tsx -comment -string",
     "patterns": [
         {
             "begin": "((?:[a-zA-Z_$][\\w$]*_?)?(?i:template|tpl|html))(\\s*)([=:]\\s*|\\()?(`)",
