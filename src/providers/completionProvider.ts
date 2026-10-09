@@ -12,6 +12,8 @@ import type { VueIndex } from '../parsers/parseDocument';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { inferObjectProperties } from '../helpers/propertyInference';
 import { getTemplateLiteralAtPosition, isVueTemplateContext } from '../helpers/templateLiteralHelper';
+import { embeddedLanguageFeaturesEnabled, isEmbeddedVueExpression } from './embeddedLanguageProvider';
+import { getEmbeddedTemplateAtPosition } from '../parsers/embeddedTemplateParser';
 import { getTemplateRefs } from '../finders/templateIndexer';
 import * as fs from 'fs';
 
@@ -170,6 +172,9 @@ export class JavaScriptCompletionProvider implements vscode.CompletionItemProvid
     ): Promise<vscode.CompletionItem[] | vscode.CompletionList> {
         try {
             if (token.isCancellationRequested) { return []; }
+            if (embeddedLanguageFeaturesEnabled(document) && getEmbeddedTemplateAtPosition(document, position)) {
+                return isEmbeddedVueExpression(document, position) ? this.provideTemplateLiteralCompletions(document) || [] : [];
+            }
             // 检测是否在 template: `...` 模板字符串内
             const templateInfo = getTemplateLiteralAtPosition(document, position);
             if (templateInfo) {

@@ -1,5 +1,25 @@
 # 更新日志 (Changelog)
 
+## [3.5.0] - 2026-10-06
+
+### ✨ 内嵌 HTML/CSS 完整智能提示（接入语言服务）
+
+- **真正的 HTML/CSS 语言服务**：JS/TS/JSX/TSX 反引号模板串中按内容识别出的 HTML/CSS 现在接入 vscode-html-languageservice / vscode-css-languageservice，补全与悬停不再依赖手写词表——HTML 标签、属性、属性值枚举（`<input type="check` → `checkbox`）、Vue 指令（`v-if`、`v-for`、`:class` 等），以及 CSS 属性、属性值、伪类、`@` 规则（`@media` 等）全部由官方语言服务提供，并带文档说明。
+- **行内 style 与 style 标签**：`<div style="display: gr` → `grid` 补全不吞引号与标签；`<style>` 标签内 CSS 同样接入（`lang="scss"` 等非 CSS 内容不接管）。
+- **任意命名、任意写法**：`PICKER_TEMPLATE`、`PICKER_STYLE` 这类任意变量名的多行模板串自动命中；函数参数、返回值、三元表达式、标签模板中的模板串均可识别；编辑中的未闭合模板在 AST 失败时走词法回退仍可补全。
+- **互不打扰**：`${...}` 插值、Vue `{{ }}` / `:bind` / `@event` 表达式继续走原有变量提示与跳转链路；普通字符串、注释、正则、JSX 文本中的伪模板不会被误识别；新旧补全链路去重，不重复弹出候选。
+- **新增诊断**：CSS 语法/属性检查（遵循 `css.validate` 与 `css.lint`）与 HTML 词法错误、重复属性检测；未闭合、含插值或转义的模板保守跳过以避免误报；单文档最多 200 条，修复后自动清除。
+- **性能与生命周期**：识别结果按文档版本缓存；编辑后 350ms 防抖诊断；超过 600KB 的文档跳过；关闭文件释放缓存。
+- 新增配置：`leidong-tools.embeddedLanguageFeatures`（默认开）、`leidong-tools.embeddedLanguageDiagnostics`（默认开）。
+
+## [3.4.9] - 2026-10-05
+
+### ✨ JS 模板串 HTML/CSS 高亮：内容嗅探识别，不再依赖变量命名
+
+- **按内容自动识别**：模板字符串只要以 `<标签` / `</` / `<!` / `<?` 开头即按 HTML 高亮，以 `.选择器 {` / `#id {` / `@media {` / `:root {` 等选择器开头即按 CSS 高亮——`PICKER_TEMPLATE = \`...\``、`PICKER_STYLE = \`...\`` 这类任意命名的写法无需配置即可获得完整高亮与嵌入语言能力（括号匹配、注释切换随 embeddedLanguages 映射一并生效）。
+- **命名规则扩展并降级为兜底**：新增 `xxx_TEMPLATE` / `xxx_TPL` / `xxx_HTML` 后缀命名、\`html\`\`\` 标签模板、`tpl(\`\`)` 函数调用实参、`xxx_STYLE` / `xxx_STYLESHEET` 后缀等写法；内容不以标签或选择器开头的模板串仍可靠命名命中。
+- **误报防护**：`<=` 比较符、markdown `#` 标题、`${...}` 插值开头、普通文本模板串均不会误判；33 个正反用例全部通过。
+
 ## [3.4.8] - 2026-09-21
 
 ### ✨ PHP 原生标签折叠 / 匹配 / 高亮（.php 视图与含 PHP 的 HTML 通用）

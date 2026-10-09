@@ -5,6 +5,8 @@ import { findTemplateVar } from '../finders/templateIndexer';
 import { getXTemplateIdAtPosition } from '../helpers/templateContext';
 import { jsSymbolParser } from '../parsers/jsSymbolParser';
 import { getTemplateLiteralAtPosition } from '../helpers/templateLiteralHelper';
+import { embeddedLanguageFeaturesEnabled, isEmbeddedVueExpression } from './embeddedLanguageProvider';
+import { getEmbeddedTemplateAtPosition } from '../parsers/embeddedTemplateParser';
 import { getRefCountAtLine } from './codeLensProvider';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -49,6 +51,9 @@ export class VueHoverProvider implements vscode.HoverProvider {
         if (!isEnabled) {
             return null;
         }
+
+        if (embeddedLanguageFeaturesEnabled(document) && getEmbeddedTemplateAtPosition(document, position)
+            && !isEmbeddedVueExpression(document, position)) { return null; }
 
         const wordRange = document.getWordRangeAtPosition(position);
         if (!wordRange) {

@@ -34,6 +34,7 @@ import { SetupReturnInlayHintsProvider } from '../providers/setupReturnInlayHint
 import { Vue3SnippetCompletionProvider } from '../providers/vue3SnippetProvider';
 import { WorkspaceReferenceProvider } from '../providers/workspaceReferenceProvider';
 import { VueGlobalSymbolProvider } from '../providers/workspaceSymbolProvider';
+import { registerEmbeddedLanguageFeatures } from '../providers/embeddedLanguageProvider';
 
 let refreshProviderConfigurationImpl: (() => void) | undefined;
 
@@ -45,6 +46,7 @@ export function refreshProviderConfiguration(): void {
  * 注册所有 Language Providers
  */
 export function registerProviders(context: vscode.ExtensionContext, fileWatchManager: FileWatchManager) {
+    registerEmbeddedLanguageFeatures(context);
     const cssWarmTimers = new Map<string, NodeJS.Timeout>();
     const scheduleCssIndexWarm = (document: vscode.TextDocument | undefined): void => {
         if (!document || document.uri.scheme !== 'file' || (document.languageId !== 'html' && document.languageId !== 'vue')) { return; }

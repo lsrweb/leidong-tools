@@ -9,6 +9,7 @@
  * 当光标处于包含 HTML 的字符串内时，提供 Vue 模板上下文支持
  */
 import * as vscode from 'vscode';
+import { getEmbeddedTemplateAtPosition } from '../parsers/embeddedTemplateParser';
 
 /**
  * 模板字符串信息
@@ -28,18 +29,6 @@ export interface TemplateLiteralInfo {
     kind: 'template-property' | 'backtick-html' | 'string-html' | 'backtick-css' | 'string-css';
 }
 
-// 将所有需要匹配的模式集中管理
-const BACKTICK_PATTERNS: Array<{ regex: RegExp; kind: TemplateLiteralInfo['kind'] }> = [
-    // template: `...`
-    { regex: /template\s*:\s*`/g, kind: 'template-property' },
-    // var/let/const xxx = `...<tag...`
-    { regex: /(?:var|let|const)\s+\w+\s*=\s*`/g, kind: 'backtick-html' },
-    // xxx = `...`  (赋值)
-    { regex: /\w+\s*=\s*`/g, kind: 'backtick-html' },
-    // style.textContent = `...css...`
-    { regex: /(?:style|css|styles|styleText|cssText|styleSheet|styleContent|innerHTML|textContent)(?:\s*\.\s*[a-zA-Z_$][\w$]*)*\s*=\s*`/g, kind: 'backtick-css' },
-];
-
 /**
  * 检测光标是否位于包含 HTML 的模板字符串 / 字符串内
  * 
@@ -57,45 +46,18 @@ export function getTemplateLiteralAtPosition(
     const text = document.getText();
     const offset = document.offsetAt(position);
 
-    // 1. 检测反引号模板字符串
-    for (const { regex, kind } of BACKTICK_PATTERNS) {
-        regex.lastIndex = 0;
-        let match: RegExpExecArray | null;
-
-        while ((match = regex.exec(text)) !== null) {
-            const backtickStart = match.index + match[0].length - 1;
-            const backtickEnd = findMatchingBacktick(text, backtickStart);
-            if (backtickEnd < 0) { continue; }
-
-            const contentStart = backtickStart + 1;
-            const contentEnd = backtickEnd;
-
-            if (offset >= contentStart && offset <= contentEnd) {
-                const content = text.substring(contentStart, contentEnd);
-
-                // 对于 HTML 模式，验证内容是否包含 HTML
-                if ((kind === 'backtick-html' || kind === 'string-html') && !containsHtmlTags(content)) {
-                    continue;
-                }
-
-                // 对于 CSS 模式，验证内容像 CSS
-                if ((kind === 'backtick-css' || kind === 'string-css') && !containsCssSyntax(content)) {
-                    continue;
-                }
-
-                const startPos = document.positionAt(contentStart);
-                const endPos = document.positionAt(contentEnd);
-
-                return {
-                    content,
-                    startLine: startPos.line,
-                    startCharacter: startPos.character,
-                    endLine: endPos.line,
-                    range: new vscode.Range(startPos, endPos),
-                    kind
-                };
-            }
-        }
+    const template = getEmbeddedTemplateAtPosition(document, position);
+    if (template) {
+        const start = document.positionAt(template.start);
+        const end = document.positionAt(template.end);
+        return {
+            content: template.content,
+            startLine: start.line,
+            startCharacter: start.character,
+            endLine: end.line,
+            range: new vscode.Range(start, end),
+            kind: template.language === 'html' ? 'backtick-html' : 'backtick-css'
+        };
     }
 
     // 2. 检测单/双引号字符串（如 var html = '<div>...</div>';）
@@ -110,38 +72,6 @@ export function getTemplateLiteralAtPosition(
     }
 
     return null;
-}
-
-/**
- * 找到匹配的结束反引号位置
- */
-function findMatchingBacktick(text: string, backtickStart: number): number {
-    let i = backtickStart + 1;
-    let exprDepth = 0;
-
-    while (i < text.length) {
-        const ch = text[i];
-
-        if (ch === '\\') {
-            i += 2;
-            continue;
-        }
-        if (ch === '$' && i + 1 < text.length && text[i + 1] === '{') {
-            exprDepth++;
-            i += 2;
-            continue;
-        }
-        if (ch === '}' && exprDepth > 0) {
-            exprDepth--;
-            i++;
-            continue;
-        }
-        if (ch === '`' && exprDepth === 0) {
-            return i;
-        }
-        i++;
-    }
-    return -1;
 }
 
 /**

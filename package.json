@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.4.8",
+  "version": "3.5.0",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -352,6 +352,16 @@
           "type": "boolean",
           "default": false,
           "description": "启用/关闭索引与跳转调试日志输出（默认关闭，避免大量日志影响 Extension Host 性能）"
+        },
+        "leidong-tools.embeddedLanguageFeatures": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 JS/TS/JSX/TSX 反引号模板串中按内容识别 HTML/CSS，提供标签、属性、CSS 属性和值补全与悬停说明（含 style 属性和 style 标签）。不处理超过 600KB 的文档。"
+        },
+        "leidong-tools.embeddedLanguageDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "检查内嵌 CSS 语法/属性和 HTML 词法错误/重复属性。为避免误报，跳过未闭合、含 JS 插值或转义的模板；CSS 检查遵循 css.validate 与 css.lint。"
         },
         "leidong-tools.enableVueDiagnostics": {
           "type": "boolean",
@@ -802,6 +812,9 @@
     "axios": "^1.18.1",
     "cheerio": "^1.2.0",
     "prettier": "^3.9.5",
+    "vscode-css-languageservice": "^6.3.10",
+    "vscode-html-languageservice": "^5.6.2",
+    "vscode-languageserver-textdocument": "^1.0.15",
     "vue-template-compiler": "^2.7.15"
   },
   "devDependencies": {

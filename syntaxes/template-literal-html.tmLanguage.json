@@ -3,7 +3,7 @@
     "injectionSelector": "L:source.js -comment, L:source.ts -comment, L:source.js.jsx -comment, L:source.tsx -comment",
     "patterns": [
         {
-            "begin": "(template)(\\s*)(:\\s*)(`)",
+            "begin": "((?:[a-zA-Z_$][\\w$]*_?)?(?i:template|tpl|html))(\\s*)([=:]\\s*|\\()?(`)",
             "beginCaptures": {
                 "1": { "name": "meta.object-literal.key.js" },
                 "2": { "name": "source.js" },
@@ -36,12 +36,72 @@
             ]
         },
         {
-            "begin": "((?:(?:(?i:style)|(?i:css))[\\w$]*|innerHTML|textContent)(?:\\s*\\.\\s*[a-zA-Z_$][\\w$]*)*)(\\s*)([=:]\\s*)(`)",
+            "begin": "(`)(?=\\s*<[a-zA-Z!?/])",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.string.template.begin.js" }
+            },
+            "end": "(`)",
+            "endCaptures": {
+                "1": { "name": "punctuation.definition.string.template.end.js" }
+            },
+            "name": "string.template.html.js",
+            "contentName": "meta.embedded.block.html",
+            "patterns": [
+                {
+                    "begin": "\\$\\{",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.template-expression.begin.js" }
+                    },
+                    "end": "\\}",
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.template-expression.end.js" }
+                    },
+                    "name": "meta.template.expression.js",
+                    "contentName": "meta.embedded.line.js",
+                    "patterns": [
+                        { "include": "source.js" }
+                    ]
+                },
+                { "include": "text.html.basic" }
+            ]
+        },
+        {
+            "begin": "((?:(?:(?i:style)|(?i:css))[\\w$]*|(?:[a-zA-Z_$][\\w$]*_?)?(?i:stylesheet|style|css)|innerHTML|textContent)(?:\\s*\\.\\s*[a-zA-Z_$][\\w$]*)*)(\\s*)([=:]\\s*|\\()?(`)",
             "beginCaptures": {
                 "1": { "name": "meta.object-literal.key.js" },
                 "2": { "name": "source.js" },
                 "3": { "name": "punctuation.separator.key-value.js" },
                 "4": { "name": "punctuation.definition.string.template.begin.js" }
+            },
+            "end": "(`)",
+            "endCaptures": {
+                "1": { "name": "punctuation.definition.string.template.end.js" }
+            },
+            "name": "string.template.css.js",
+            "contentName": "meta.embedded.block.css",
+            "patterns": [
+                {
+                    "begin": "\\$\\{",
+                    "beginCaptures": {
+                        "0": { "name": "punctuation.definition.template-expression.begin.js" }
+                    },
+                    "end": "\\}",
+                    "endCaptures": {
+                        "0": { "name": "punctuation.definition.template-expression.end.js" }
+                    },
+                    "name": "meta.template.expression.js",
+                    "contentName": "meta.embedded.line.js",
+                    "patterns": [
+                        { "include": "source.js" }
+                    ]
+                },
+                { "include": "source.css" }
+            ]
+        },
+        {
+            "begin": "(`)(?=\\s*[.#@*:\\[][^${\\n]{0,200}\\{)",
+            "beginCaptures": {
+                "1": { "name": "punctuation.definition.string.template.begin.js" }
             },
             "end": "(`)",
             "endCaptures": {
