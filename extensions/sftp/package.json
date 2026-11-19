@@ -2,7 +2,7 @@
   "name": "leidong-sftp",
   "displayName": "雷动远程资源（SFTP / FTP）",
   "description": "远程资源管理器：SFTP / SSH / FTP / FTPS 文件传输、比较与同步、远程终端。",
-  "version": "0.1.23",
+  "version": "0.1.25",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -115,7 +115,7 @@
       },
       {
         "command": "leidong-tools.sftp.backupUpload",
-        "title": "备份并上传文件",
+        "title": "备份上传",
         "category": "雷动三千工具集",
         "icon": "$(cloud-upload)"
       },
@@ -199,13 +199,13 @@
       },
       {
         "command": "leidong-tools.sftp.compareCurrentFile",
-        "title": "比较本地与远程文件",
+        "title": "比较文件",
         "category": "雷动三千工具集",
         "icon": "$(diff)"
       },
       {
         "command": "leidong-tools.sftp.syncCurrentFile",
-        "title": "同步当前文件（比较后选择）",
+        "title": "同步文件",
         "category": "雷动三千工具集",
         "icon": "$(sync)"
       },
@@ -214,6 +214,38 @@
         "title": "测试全部远程连接",
         "category": "雷动三千工具集",
         "icon": "$(debug-start)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "leidong-tools.sftp.downloadCurrentFile",
+        "key": "ctrl+alt+d",
+        "mac": "cmd+alt+d",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.sftp.uploadCurrentFile",
+        "key": "ctrl+alt+u",
+        "mac": "cmd+alt+u",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.sftp.backupUpload",
+        "key": "ctrl+alt+b",
+        "mac": "cmd+alt+b",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.sftp.compareCurrentFile",
+        "key": "ctrl+alt+c",
+        "mac": "cmd+alt+c",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "leidong-tools.sftp.syncCurrentFile",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "editorTextFocus"
       }
     ],
     "terminal": {
@@ -306,7 +338,7 @@
           "items": {
             "type": "string"
           },
-          "description": "自动上传排除路径正则（数组，可多条）。"
+          "description": "上传排除路径正则（数组，可多条），匹配相对于连接 context 的路径。未配置 context 时相对于工作区根目录。"
         },
         "leidong-tools.remoteTerminalFavoriteCommands": {
           "type": "array",
@@ -461,7 +493,8 @@
     "compile": "webpack",
     "watch": "webpack --watch",
     "package": "webpack --mode production --devtool hidden-source-map",
-    "vsix": "vsce package"
+    "vsix": "vsce package",
+    "publish": "vsce publish"
   },
   "dependencies": {
     "basic-ftp": "^6.0.1",

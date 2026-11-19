@@ -2,7 +2,7 @@
   "name": "leidong-sanqian-vscode-tools",
   "displayName": "雷动三千vscode工具集",
   "description": "内部使用",
-  "version": "3.5.1",
+  "version": "3.5.2",
   "publisher": "KuCai",
   "icon": "logo.png",
   "repository": {
@@ -153,12 +153,12 @@
       },
       {
         "command": "leidong-tools.exportToSetupReturn",
-        "title": "导出到 setup return（雷动三千）",
+        "title": "导出到 return",
         "category": "雷动三千工具集"
       },
       {
         "command": "leidong-tools.changeExportToSetupReturnKey",
-        "title": "设置「导出到 setup return」快捷键（雷动三千）",
+        "title": "设置「导出到 return」快捷键",
         "category": "雷动三千工具集"
       },
       {
@@ -574,8 +574,8 @@
       },
       {
         "command": "leidong-tools.buildCurrentVueIndex",
-        "key": "ctrl+alt+i",
-        "mac": "cmd+alt+i",
+        "key": "ctrl+alt+pageup",
+        "mac": "cmd+alt+pageup",
         "when": "editorTextFocus && (editorLangId == html || editorLangId == javascript || editorLangId == typescript || editorLangId == javascriptreact || editorLangId == typescriptreact || editorLangId == vue)"
       },
       {

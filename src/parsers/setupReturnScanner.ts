@@ -10,8 +10,8 @@
 export interface SetupReturnHint {
     /** return 项所在行（0-based） */
     line: number;
-    /** 幽灵文本插入列（该行去尾部空白后的长度，即行尾） */
-    character: number;
+    /** return 项名；渲染前用当前文档行重新校验并定位，避免陈旧扫描把幽灵文本插进变量名中间 */
+    name: string;
     /** 声明处注释文本 */
     doc: string;
 }
@@ -171,6 +171,12 @@ export function findDeclarationLine(lines: string[], name: string, fromLine: num
     return -1;
 }
 
+/** 解析 return 项行：整行（去空白）仅剩「标识符 + 可选逗号」时返回标识符名。 */
+export function returnItemNameOf(line: string): string | undefined {
+    const match = /^([A-Za-z_$][\w$]*)\s*,?$/.exec(line.trim());
+    return match ? match[1] : undefined;
+}
+
 /**
  * 扫描全部 `return { ... }` 块，为顶层单行 shorthand 项生成幽灵文本注释。
  * 仅返回“声明处存在注释”的项；return 项行内已有注释时不重复生成。
@@ -183,12 +189,12 @@ export function scanSetupReturnHints(text: string): SetupReturnHint[] {
         for (let i = block.start + 1; i < block.end; i++) {
             const delta = braceDelta(lines[i]);
             if (depth === 1 && delta === 0) {
-                const match = /^([A-Za-z_$][\w$]*)\s*,?$/.exec(lines[i].trim());
-                if (match && !inlineCommentOf(lines[i])) {
-                    const declarationLine = findDeclarationLine(lines, match[1], i);
+                const name = returnItemNameOf(lines[i]);
+                if (name && !inlineCommentOf(lines[i])) {
+                    const declarationLine = findDeclarationLine(lines, name, i);
                     const doc = declarationLine >= 0 ? commentForDeclarationLine(lines, declarationLine) : undefined;
                     if (doc) {
-                        hints.push({ line: i, character: lines[i].trimEnd().length, doc });
+                        hints.push({ line: i, name, doc });
                     }
                 }
             }

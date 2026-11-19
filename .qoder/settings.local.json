@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"E:/unitools\" && cat \"E:/unitools/package.json\" 2>/dev/null | head -80)",
+      "Bash(for f in extensions/model-config/package.json extensions/sftp/package.json; do echo \"=== $f ===\"; node -e \"const p=require\\('./$f'\\); console.log\\(JSON.stringify\\({name:p.name,displayName:p.displayName,description:p.description,version:p.version,main:p.main},null,1\\)\\)\"; done)",
+      "Bash(node -e \"const p=require\\('./extensions/sftp/package.json'\\); console.log\\(JSON.stringify\\({commands:p.contributes.commands, menus:p.contributes.menus, keybindings:p.contributes.keybindings},null,1\\)\\)\" | head -150)"
+    ]
+  }
+}

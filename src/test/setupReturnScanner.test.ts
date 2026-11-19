@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { scanSetupReturnHints, commentForDeclarationLine, inlineCommentOf, planSetupReturnExport } from '../parsers/setupReturnScanner';
+import { scanSetupReturnHints, commentForDeclarationLine, inlineCommentOf, planSetupReturnExport, returnItemNameOf } from '../parsers/setupReturnScanner';
 
 /**
  * setup return 块幽灵文本扫描器测试（Inlay Hint 数据源，纯文本扫描）。
@@ -25,12 +25,20 @@ suite('Setup Return Scanner', () => {
         ];
         const hints = scanSetupReturnHints(lines.join('\n'));
         assert.deepStrictEqual(
-            hints.map(hint => ({ line: hint.line, character: hint.character, doc: hint.doc })),
+            hints.map(hint => ({ line: hint.line, name: hint.name, doc: hint.doc })),
             [
-                { line: 8, character: lines[8].trimEnd().length, doc: '机器人图标' },
-                { line: 9, character: lines[9].trimEnd().length, doc: '切换子账号选中' },
+                { line: 8, name: 'getRobotIcon', doc: '机器人图标' },
+                { line: 9, name: 'handleAccountSelection', doc: '切换子账号选中' },
             ],
         );
+    });
+
+    test('returnItemNameOf：仅匹配独立标识符行（可带逗号）', () => {
+        assert.strictEqual(returnItemNameOf('      subCount,'), 'subCount');
+        assert.strictEqual(returnItemNameOf('      subCount'), 'subCount');
+        assert.strictEqual(returnItemNameOf('      child: {'), undefined);
+        assert.strictEqual(returnItemNameOf('    return {'), undefined);
+        assert.strictEqual(returnItemNameOf('      subCount, // 注释'), undefined);
     });
 
     test('嵌套对象内的项不生成（仅收集顶层 shorthand）', () => {

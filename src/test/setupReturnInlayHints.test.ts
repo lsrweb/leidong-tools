@@ -32,6 +32,7 @@ suite('Setup Return Inlay Hints Provider', () => {
         assert.strictEqual(hints.length, 2, '应为 subCount 与 toggleSelection 生成幽灵文本');
         assert.strictEqual(hints[0].label, '子账号可见素材数量');
         assert.strictEqual(hints[0].position.line, 7);
+        assert.strictEqual(hints[0].position.character, document.lineAt(7).text.trimEnd().length, '锚点应为当前行行尾');
         assert.strictEqual(hints[1].label, '切换选中');
         assert.strictEqual(hints[1].position.line, 8);
 
@@ -43,6 +44,28 @@ suite('Setup Return Inlay Hints Provider', () => {
         // 二次调用命中缓存，结果一致
         const again = provider.provideInlayHints(document, fullRange, tokenSource.token);
         assert.deepStrictEqual(again.map(hint => hint.label), ['子账号可见素材数量', '切换选中']);
+
+        tokenSource.dispose();
+    });
+
+    test('编辑后按当前文档重新定位：缓存失效，锚点跟随新内容', async () => {
+        const document = await vscode.workspace.openTextDocument({ language: 'javascript', content: fixture });
+        const provider = new SetupReturnInlayHintsProvider();
+        const tokenSource = new vscode.CancellationTokenSource();
+        const fullRange = () => new vscode.Range(0, 0, Math.max(document.lineCount - 1, 0), 0);
+
+        assert.strictEqual(provider.provideInlayHints(document, fullRange(), tokenSource.token).length, 2);
+
+        // 在文件顶部插入一行：return 项整体下移，幽灵文本必须跟随新行号与新行内容
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(document.uri, new vscode.Position(0, 0), '// 顶部注释\n');
+        assert.ok(await vscode.workspace.applyEdit(edit), '编辑应成功应用');
+
+        const after = provider.provideInlayHints(document, fullRange(), tokenSource.token);
+        assert.strictEqual(after.length, 2);
+        assert.strictEqual(after[0].position.line, 8);
+        assert.strictEqual(after[0].position.character, document.lineAt(8).text.trimEnd().length);
+        assert.strictEqual(after[1].position.line, 9);
 
         tokenSource.dispose();
     });

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { realpath } from 'fs/promises';
 import { Readable, Writable } from 'stream';
 import { Client as FtpClient, FileType as FtpFileType } from 'basic-ftp';
 import { registerRemoteTerminal, BUILTIN_COMMANDS, type RemoteTerminalBuiltins } from './remoteTerminal';
@@ -23,11 +24,13 @@ export interface SftpProfile {
     remotePath: string;
     uploadOnSave: boolean;
     workspaceFolder: vscode.WorkspaceFolder;
+    localRoot: vscode.Uri;
     configUri: vscode.Uri;
 }
 
 interface RawSftpProfile {
     name?: string;
+    context?: string;
     host?: string;
     protocol?: string;
     port?: number;
@@ -202,11 +205,9 @@ export class SftpConfigStore {
                     const bytes = await vscode.workspace.fs.readFile(configUri);
                     const parsed: unknown = JSON.parse(Buffer.from(bytes).toString('utf8').replace(/^\uFEFF/, ''));
                     const values = Array.isArray(parsed) ? parsed : [parsed];
-                    for (let index = 0; index < values.length; index++) {
-                        const profile = this.toProfile(values[index] as RawSftpProfile, index, folder, configUri);
-                        if (profile) {
-                            profiles.push(profile);
-                        }
+                    const loaded = values.map((value, index) => this.toProfile(value as RawSftpProfile, index, folder, configUri));
+                    for (const profile of loaded) {
+                        if (profile) { profiles.push(profile); }
                     }
                 } catch (error) {
                     if (this.isMissingFile(error)) {
@@ -237,6 +238,14 @@ export class SftpConfigStore {
         const resolvedProtocol = (protocol || 'sftp') as SftpProfile['protocol'];
         const secure = resolvedProtocol === 'ftps' ? (value.secure ?? true) : (value.secure ?? false);
         const name = value.name || `${value.username}@${value.host}`;
+        const context = value.context === undefined ? '.' : value.context;
+        if (typeof context !== 'string' || path.win32.isAbsolute(context) || /^[a-z]:/i.test(context)) {
+            throw new Error(`${name} 的 context 必须是工作区相对目录`);
+        }
+        const localRoot = vscode.Uri.joinPath(workspaceFolder.uri, context.replace(/\\/g, '/'));
+        if (!isUriInside(workspaceFolder.uri, localRoot)) {
+            throw new Error(`${name} 的 context 超出工作区范围`);
+        }
         return {
             id: `${workspaceFolder.uri.toString()}|${configUri.toString()}|${name}|${index}`,
             name,
@@ -252,6 +261,7 @@ export class SftpConfigStore {
             remotePath: normalizeRemote(value.remotePath),
             uploadOnSave: value.uploadOnSave === true,
             workspaceFolder,
+            localRoot,
             configUri,
         };
     }
@@ -435,7 +445,7 @@ class SftpService implements vscode.Disposable {
         }, slot);
     }
 
-    async uploadDirectory(profile: SftpProfile, localUri: vscode.Uri, remotePath: string): Promise<void> {
+    async uploadDirectory(profile: SftpProfile, localUri: vscode.Uri, remotePath: string, nestedRoots: vscode.Uri[] = []): Promise<void> {
         if (!this.isUploadAllowed(profile, localUri)) {
             this.logger.info(profile, `已按过滤规则跳过目录 ${localUri.fsPath}`);
             return;
@@ -449,6 +459,7 @@ class SftpService implements vscode.Disposable {
             for (const [name, type] of entries) {
                 const childLocal = vscode.Uri.joinPath(local, name);
                 const childRemote = joinRemote(remote, name);
+                if (nestedRoots.some(root => isUriInside(root, childLocal))) { continue; }
                 if ((type & vscode.FileType.Directory) !== 0) {
                     if (!this.isUploadAllowed(profile, childLocal)) {
                         this.logger.info(profile, `已按过滤规则跳过目录 ${childLocal.fsPath}`);
@@ -525,7 +536,8 @@ class SftpService implements vscode.Disposable {
         if (isIgnoredUploadPath(relativePath, filters.folders)) { return false; }
         const extension = path.extname(localUri.fsPath).toLowerCase().replace(/^\./, '');
         if (extension && filters.extensions.has(extension)) { return false; }
-        for (const regex of filters.regexes) { if (regex.test(relativePath)) { return false; } }
+        const mappedRelativePath = path.relative(profile.localRoot.fsPath, localUri.fsPath).replace(/\\/g, '/');
+        for (const regex of filters.regexes) { if (regex.test(mappedRelativePath)) { return false; } }
         return true;
     }
 
@@ -1103,7 +1115,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         context,
         configs,
         (profile, directory) => remoteProvider.revealDirectory(profile, directory),
-        createTerminalBuiltins(context, service, remoteProvider, activity),
+        createTerminalBuiltins(context, configs, service, remoteProvider, activity),
     );
 
     const run = async (label: string, action: () => Promise<void>) => {
@@ -1132,12 +1144,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     const autoUploads = new Map<string, AutoUploadState>();
 
     /** 自动上传目标（保存自动上传与外部修改上传共用同一套目标配置）。 */
-    const resolveAutoUploadTargets = async (folder: vscode.WorkspaceFolder): Promise<SftpProfile[]> => {
-        const profiles = (await configs.loadProfiles()).filter(profile =>
-            profile.workspaceFolder.uri.toString() === folder.uri.toString() && profile.uploadOnSave,
-        );
+    const resolveAutoUploadTargets = async (folder: vscode.WorkspaceFolder, localUri: vscode.Uri): Promise<SftpProfile[]> => {
+        const profiles = matchingProfiles(await profilesForFolder(configs, folder), localUri);
         const selected = readAutoUploadTargets(context, folder);
-        return selected === undefined ? profiles : profiles.filter(profile => selected.includes(profile.id));
+        return profiles.filter(profile => profile.uploadOnSave && (selected === undefined || selected.includes(profile.id)));
     };
 
     const flushAutoUpload = async (key: string, state: AutoUploadState): Promise<void> => {
@@ -1149,7 +1159,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         try {
             const folder = vscode.workspace.getWorkspaceFolder(document.uri);
             if (!folder) { return; }
-            const targets = await resolveAutoUploadTargets(folder);
+            const targets = await resolveAutoUploadTargets(folder, document.uri);
             if (!targets.length) { return; }
             const stamp = await statSnapshot(document.uri);
             const finish = activity.begin(`正在自动上传 ${path.basename(document.uri.fsPath)} (${targets.length})`);
@@ -1230,7 +1240,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             const uploaded = lastUploadedStats.get(uri.toString());
             if (uploaded && uploaded.mtime === stamp.mtime && uploaded.size === stamp.size) { return; } // 同一次写入的重复事件（保存 + 监听双触发）
             if (service.isExternalUploadSuppressed(uri, stamp)) { return; } // 刚被下载写盘且内容未再变动的文件不回传
-            const targets = await resolveAutoUploadTargets(folder);
+            const targets = await resolveAutoUploadTargets(folder, uri);
             if (!targets.length) {
                 const key = folder.uri.toString();
                 if (!warnedNoUploadTargets.has(key)) {
@@ -1290,6 +1300,40 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
     };
 
     const externalWatcher = vscode.workspace.createFileSystemWatcher('**/*');
+
+    const uploadMappedDirectory = async (localUri: vscode.Uri): Promise<void> => {
+        const folder = vscode.workspace.getWorkspaceFolder(localUri);
+        const profiles = folder ? await profilesForFolder(configs, folder, true) : await configs.loadProfiles(true);
+        const nestedRoots = nestedProfileRoots(profiles, localUri);
+        const uploads: Array<{ local: vscode.Uri; profile: SftpProfile }> = [];
+        for (const local of [localUri, ...nestedRoots]) {
+            const candidates = matchingProfiles(profiles, local);
+            if (!candidates.length) { continue; }
+            if (local !== localUri) {
+                let stat: vscode.FileStat;
+                try { stat = await vscode.workspace.fs.stat(local); }
+                catch (error) {
+                    if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') { continue; }
+                    throw error;
+                }
+                if ((stat.type & vscode.FileType.Directory) === 0) { continue; }
+            }
+            const profile = await chooseProfile(candidates);
+            if (!profile) { return; }
+            uploads.push({ local, profile });
+        }
+        if (!uploads.length) {
+            void vscode.window.showWarningMessage('该文件夹没有匹配的 SFTP 配置');
+            return;
+        }
+        for (const { local, profile } of uploads) {
+            const remotePath = mappedRemotePath(profile, local);
+            await service.uploadDirectory(profile, local, remotePath, nestedProfileRoots(profiles, local));
+            remoteProvider.invalidateDirectory(profile, remotePath);
+            remoteProvider.invalidateDirectory(profile, posixDirname(remotePath));
+        }
+        void vscode.window.showInformationMessage(`已上传：${path.basename(localUri.fsPath)} → ${[...new Set(uploads.map(item => item.profile.name))].join('、')}`);
+    };
 
     context.subscriptions.push(
         viewRegistration,
@@ -1378,7 +1422,7 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.download', async (item: SftpTreeItem) => {
             if (!item) { return; }
-            const defaultUri = vscode.Uri.joinPath(item.profile.workspaceFolder.uri, path.basename(item.remotePath));
+            const defaultUri = vscode.Uri.joinPath(item.profile.localRoot, path.posix.basename(item.remotePath));
             const target = item.kind === 'directory' || item.kind === 'profile'
                 ? (await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, defaultUri }))?.[0]
                 : await vscode.window.showSaveDialog({ defaultUri });
@@ -1398,18 +1442,16 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             // 本地资源管理器触发（无远端目标节点）：按工作区映射路径上传（与保存自动上传一致）。
             // 此前走 joinRemote(remotePath, 文件名) 固定传到 remotePath 根目录，丢失子路径。
             if (!item && resource) {
-                const profile = await pickProfile(configs, resource);
-                if (!profile) { return; }
-                await run(`上传 ${path.basename(resource.fsPath)} 到 ${profile.name}`, async () => {
-                    const remotePath = mappedRemotePath(profile, resource);
+                await run(`上传 ${path.basename(resource.fsPath)}`, async () => {
                     const stat = await vscode.workspace.fs.stat(resource);
                     if ((stat.type & vscode.FileType.Directory) !== 0) {
-                        await service.uploadDirectory(profile, resource, remotePath);
+                        await uploadMappedDirectory(resource);
                     } else {
-                        await service.upload(profile, resource, remotePath);
+                        const profile = await pickProfile(configs, resource);
+                        if (!profile) { return; }
+                        const remotePath = await uploadMappedFile(service, profile, resource, true);
+                        if (remotePath) { remoteProvider.invalidateDirectory(profile, posixDirname(remotePath)); }
                     }
-                    remoteProvider.invalidateDirectory(profile, posixDirname(remotePath));
-                    void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${remotePath}`);
                 });
                 return;
             }
@@ -1445,21 +1487,19 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('leidong-tools.sftp.uploadLocalFolder', async (resource?: vscode.Uri, selectedResources?: vscode.Uri[]) => {
             const folders = await resolveExplorerFolders(resource, selectedResources);
             for (const localUri of folders) {
-                const profile = await pickProfile(configs, localUri);
-                if (!profile) { return; }
-                const remotePath = mappedRemotePath(profile, localUri);
-                await run(`上传文件夹 ${path.basename(localUri.fsPath)} 到 ${profile.name}`, async () => {
-                    await service.uploadDirectory(profile, localUri, remotePath);
-                    remoteProvider.invalidateDirectory(profile, remotePath);
-                    remoteProvider.invalidateDirectory(profile, posixDirname(remotePath));
-                    void vscode.window.showInformationMessage(`已上传：${path.basename(localUri.fsPath)} → ${profile.name}`);
-                });
+                await run(`上传文件夹 ${path.basename(localUri.fsPath)}`, () => uploadMappedDirectory(localUri));
             }
         }),
         vscode.commands.registerCommand('leidong-tools.sftp.downloadLocalFolder', async (resource?: vscode.Uri, selectedResources?: vscode.Uri[]) => {
             const folders = await resolveExplorerFolders(resource, selectedResources);
             for (const localUri of folders) {
-                const profile = await pickProfile(configs, localUri);
+                const folder = vscode.workspace.getWorkspaceFolder(localUri);
+                const profiles = folder ? await profilesForFolder(configs, folder, true) : await configs.loadProfiles(true);
+                if (nestedProfileRoots(profiles, localUri).length) {
+                    void vscode.window.showWarningMessage('该文件夹包含多个 SFTP 映射，请分别下载各映射目录');
+                    continue;
+                }
+                const profile = await chooseProfile(matchingProfiles(profiles, localUri));
                 if (!profile) { return; }
                 const remotePath = mappedRemotePath(profile, localUri);
                 const dirtyDocuments = vscode.workspace.textDocuments.filter(document => document.isDirty && isUriInside(localUri, document.uri));
@@ -1492,9 +1532,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('leidong-tools.sftp.uploadGitChanges', async () => {
             const folder = await chooseWorkspaceFolder('选择要上传 Git 变动的工作区');
             if (!folder) { return; }
-            const profile = await pickProfile(configs, folder.uri);
-            if (!profile) { return; }
-            const collection = await collectGitChangedFiles(folder).catch(error => {
+            const profiles = await profilesForFolder(configs, folder, true);
+            if (!profiles.length) { await chooseProfile(profiles); return; }
+            const roots = nestedProfileRoots(profiles, folder.uri);
+            const collection = await collectGitChangedFiles(folder, roots).catch(error => {
                 void vscode.window.showErrorMessage(messageOf(error));
                 return undefined;
             });
@@ -1503,15 +1544,39 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
                 void vscode.window.showInformationMessage(`没有可上传的 Git 变动文件${collection.deletedCount ? `（${collection.deletedCount} 个已删除文件已跳过）` : ''}`);
                 return;
             }
-            await run(`一键上传 Git 变动到 ${profile.name}（${collection.files.length} 个文件）`, async () => {
-                const result = await uploadGitChangeFiles(service, profile, collection.files);
-                for (const remote of result.uploaded) { remoteProvider.invalidateDirectory(profile, posixDirname(remote)); }
-                if (result.failures.length) {
-                    throw new Error(`成功 ${result.uploaded.length} 个，失败 ${result.failures.length} 个：${result.failures.join('；')}`);
+            const batches = new Map<string, { profile: SftpProfile; files: vscode.Uri[] }>();
+            let skippedUnmapped = 0;
+            for (const file of collection.files) {
+                const candidates = matchingProfiles(profiles, file);
+                const root = candidates[0]?.localRoot;
+                if (!root) { skippedUnmapped++; continue; }
+                const key = suppressionKey(root.fsPath);
+                let batch = batches.get(key);
+                if (!batch) {
+                    const profile = await chooseProfile(candidates);
+                    if (!profile) { return; }
+                    batch = { profile, files: [] };
+                    batches.set(key, batch);
+                }
+                batch.files.push(file);
+            }
+            await run(`一键上传 Git 变动（${collection.files.length - skippedUnmapped} 个文件）`, async () => {
+                let uploaded = 0;
+                let skipped = skippedUnmapped;
+                const failures: string[] = [];
+                for (const { profile, files } of batches.values()) {
+                    const result = await uploadGitChangeFiles(service, profile, files);
+                    for (const remote of result.uploaded) { remoteProvider.invalidateDirectory(profile, posixDirname(remote)); }
+                    uploaded += result.uploaded.length;
+                    skipped += result.skippedFilter;
+                    failures.push(...result.failures);
+                }
+                if (failures.length) {
+                    throw new Error(`成功 ${uploaded} 个，失败 ${failures.length} 个：${failures.join('；')}`);
                 }
                 void vscode.window.showInformationMessage(
-                    `已上传 ${result.uploaded.length} 个 Git 变动文件到 ${profile.name}` +
-                    (result.skippedFilter ? `；${result.skippedFilter} 个被过滤规则跳过` : '') +
+                    `已上传 ${uploaded} 个 Git 变动文件` +
+                    (skipped ? `；${skipped} 个因未匹配配置或过滤规则跳过` : '') +
                     (collection.deletedCount ? `；${collection.deletedCount} 个已删除文件已跳过` : ''),
                 );
             });
@@ -1620,6 +1685,10 @@ export function registerSftpManager(context: vscode.ExtensionContext): void {
             const targetProfile = profile;
             const sourceUri = localUri!;
             await run(`备份并上传 ${path.basename(sourceUri.fsPath)}`, async () => {
+                if (!service.isUploadAllowed(targetProfile, sourceUri)) {
+                    void vscode.window.showWarningMessage('该文件被上传过滤规则跳过');
+                    return;
+                }
                 const backupPath = await nextBackupRemotePath(service, targetProfile, targetRemote);
                 await service.rename(targetProfile, targetRemote, backupPath);
                 await service.upload(targetProfile, sourceUri, targetRemote);
@@ -1770,6 +1839,10 @@ function isProfileConnectionKey(key: string, profileId: string): boolean {
 
 async function uploadMappedFile(service: SftpService, profile: SftpProfile, localUri: vscode.Uri, notify: boolean, slot?: number): Promise<string | undefined> {
     const remote = mappedRemotePath(profile, localUri);
+    if (!service.isUploadAllowed(profile, localUri)) {
+        if (notify) { void vscode.window.showWarningMessage('该文件被上传过滤规则跳过'); }
+        return undefined;
+    }
     await service.upload(profile, localUri, remote, slot);
     if (notify) {
         void vscode.window.showInformationMessage(`已上传到 ${profile.name}: ${remote}`);
@@ -1829,12 +1902,9 @@ async function remoteExists(service: SftpService, profile: SftpProfile, remotePa
 }
 
 function resolveLocalUriForRemoteItem(item: SftpTreeItem): vscode.Uri | undefined {
-    const root = normalizeRemote(item.profile.remotePath);
-    const remote = normalizeRemote(item.remotePath);
-    if (remote !== root && !remote.startsWith(`${root}/`)) { return undefined; }
-    const relative = remote === root ? '' : remote.slice(root.length + 1);
-    if (!relative) { return undefined; }
-    return vscode.Uri.joinPath(item.profile.workspaceFolder.uri, ...relative.split('/'));
+    const relative = path.posix.relative(item.profile.remotePath, item.remotePath);
+    if (!relative || relative === '..' || relative.startsWith('../')) { return undefined; }
+    return vscode.Uri.joinPath(item.profile.localRoot, relative);
 }
 
 async function isReadableFile(uri: vscode.Uri): Promise<boolean> {
@@ -1867,10 +1937,10 @@ async function openRemoteFile(preview: SftpPreviewProvider, item: SftpTreeItem, 
 }
 
 function mappedRemotePath(profile: SftpProfile, localUri: vscode.Uri): string {
-    const relative = path.relative(profile.workspaceFolder.uri.fsPath, localUri.fsPath);
+    const relative = path.relative(profile.localRoot.fsPath, localUri.fsPath);
     if (!relative) { return normalizeRemote(profile.remotePath); }
     if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-        throw new Error('文件不在该配置所属的工作区中');
+        throw new Error('文件不在该配置映射的本地目录中');
     }
     return joinRemote(profile.remotePath, relative.replace(/\\/g, '/'));
 }
@@ -1905,21 +1975,41 @@ async function revertDirtyDocuments(documents: vscode.TextDocument[]): Promise<v
     }
 }
 
+async function profilesForFolder(configs: SftpConfigStore, folder: vscode.WorkspaceFolder, showErrors = false): Promise<SftpProfile[]> {
+    return (await configs.loadProfiles(showErrors)).filter(profile => profile.workspaceFolder.uri.toString() === folder.uri.toString());
+}
+
+// 先匹配最内层目录，再判断是否开启自动上传，防止关闭子目录上传时落回父目录。
+function matchingProfiles(profiles: SftpProfile[], localUri: vscode.Uri): SftpProfile[] {
+    const matches = profiles.filter(profile => isUriInside(profile.localRoot, localUri));
+    const longest = Math.max(...matches.map(profile => profile.localRoot.fsPath.length));
+    return matches.filter(profile => profile.localRoot.fsPath.length === longest);
+}
+
+function nestedProfileRoots(profiles: SftpProfile[], localUri: vscode.Uri): vscode.Uri[] {
+    const roots = profiles.map(profile => profile.localRoot).filter(root =>
+        isUriInside(localUri, root) && !isUriInside(root, localUri),
+    );
+    return [...new Map(roots.map(root => [suppressionKey(root.fsPath), root])).values()];
+}
+
 async function pickProfile(configs: SftpConfigStore, localUri?: vscode.Uri): Promise<SftpProfile | undefined> {
-    let profiles = await configs.loadProfiles(true);
-    if (localUri) {
-        const folder = vscode.workspace.getWorkspaceFolder(localUri);
-        if (folder) {
-            profiles = profiles.filter(profile => profile.workspaceFolder.uri.toString() === folder.uri.toString());
-        }
+    if (!localUri) { return chooseProfile(await configs.loadProfiles(true)); }
+    const folder = vscode.workspace.getWorkspaceFolder(localUri);
+    if (folder) {
+        return chooseProfile(matchingProfiles(await profilesForFolder(configs, folder, true), localUri));
     }
+    return chooseProfile(matchingProfiles(await configs.loadProfiles(true), localUri));
+}
+
+async function chooseProfile(profiles: SftpProfile[]): Promise<SftpProfile | undefined> {
     if (!profiles.length) {
-        void vscode.window.showWarningMessage('未找到 SFTP 配置，请创建 .vscode/sftp.json');
+        void vscode.window.showWarningMessage('未找到匹配的 SFTP 配置，请检查 .vscode/sftp.json');
         return undefined;
     }
     if (profiles.length === 1) { return profiles[0]; }
     const picked = await vscode.window.showQuickPick(
-        profiles.map(profile => ({ label: profile.name, description: `${profile.username}@${profile.host}${profile.remotePath}`, profile })),
+        profiles.map(profile => ({ label: profile.name, description: `${profile.username}@${profile.host}${profile.remotePath}`, detail: profile.localRoot.fsPath, profile })),
         { placeHolder: '选择 SFTP 配置' },
     );
     return picked?.profile;
@@ -1971,34 +2061,53 @@ async function getGitApi(): Promise<GitApi | undefined> {
  * 收集工作区 Git 变动文件（暂存 + 未暂存 + 合并冲突，含未跟踪新增）。
  * 已删除/目录（子模块）条目自动跳过；删除数量单独返回用于提示。
  */
-async function collectGitChangedFiles(folder: vscode.WorkspaceFolder): Promise<{ files: vscode.Uri[]; deletedCount: number }> {
+async function collectGitChangedFiles(folder: vscode.WorkspaceFolder, contextRoots: vscode.Uri[]): Promise<{ files: vscode.Uri[]; deletedCount: number }> {
     const git = await getGitApi();
     if (!git) { throw new Error('未找到 VS Code Git 扩展，无法读取 Git 变动'); }
-    const repo = git.repositories
+    const repos = [...git.repositories].sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length);
+    const workspaceRepo = repos
         .filter(item => isUriInside(folder.uri, item.rootUri) || isUriInside(item.rootUri, folder.uri))
-        .sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length)[0];
-    if (!repo) { throw new Error('当前工作区不是 Git 仓库'); }
-    if (repo.state.HEAD === undefined) {
+        .find(item => !contextRoots.length || isUriInside(item.rootUri, folder.uri));
+    const scopes: Array<{ repo: GitRepository; source: vscode.Uri; target: vscode.Uri }> = [];
+    if (workspaceRepo) {
+        scopes.push({ repo: workspaceRepo, source: folder.uri, target: folder.uri });
+    }
+    for (const target of contextRoots) {
+        const physicalPath = await realpath(target.fsPath).catch(() => undefined);
+        if (!physicalPath) { continue; }
+        const source = vscode.Uri.file(physicalPath);
+        const repo = repos.find(item => isUriInside(item.rootUri, source));
+        if (repo && (repo !== workspaceRepo || !isUriInside(folder.uri, source))) {
+            scopes.push({ repo, source, target });
+        }
+    }
+    if (!scopes.length) { throw new Error('当前工作区的映射目录没有可用的 Git 仓库'); }
+    await Promise.all([...new Set(scopes.map(scope => scope.repo))].map(repo => {
+        if (repo.state.HEAD !== undefined) { return; }
         // 仓库初始扫描未完成时 changes 为空，等待状态刷新（最多 3 秒）
-        await new Promise<void>(resolve => {
+        return new Promise<void>(resolve => {
             const subscription = repo.state.onDidChange(() => { clearTimeout(timer); subscription.dispose(); resolve(); });
             const timer = setTimeout(() => { subscription.dispose(); resolve(); }, 3000);
         });
-    }
+    }));
     const seen = new Set<string>();
     const files: vscode.Uri[] = [];
     let deletedCount = 0;
-    const changes = [...repo.state.indexChanges, ...repo.state.workingTreeChanges, ...repo.state.mergeChanges];
-    for (const change of changes) {
-        const uri = change.renameUri ?? change.uri;
-        const key = uri.toString();
-        if (seen.has(key)) { continue; }
-        seen.add(key);
-        if (!isUriInside(folder.uri, uri)) { continue; }
-        let stat: vscode.FileStat;
-        try { stat = await vscode.workspace.fs.stat(uri); } catch { deletedCount++; continue; }
-        if ((stat.type & vscode.FileType.File) === 0) { continue; }
-        files.push(uri);
+    for (const { repo, source, target } of scopes) {
+        const changes = [...repo.state.indexChanges, ...repo.state.workingTreeChanges, ...repo.state.mergeChanges];
+        for (const change of changes) {
+            const uri = change.renameUri ?? change.uri;
+            if (!isUriInside(source, uri)) { continue; }
+            const relative = path.relative(source.fsPath, uri.fsPath).replace(/\\/g, '/');
+            const localUri = vscode.Uri.joinPath(target, relative);
+            const key = suppressionKey(localUri.fsPath);
+            if (seen.has(key)) { continue; }
+            seen.add(key);
+            let stat: vscode.FileStat;
+            try { stat = await vscode.workspace.fs.stat(localUri); } catch { deletedCount++; continue; }
+            if ((stat.type & vscode.FileType.File) === 0) { continue; }
+            files.push(localUri);
+        }
     }
     return { files, deletedCount };
 }
@@ -2037,11 +2146,12 @@ async function uploadGitChangeFiles(service: SftpService, profile: SftpProfile, 
 
 /**
  * 远程终端内置指令处理器（/download、/upload、/ls、/cat 等）。
- * 本地路径按“远端相对 remotePath 的差值 → 工作区对应路径”映射，
+ * 本地路径按“远端相对 remotePath 的差值 → context 对应路径”映射，
  * 与保存自动上传的映射规则一致。
  */
 function createTerminalBuiltins(
     context: vscode.ExtensionContext,
+    configs: SftpConfigStore,
     service: SftpService,
     remoteProvider: RemoteExplorerWebviewProvider,
     activity: RemoteActivity,
@@ -2075,7 +2185,11 @@ function createTerminalBuiltins(
     const localForRemote = (profile: SftpProfile, remoteFile: string): vscode.Uri => {
         const relative = path.posix.relative(profile.remotePath, remoteFile);
         const parts = relative.replace(/\\/g, '/').split('/').filter(Boolean);
-        return vscode.Uri.joinPath(profile.workspaceFolder.uri, ...parts);
+        const localUri = vscode.Uri.joinPath(profile.localRoot, ...parts);
+        if (!isUriInside(profile.localRoot, localUri)) {
+            throw new Error('远端路径超出该连接的映射目录');
+        }
+        return localUri;
     };
     const readRemoteText = async (profile: SftpProfile, remotePath: string, maxBytes: number, lines?: number): Promise<string> => {
         const stat = await service.stat(profile, remotePath);
@@ -2110,7 +2224,7 @@ function createTerminalBuiltins(
             return [];
         }
         return args.map(arg => isLocal
-            ? resolveLocalPath(profile.workspaceFolder.uri, arg).fsPath
+            ? resolveLocalPath(profile.localRoot, arg).fsPath
             : resolveRemote(cwd, arg));
     };
 
@@ -2189,7 +2303,7 @@ function createTerminalBuiltins(
                             results.push(`本地文件不存在，已跳过：${local.fsPath}`);
                             continue;
                         }
-                        const remote = joinRemote(cwd, path.posix.basename(local.fsPath));
+                        const remote = joinRemote(cwd, path.basename(local.fsPath));
                         if (directory) {
                             await service.uploadDirectory(profile, local, remote);
                             remoteProvider.invalidateDirectory(profile, cwd);
@@ -2202,7 +2316,10 @@ function createTerminalBuiltins(
                     return results;
                 }
                 case 'upgitchange': {
-                    const collection = await collectGitChangedFiles(profile.workspaceFolder);
+                    const workspaceProfiles = await profilesForFolder(configs, profile.workspaceFolder);
+                    const roots = nestedProfileRoots(workspaceProfiles, profile.workspaceFolder.uri);
+                    const collection = await collectGitChangedFiles(profile.workspaceFolder, roots);
+                    collection.files = collection.files.filter(file => matchingProfiles(workspaceProfiles, file).some(candidate => candidate.id === profile.id));
                     const deletedNote = collection.deletedCount ? `；${collection.deletedCount} 个已删除文件已跳过` : '';
                     if (!collection.files.length) { return [`没有可上传的 Git 变动文件${deletedNote}`]; }
                     const finish = activity.begin(`Git 变动上传到 ${profile.name}（${collection.files.length} 个）`);
